@@ -1,0 +1,12 @@
+# Reference source clones — never commit or redistribute (see DESIGN.md §9)
+reference/
+
+# .NET build output
+bin/
+obj/
+*.user
+
+# IDEs
+.vs/
+.idea/
+.vscode/

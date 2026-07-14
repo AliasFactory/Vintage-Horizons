@@ -1,0 +1,12 @@
+{
+  "type": "code",
+  "modid": "vintagehorizons",
+  "name": "Vintage Horizons",
+  "version": "0.1.0",
+  "side": "Client",
+  "description": "Distant Horizons-style extended render distance. Fully client-side — works on any server.",
+  "authors": [ "AliasFactory" ],
+  "dependencies": {
+    "game": "1.22.0"
+  }
+}

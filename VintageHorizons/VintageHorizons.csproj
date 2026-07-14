@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>VintageHorizons</AssemblyName>
+    <RootNamespace>VintageHorizons</RootNamespace>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <!-- Game install: set VINTAGE_STORY, falls back to the local install -->
+  <PropertyGroup>
+    <GamePath>$(VINTAGE_STORY)</GamePath>
+    <GamePath Condition="'$(GamePath)' == '' or !Exists('$(GamePath)')">$(HOME)/Games/vintagestory1.22.3</GamePath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="VintagestoryAPI">
+      <HintPath>$(GamePath)/VintagestoryAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="VintagestoryLib">
+      <HintPath>$(GamePath)/VintagestoryLib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(GamePath)/Lib/0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Assemble a loadable mod folder at bin/<Config>/Mods/vintagehorizons (loaded via the addModPath launch flag) -->
+  <Target Name="PackageModFolder" AfterTargets="Build">
+    <PropertyGroup>
+      <ModFolder>$(OutputPath)Mods/vintagehorizons/</ModFolder>
+    </PropertyGroup>
+    <ItemGroup>
+      <AssetFiles Include="assets/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ModFolder)" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).pdb" DestinationFolder="$(ModFolder)" Condition="Exists('$(TargetDir)$(AssemblyName).pdb')" />
+    <Copy SourceFiles="modinfo.json" DestinationFolder="$(ModFolder)" />
+    <Copy SourceFiles="@(AssetFiles)" DestinationFolder="$(ModFolder)assets/%(RecursiveDir)" />
+  </Target>
+
+</Project>
