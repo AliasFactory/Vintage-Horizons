@@ -66,6 +66,13 @@ public class MeshResult
     public required int[] Indices;
     public int VertexCount;
     public int IndexCount;
+
+    // Water/translucent geometry, drawn in a second blended pass.
+    public float[]? WaterXyz;
+    public byte[]? WaterRgba;
+    public int[]? WaterIndices;
+    public int WaterVertexCount;
+    public int WaterIndexCount;
 }
 
 /// <summary>
@@ -89,6 +96,9 @@ public class LodWorker : IDisposable
 
     public int PendingCaptures => captureJobs.Count;
     public int PendingMeshes => meshJobs.Count;
+
+    public int CaptureErrors;
+    public int MeshErrors;
 
     public LodWorker()
     {
@@ -130,6 +140,7 @@ public class LodWorker : IDisposable
                 catch
                 {
                     // Chunk disposed mid-read or similar; the column re-enqueues on its next ChunkDirty.
+                    Interlocked.Increment(ref CaptureErrors);
                 }
             }
 
@@ -143,6 +154,7 @@ public class LodWorker : IDisposable
                 catch
                 {
                     // Snapshot inconsistency; section will re-mesh on its next change.
+                    Interlocked.Increment(ref MeshErrors);
                 }
             }
 

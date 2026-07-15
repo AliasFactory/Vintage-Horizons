@@ -42,7 +42,7 @@ void main()
     float sunAngle = max(0.0, dot(normal, normalize(sunPosition)));
     float shade = 0.55 + 0.45 * sunAngle;
 
-    vec4 terraColor = vec4(vertexColor.rgb, 1.0);
+    vec4 terraColor = vertexColor; // alpha < 1 marks the blended water pass
     terraColor.rgb *= shade * clamp(sunColor * dayLight, 0.02, 1.0);
 
     terraColor = applyFog(terraColor, fogAmount);

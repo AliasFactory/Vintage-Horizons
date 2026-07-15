@@ -31,6 +31,7 @@ public class LodTerrainRenderer : IRenderer
     readonly LodWorld world;
     readonly LodWorker worker;
     readonly Dictionary<long, MeshRef> sectionMeshes = new();
+    readonly Dictionary<long, MeshRef> waterMeshes = new();
     readonly HashSet<long> meshJobInFlight = new();
     readonly Matrixf modelMat = new();
     readonly List<long> drawList = new();
@@ -129,6 +130,8 @@ public class LodTerrainRenderer : IRenderer
     int WantedLevel(double distance) =>
         GameMath.Clamp((int)Math.Log2(Math.Max(1.0, distance / DetailDistance)), 0, LodWorld.MaxLevel);
 
+    bool HasAnyMesh(long key) => sectionMeshes.ContainsKey(key) || waterMeshes.ContainsKey(key);
+
     bool AllChildrenCovered(long key)
     {
         for (int qz = 0; qz < 2; qz++)
@@ -136,7 +139,7 @@ public class LodTerrainRenderer : IRenderer
             for (int qx = 0; qx < 2; qx++)
             {
                 long ck = LodWorld.ChildKey(key, qx, qz);
-                if (world.HasDataSet.Contains(ck) && !sectionMeshes.ContainsKey(ck)) return false;
+                if (world.HasDataSet.Contains(ck) && !HasAnyMesh(ck)) return false;
             }
         }
         return true;
@@ -144,7 +147,7 @@ public class LodTerrainRenderer : IRenderer
 
     bool CollectDrawNodes(long key)
     {
-        bool hasMesh = sectionMeshes.ContainsKey(key);
+        bool hasMesh = HasAnyMesh(key);
         int level = LodWorld.KeyLevel(key);
 
         if (level > 0)
@@ -202,6 +205,7 @@ public class LodTerrainRenderer : IRenderer
             if (!world.Sections.TryGetValue(best, out LodSection? section) || section.CapturedColumns == 0)
             {
                 if (sectionMeshes.Remove(best, out MeshRef? stale)) stale.Dispose();
+                if (waterMeshes.Remove(best, out MeshRef? staleWater)) staleWater.Dispose();
                 continue;
             }
 
@@ -230,17 +234,31 @@ public class LodTerrainRenderer : IRenderer
             meshJobInFlight.Remove(result.Key);
 
             if (sectionMeshes.Remove(result.Key, out MeshRef? old)) old.Dispose();
-            if (result.IndexCount == 0) continue;
+            if (waterMeshes.Remove(result.Key, out MeshRef? oldWater)) oldWater.Dispose();
 
-            var mesh = new MeshData(false);
-            mesh.SetVerticesCount(result.VertexCount);
-            mesh.SetIndicesCount(result.IndexCount);
-            mesh.xyz = result.Xyz;
-            mesh.Rgba = result.Rgba;
-            mesh.Indices = result.Indices;
+            if (result.IndexCount > 0)
+            {
+                sectionMeshes[result.Key] = Upload(result.Xyz, result.Rgba, result.Indices,
+                    result.VertexCount, result.IndexCount);
+            }
 
-            sectionMeshes[result.Key] = capi.Render.UploadMesh(mesh);
+            if (result.WaterIndexCount > 0 && result.WaterXyz != null)
+            {
+                waterMeshes[result.Key] = Upload(result.WaterXyz, result.WaterRgba!, result.WaterIndices!,
+                    result.WaterVertexCount, result.WaterIndexCount);
+            }
         }
+    }
+
+    MeshRef Upload(float[] xyz, byte[] rgba, int[] indices, int vertCount, int indexCount)
+    {
+        var mesh = new MeshData(false);
+        mesh.SetVerticesCount(vertCount);
+        mesh.SetIndicesCount(indexCount);
+        mesh.xyz = xyz;
+        mesh.Rgba = rgba;
+        mesh.Indices = indices;
+        return capi.Render.UploadMesh(mesh);
     }
 
     // ---- Frame ----
@@ -258,7 +276,7 @@ public class LodTerrainRenderer : IRenderer
 
         ScheduleMeshJobs();
         UploadFinishedMeshes();
-        if (sectionMeshes.Count == 0) return;
+        if (sectionMeshes.Count == 0 && waterMeshes.Count == 0) return;
 
         var playerData = capi.World.Player.WorldData;
         float viewDistance = playerData.DesiredViewDistance;
@@ -300,30 +318,49 @@ public class LodTerrainRenderer : IRenderer
             cullDistSq = cull * cull;
         }
 
+        // Pass 1: opaque terrain.
         foreach (long key in drawList)
         {
-            int footprint = LodWorld.KeyFootprintBlocks(key);
-            double originX = LodWorld.KeySx(key) * (double)footprint;
-            double originZ = LodWorld.KeySz(key) * (double)footprint;
-
-            double dx = originX + footprint / 2.0 - camPos.X;
-            double dz = originZ + footprint / 2.0 - camPos.Z;
-            if (dx * dx + dz * dz > cullDistSq) continue;
-
-            modelMat.Identity().Translate(originX - camPos.X, -camPos.Y, originZ - camPos.Z);
-            prog.UniformMatrix("modelMatrix", modelMat.Values);
-
-            capi.Render.RenderMesh(sectionMeshes[key]);
+            if (!sectionMeshes.TryGetValue(key, out MeshRef? mesh)) continue;
+            if (!SetupSectionTransform(key, cullDistSq)) continue;
+            capi.Render.RenderMesh(mesh);
         }
+
+        // Pass 2: water, alpha-blended over the terrain.
+        rapi.GlToggleBlend(true);
+        foreach (long key in drawList)
+        {
+            if (!waterMeshes.TryGetValue(key, out MeshRef? mesh)) continue;
+            if (!SetupSectionTransform(key, cullDistSq)) continue;
+            capi.Render.RenderMesh(mesh);
+        }
+        rapi.GlToggleBlend(false);
 
         rapi.GlEnableCullFace();
         prog.Stop();
     }
 
+    bool SetupSectionTransform(long key, float cullDistSq)
+    {
+        int footprint = LodWorld.KeyFootprintBlocks(key);
+        double originX = LodWorld.KeySx(key) * (double)footprint;
+        double originZ = LodWorld.KeySz(key) * (double)footprint;
+
+        double dx = originX + footprint / 2.0 - camPos.X;
+        double dz = originZ + footprint / 2.0 - camPos.Z;
+        if (dx * dx + dz * dz > cullDistSq) return false;
+
+        modelMat.Identity().Translate(originX - camPos.X, -camPos.Y, originZ - camPos.Z);
+        prog!.UniformMatrix("modelMatrix", modelMat.Values);
+        return true;
+    }
+
     public void ClearMeshes()
     {
         foreach (MeshRef meshRef in sectionMeshes.Values) meshRef.Dispose();
+        foreach (MeshRef meshRef in waterMeshes.Values) meshRef.Dispose();
         sectionMeshes.Clear();
+        waterMeshes.Clear();
         meshJobInFlight.Clear();
     }
 
