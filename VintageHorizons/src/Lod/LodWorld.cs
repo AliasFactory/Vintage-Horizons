@@ -12,7 +12,15 @@ public class LodWorld
 {
     public const int MaxLevel = 6; // L6 sections span 4096 blocks (64-block columns at the horizon)
 
+    /// <summary>Level 0 is selected out to twice this distance; each level doubles the band.</summary>
+    public const double DetailDistance = 512;
+
     public readonly Dictionary<long, LodSection> Sections = new();
+
+    /// <summary>Set by the coordinator when persistence is available: reload an evicted section from disk.</summary>
+    public Func<long, LodSection?>? LoadFromStore;
+
+    public int EvictedSectionsTotal { get; private set; }
 
     /// <summary>Sections whose mesh is stale.</summary>
     public readonly HashSet<long> RenderDirty = new();
@@ -56,10 +64,74 @@ public class LodWorld
     {
         if (Sections.TryGetValue(key, out LodSection? section)) return section;
 
+        // A previously-evicted section must come back from disk, not start empty —
+        // capture merges and mip propagation would otherwise clobber stored data.
+        if (HasDataSet.Contains(key))
+        {
+            section = LoadFromStore?.Invoke(key);
+            if (section != null)
+            {
+                Sections[key] = section;
+                return section;
+            }
+        }
+
         Sections[key] = section = new LodSection();
         RegisterInTree(key);
         return section;
     }
+
+    /// <summary>Get a section from RAM or disk without creating an empty one. For mesh scheduling.</summary>
+    public bool TryGetOrLoad(long key, out LodSection section)
+    {
+        if (Sections.TryGetValue(key, out section!)) return true;
+        if (!HasDataSet.Contains(key)) return false;
+
+        LodSection? loaded = LoadFromStore?.Invoke(key);
+        if (loaded == null) return false;
+
+        Sections[key] = section = loaded;
+        return true;
+    }
+
+    /// <summary>
+    /// Drop cold sections from RAM (their rows stay on disk; HasDataSet keeps the
+    /// quadtree semantics intact). Cold = the walk wants this area at least two
+    /// levels coarser than this section, and nothing dirty references it.
+    /// </summary>
+    public void EvictColdSections(double camX, double camZ, int budget)
+    {
+        List<long>? evict = null;
+
+        foreach ((long key, LodSection _) in Sections)
+        {
+            int level = KeyLevel(key);
+            if (level >= MaxLevel) continue;
+            if (SaveDirty.Contains(key) || MipDirty.Contains(key) || RenderDirty.Contains(key)) continue;
+
+            int footprint = KeyFootprintBlocks(key);
+            double minX = KeySx(key) * (double)footprint;
+            double minZ = KeySz(key) * (double)footprint;
+            double dx = Math.Max(0, Math.Max(minX - camX, camX - (minX + footprint)));
+            double dz = Math.Max(0, Math.Max(minZ - camZ, camZ - (minZ + footprint)));
+            double dist = Math.Sqrt(dx * dx + dz * dz);
+
+            if (WantedLevelFor(dist) < level + 2) continue;
+
+            (evict ??= new List<long>()).Add(key);
+            if (evict.Count >= budget) break;
+        }
+
+        if (evict == null) return;
+        foreach (long key in evict)
+        {
+            Sections.Remove(key);
+            EvictedSectionsTotal++;
+        }
+    }
+
+    public static int WantedLevelFor(double distance) =>
+        (int)Math.Clamp(Math.Log2(Math.Max(1.0, distance / DetailDistance)), 0, MaxLevel);
 
     void RegisterInTree(long key)
     {

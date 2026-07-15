@@ -105,6 +105,33 @@ public class LodStore : SQLiteDBConnection
         }
     }
 
+    SqliteCommand? loadOneCmd;
+
+    /// <summary>Load a single section row, or null if absent/unreadable. Used for demand reload after RAM eviction.</summary>
+    public LodSection? LoadSection(int level, int sx, int sz, IWorldAccessor world)
+    {
+        lock (transactionLock)
+        {
+            if (loadOneCmd == null)
+            {
+                loadOneCmd = sqliteConn.CreateCommand();
+                loadOneCmd.CommandText = "SELECT Data FROM Section WHERE Detail=@detail AND SX=@sx AND SZ=@sz";
+                loadOneCmd.Parameters.Add("@detail", SqliteType.Integer);
+                loadOneCmd.Parameters.Add("@sx", SqliteType.Integer);
+                loadOneCmd.Parameters.Add("@sz", SqliteType.Integer);
+                loadOneCmd.Prepare();
+            }
+
+            loadOneCmd.Parameters["@detail"].Value = level;
+            loadOneCmd.Parameters["@sx"].Value = sx;
+            loadOneCmd.Parameters["@sz"].Value = sz;
+
+            object? blob = loadOneCmd.ExecuteScalar();
+            if (blob is not byte[] bytes) return null;
+            return Deserialize(bytes, world);
+        }
+    }
+
     public int LoadAllSections(IWorldAccessor world, Action<int, int, int, LodSection, bool> onSection)
     {
         int count = 0;
@@ -240,6 +267,8 @@ public class LodStore : SQLiteDBConnection
     {
         upsertCmd?.Dispose();
         upsertCmd = null;
+        loadOneCmd?.Dispose();
+        loadOneCmd = null;
         base.Close();
     }
 }

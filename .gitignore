@@ -10,3 +10,7 @@ obj/
 .vs/
 .idea/
 .vscode/
+
+# Isolated game data dir for automated test instances
+.testdata/
+dist/

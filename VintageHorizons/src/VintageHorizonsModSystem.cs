@@ -91,12 +91,21 @@ public class VintageHorizonsModSystem : ModSystem
         if (queuedColumns.TryAdd(key, 0)) pendingColumns.Enqueue(key);
     }
 
+    int tickCounter;
+
     void OnGameTick(float dt)
     {
         ScheduleCaptures();
         ApplyCaptureResults();
         world.ProcessPropagation(PropagationsPerTick);
         SaveSomeDirtySections(SectionSavesPerTick);
+
+        // RAM eviction sweep every ~5s; only meaningful when reload-from-disk exists.
+        if (++tickCounter % 100 == 0 && world.LoadFromStore != null)
+        {
+            var pos = capi.World.Player.Entity.Pos;
+            world.EvictColdSections(pos.X, pos.Z, 50);
+        }
     }
 
     // ---- Capture scheduling (main thread gathers refs, worker reads blocks) ----
@@ -268,9 +277,10 @@ public class VintageHorizonsModSystem : ModSystem
     void LogStats(string prefix)
     {
         Mod.Logger.Notification(
-            "{0}: {1} sections [{2}] ({3} from cache), {4} meshes ({5} evicted), {6} drawn [{7}], {8} columns captured, " +
-            "{9} pending, worker: {10} captures / {11} meshes queued / {12}+{13} errors, {14} awaiting mip, {15} render-dirty",
-            prefix, world.Sections.Count, world.DescribeLevels(), cachedSectionsLoaded,
+            "{0}: {1} sections resident [{2}] ({3} RAM-evicted, {4} from cache), {5} meshes ({6} evicted), " +
+            "{7} drawn [{8}], {9} columns captured, {10} pending, " +
+            "worker: {11} captures / {12} meshes queued / {13}+{14} errors, {15} awaiting mip, {16} render-dirty",
+            prefix, world.Sections.Count, world.DescribeLevels(), world.EvictedSectionsTotal, cachedSectionsLoaded,
             renderer.MeshCount, renderer.EvictedTotal, renderer.LastDrawCount, renderer.DescribeDrawnLevels(),
             columnsCaptured, pendingColumns.Count, worker.PendingCaptures, worker.PendingMeshes,
             worker.CaptureErrors, worker.MeshErrors, world.MipDirty.Count, world.RenderDirty.Count);
@@ -293,12 +303,15 @@ public class VintageHorizonsModSystem : ModSystem
         }
 
         store = newStore;
+        world.LoadFromStore = key => store?.LoadSection(
+            LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key), capi.World);
         cachedSectionsLoaded = store.LoadAllSections(capi.World, world.InstallLoadedSection);
         Mod.Logger.Notification("LOD cache: {0}", dbPath);
     }
 
     void OnLeaveWorld()
     {
+        world.LoadFromStore = null;
         if (store != null)
         {
             SaveSomeDirtySections(int.MaxValue);

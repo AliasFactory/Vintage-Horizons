@@ -47,6 +47,7 @@
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ModFolder)" />
     <Copy SourceFiles="$(TargetDir)$(AssemblyName).pdb" DestinationFolder="$(ModFolder)" Condition="Exists('$(TargetDir)$(AssemblyName).pdb')" />
     <Copy SourceFiles="modinfo.json" DestinationFolder="$(ModFolder)" />
+    <Copy SourceFiles="modicon.png" DestinationFolder="$(ModFolder)" Condition="Exists('modicon.png')" />
     <Copy SourceFiles="@(AssetFiles)" DestinationFolder="$(ModFolder)assets/%(RecursiveDir)" />
   </Target>
 

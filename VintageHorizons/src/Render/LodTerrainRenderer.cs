@@ -25,9 +25,6 @@ public class LodTerrainRenderer : IRenderer
     const int MeshUploadsPerFrame = 4;
     const int MaxWorkerMeshBacklog = 12;
 
-    /// <summary>Level 0 renders out to twice this distance; each level doubles the band.</summary>
-    const double DetailDistance = 512;
-
     readonly ICoreClientAPI capi;
     readonly LodWorld world;
     readonly LodWorker worker;
@@ -147,8 +144,7 @@ public class LodTerrainRenderer : IRenderer
         return Math.Sqrt(dx * dx + dz * dz);
     }
 
-    int WantedLevel(double distance) =>
-        GameMath.Clamp((int)Math.Log2(Math.Max(1.0, distance / DetailDistance)), 0, LodWorld.MaxLevel);
+    static int WantedLevel(double distance) => LodWorld.WantedLevelFor(distance);
 
     bool HasAnyMesh(long key) => sectionMeshes.ContainsKey(key) || waterMeshes.ContainsKey(key);
 
@@ -293,7 +289,18 @@ public class LodTerrainRenderer : IRenderer
     void RequestMesh(long key)
     {
         if (meshJobInFlight.Contains(key)) return;
-        if (!world.Sections.TryGetValue(key, out LodSection? section) || section.CapturedColumns == 0) return;
+
+        // RAM-evicted sections still count: HasDataSet says whether the subtree has
+        // data at all; the scheduler reloads the row from disk when it picks the job.
+        if (world.Sections.TryGetValue(key, out LodSection? section))
+        {
+            if (section.CapturedColumns == 0) return;
+        }
+        else if (!world.HasDataSet.Contains(key))
+        {
+            return;
+        }
+
         world.RenderDirty.Add(key);
     }
 
@@ -352,7 +359,7 @@ public class LodTerrainRenderer : IRenderer
 
             world.RenderDirty.Remove(best);
 
-            if (!world.Sections.TryGetValue(best, out LodSection? section) || section.CapturedColumns == 0)
+            if (!world.TryGetOrLoad(best, out LodSection section) || section.CapturedColumns == 0)
             {
                 if (sectionMeshes.Remove(best, out MeshRef? stale)) stale.Dispose();
                 if (waterMeshes.Remove(best, out MeshRef? staleWater)) staleWater.Dispose();
