@@ -7,6 +7,12 @@ using Vintagestory.API.MathTools;
 
 namespace VintageHorizons;
 
+public class VintageHorizonsConfig
+{
+    /// <summary>0 = unlimited.</summary>
+    public int FarViewDistanceCap = 0;
+}
+
 /// <summary>
 /// Entry point and main-thread coordinator. Client-only: builds LODs purely from
 /// chunk data the client receives, so it works on any server. Chunk columns are
@@ -50,11 +56,22 @@ public class VintageHorizonsModSystem : ModSystem
     {
         capi = api;
 
+        VintageHorizonsConfig config;
+        try
+        {
+            config = capi.LoadModConfig<VintageHorizonsConfig>("vintagehorizons.json") ?? new VintageHorizonsConfig();
+        }
+        catch
+        {
+            config = new VintageHorizonsConfig();
+        }
+
         world = new LodWorld();
         worker = new LodWorker();
         renderer = new LodTerrainRenderer(capi, world, worker)
         {
             AutoUnpause = Environment.GetEnvironmentVariable("VINTAGEHORIZONS_AUTOUNPAUSE") == "1",
+            FarViewDistanceCap = config.FarViewDistanceCap,
         };
 
         capi.Event.ChunkDirty += OnChunkDirty;
@@ -308,9 +325,13 @@ public class VintageHorizonsModSystem : ModSystem
             {
                 int blocks = (int)args[0];
                 renderer.FarViewDistanceCap = blocks <= 0 ? 0 : GameMath.Clamp(blocks, 1024, 262144);
+                capi.StoreModConfig(new VintageHorizonsConfig
+                {
+                    FarViewDistanceCap = renderer.FarViewDistanceCap,
+                }, "vintagehorizons.json");
                 return TextCommandResult.Success(renderer.FarViewDistanceCap > 0
-                    ? $"[VintageHorizons] render distance capped at {renderer.FarViewDistanceCap}"
-                    : "[VintageHorizons] render distance unlimited");
+                    ? $"[VintageHorizons] render distance capped at {renderer.FarViewDistanceCap} (saved)"
+                    : "[VintageHorizons] render distance unlimited (saved)");
             });
     }
 
