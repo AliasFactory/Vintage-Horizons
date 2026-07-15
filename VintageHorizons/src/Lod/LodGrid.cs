@@ -41,6 +41,7 @@ public class LodGrid
 
     public readonly Dictionary<long, LodRegion> Regions = new();
     public readonly HashSet<long> DirtyRegions = new();
+    public readonly HashSet<long> SaveDirtyRegions = new();
 
     public int ColumnsProcessed { get; private set; }
     public int PendingColumns => pendingColumns.Count;
@@ -121,12 +122,16 @@ public class LodGrid
         int gz = (blockZ % RegionBlocks) / SampleStep;
         int idx = gz * LodRegion.GridSize + gx;
 
+        // Change gating: identical re-received data costs a compare, not a mesh rebuild + DB write.
+        if (region.HasData[idx] && region.Heights[idx] == height && region.Colors[idx] == color) return;
+
         if (!region.HasData[idx]) region.FilledSamples++;
         region.Heights[idx] = height;
         region.Colors[idx] = color;
         region.HasData[idx] = true;
 
         DirtyRegions.Add(rkey);
+        SaveDirtyRegions.Add(rkey);
 
         // Meshes stitch to their east/south neighbors' first row/column, so new data on
         // our west/north edge means the west/north neighbor's mesh is stale.
@@ -153,10 +158,19 @@ public class LodGrid
         return true;
     }
 
+    /// <summary>Adds a region loaded from the persistent cache (render-dirty, not save-dirty).</summary>
+    public void InstallLoadedRegion(int rx, int rz, LodRegion region)
+    {
+        long rkey = RegionKey(rx, rz);
+        Regions[rkey] = region;
+        DirtyRegions.Add(rkey);
+    }
+
     public void Clear()
     {
         Regions.Clear();
         DirtyRegions.Clear();
+        SaveDirtyRegions.Clear();
         queuedColumns.Clear();
         while (pendingColumns.TryDequeue(out _)) { }
         ColumnsProcessed = 0;

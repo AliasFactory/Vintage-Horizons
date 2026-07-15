@@ -24,8 +24,14 @@ public class LodTerrainRenderer : IRenderer
     readonly Matrixf modelMat = new();
     IShaderProgram? prog;
     bool shaderOk;
+    float appliedZFar;
 
-    public int FarViewDistance = 4096;
+    /// <summary>Optional hard cap in blocks; 0 = unlimited (render every cached region).</summary>
+    public int FarViewDistanceCap = 0;
+
+    /// <summary>Current far edge in blocks: the farthest loaded LOD data, independent of the vanilla view distance.</summary>
+    public float EffectiveFarDistance { get; private set; } = 3000;
+
     public int MeshCount => regionMeshes.Count;
 
     public LodTerrainRenderer(ICoreClientAPI capi, LodGrid grid)
@@ -53,19 +59,51 @@ public class LodTerrainRenderer : IRenderer
         return shaderOk;
     }
 
-    /// <summary>Extend the camera far plane so LOD terrain isn't clipped. Call once the level is ready.</summary>
+    /// <summary>
+    /// Extend the camera far plane to cover the farthest loaded LOD data. Cheap when
+    /// nothing changed; re-applies automatically if the game reset the projection
+    /// (e.g. the player changed the vanilla view distance in settings).
+    /// </summary>
     public void ApplyZFar()
     {
+        float needed = GameMath.Max(3000, EffectiveFarDistance + 512);
         var clientMain = (ClientMain)capi.World;
-        clientMain.MainCamera.ZFar = GameMath.Max(3000, FarViewDistance + 512);
+
+        if (clientMain.MainCamera.ZFar >= needed && appliedZFar == needed) return;
+
+        clientMain.MainCamera.ZFar = needed;
         capi.Render.Reset3DProjection();
+        appliedZFar = needed;
+    }
+
+    /// <summary>Farthest region edge from the camera, clamped to the cap (if any) and floored above the vanilla ring.</summary>
+    void UpdateEffectiveFarDistance(Vec3d camPos, float vanillaViewDistance)
+    {
+        double maxDistSq = 0;
+        foreach (long rkey in regionMeshes.Keys)
+        {
+            int rx = (int)(rkey & 0xFFFFFFFF);
+            int rz = (int)(rkey >> 32);
+            double dx = rx * (double)LodGrid.RegionBlocks + LodGrid.RegionBlocks / 2.0 - camPos.X;
+            double dz = rz * (double)LodGrid.RegionBlocks + LodGrid.RegionBlocks / 2.0 - camPos.Z;
+            double distSq = dx * dx + dz * dz;
+            if (distSq > maxDistSq) maxDistSq = distSq;
+        }
+
+        float far = (float)Math.Sqrt(maxDistSq) + LodGrid.RegionBlocks * 1.5f;
+        if (FarViewDistanceCap > 0) far = Math.Min(far, FarViewDistanceCap);
+
+        // Keep the shader's transition band well-formed even with little data:
+        // the far edge must stay beyond the inner (vanilla) transition ring.
+        EffectiveFarDistance = GameMath.Max(far, vanillaViewDistance + 1536);
     }
 
     void RebuildDirtyMeshes()
     {
         if (grid.DirtyRegions.Count == 0) return;
 
-        int budget = MaxMeshRebuildsPerFrame;
+        // Burst through large backlogs (e.g. right after loading the persistent cache).
+        int budget = grid.DirtyRegions.Count > 32 ? 8 : MaxMeshRebuildsPerFrame;
         List<long>? done = null;
 
         foreach (long rkey in grid.DirtyRegions)
@@ -167,7 +205,18 @@ public class LodTerrainRenderer : IRenderer
         if (regionMeshes.Count == 0) return;
 
         Vec3d camPos = capi.World.Player.Entity.CameraPos;
-        float viewDistance = capi.World.Player.WorldData.DesiredViewDistance;
+
+        // Inner transition ring = where real terrain actually ends. On servers the
+        // approved distance can be far below the client's desired setting.
+        var playerData = capi.World.Player.WorldData;
+        float viewDistance = playerData.DesiredViewDistance;
+        if (playerData.LastApprovedViewDistance > 0)
+        {
+            viewDistance = Math.Min(viewDistance, playerData.LastApprovedViewDistance);
+        }
+
+        UpdateEffectiveFarDistance(camPos, viewDistance);
+        ApplyZFar();
 
         prog.Use();
 
@@ -184,9 +233,15 @@ public class LodTerrainRenderer : IRenderer
         prog.Uniform("horizonFog", capi.Ambient.BlendedCloudDensity);
 
         prog.Uniform("viewDistance", viewDistance);
-        prog.Uniform("farViewDistance", (float)FarViewDistance);
+        prog.Uniform("farViewDistance", EffectiveFarDistance);
 
-        float cullDistSq = (FarViewDistance + LodGrid.RegionBlocks) * (float)(FarViewDistance + LodGrid.RegionBlocks);
+        // Only cull by distance when a hard cap is set; default is unlimited.
+        float cullDistSq = float.MaxValue;
+        if (FarViewDistanceCap > 0)
+        {
+            float cull = FarViewDistanceCap + LodGrid.RegionBlocks;
+            cullDistSq = cull * cull;
+        }
 
         foreach ((long rkey, MeshRef meshRef) in regionMeshes)
         {

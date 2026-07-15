@@ -19,16 +19,28 @@ export VINTAGE_STORY="$HOME/Games/vintagestory1.22.3"   # your game path
 dotnet build VintageHorizons
 ```
 
-The build assembles a loadable mod folder at `VintageHorizons/bin/Debug/Mods/vintagehorizons`.
+The build assembles a loadable mod folder at `VintageHorizons/bin/Debug/net10.0/Mods/vintagehorizons`.
 
 Run the game with the dev build:
 
 ```sh
-cd "$VINTAGE_STORY"
-dotnet Vintagestory.dll --tracelog \
-  --addModPath /path/to/repo/VintageHorizons/bin/Debug/Mods \
-  --addOrigin /path/to/repo/VintageHorizons/assets
+scripts/dev-run.sh              # opens/creates the "vhsurvival" test world
+scripts/dev-run.sh myworld      # a different world
 ```
+
+Development notes:
+
+- **Shaders must be pure ASCII** (even comments). The engine's OpenTK marshaling
+  truncates the GL source by the difference between UTF-8 bytes and char count,
+  which silently cuts the end off the shader.
+- Worlds created via `-o` default to the `creativebuilding` playstyle, which is
+  **superflat** — the dev script passes `surviveandbuild` for real terrain.
+- Singleplayer pauses while the game window is unfocused (ESC menu), which stops
+  game ticks — and with them LOD ingestion and cache saves.
+- In-game commands: `.vhinfo` (status), `.vhfar <blocks>` (cap the LOD render
+  distance; `0` = unlimited, the default).
+- The per-world LOD cache lives in
+  `VintagestoryData/ModData/vintagehorizons/<savegame-id>.db`.
 
 ## Credits
 
