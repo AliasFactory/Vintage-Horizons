@@ -90,13 +90,16 @@ public class LodWorld
         }
     }
 
-    /// <summary>Adds a section loaded from the persistent cache.</summary>
+    /// <summary>
+    /// Adds a section loaded from the persistent cache. Deliberately NOT render-dirty:
+    /// the quadtree walk demand-requests meshes for exactly the nodes it selects,
+    /// so startup meshes what's visible instead of everything ever explored.
+    /// </summary>
     public void InstallLoadedSection(int level, int sx, int sz, LodSection section, bool applyToParent)
     {
         long key = SectionKey(level, sx, sz);
         Sections[key] = section;
         RegisterInTree(key);
-        RenderDirty.Add(key);
         if (applyToParent && level < MaxLevel) MipDirty.Add(key);
     }
 

@@ -1,4 +1,16 @@
-# M4 first pass — overnight status (branch `m4-blockdata`)
+# M4/M5 status notes
+
+## M5 progress (2026-07-15 morning)
+
+- **VRAM eviction + demand-driven re-meshing** (first M5 item): meshes the quadtree
+  hasn't selected for ~60s are disposed; when the walk wants a missing mesh again it
+  re-requests it via the render-dirty queue (the selection walk IS the load queue —
+  Voxy's idea, CPU-side). No holes: a section only stops being selected when its
+  parent renders instead, and re-requested nodes stay covered by the parent until
+  their mesh uploads. Remaining M5 items: greedy quad merging, seasonal tint classes
+  + snow line, config GUI/persisted settings, RAM-side section eviction, ModDB prep.
+
+# M4 first pass — overnight status (branch `m4-blockdata`, merged to master)
 
 ## What this branch does
 

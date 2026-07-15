@@ -240,11 +240,11 @@ public class VintageHorizonsModSystem : ModSystem
     void LogStats(string prefix)
     {
         Mod.Logger.Notification(
-            "{0}: {1} sections [{2}] ({3} from cache), {4} meshes, {5} drawn [{6}], {7} columns captured, " +
-            "{8} pending, worker: {9} captures / {10} meshes queued / {11}+{12} errors, {13} awaiting mip, {14} render-dirty",
+            "{0}: {1} sections [{2}] ({3} from cache), {4} meshes ({5} evicted), {6} drawn [{7}], {8} columns captured, " +
+            "{9} pending, worker: {10} captures / {11} meshes queued / {12}+{13} errors, {14} awaiting mip, {15} render-dirty",
             prefix, world.Sections.Count, world.DescribeLevels(), cachedSectionsLoaded,
-            renderer.MeshCount, renderer.LastDrawCount, renderer.DescribeDrawnLevels(), columnsCaptured,
-            pendingColumns.Count, worker.PendingCaptures, worker.PendingMeshes,
+            renderer.MeshCount, renderer.EvictedTotal, renderer.LastDrawCount, renderer.DescribeDrawnLevels(),
+            columnsCaptured, pendingColumns.Count, worker.PendingCaptures, worker.PendingMeshes,
             worker.CaptureErrors, worker.MeshErrors, world.MipDirty.Count, world.RenderDirty.Count);
     }
 

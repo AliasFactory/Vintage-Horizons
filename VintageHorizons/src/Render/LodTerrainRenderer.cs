@@ -33,6 +33,15 @@ public class LodTerrainRenderer : IRenderer
     readonly Dictionary<long, MeshRef> sectionMeshes = new();
     readonly Dictionary<long, MeshRef> waterMeshes = new();
     readonly HashSet<long> meshJobInFlight = new();
+    readonly Dictionary<long, long> lastSelectedFrame = new();
+    readonly List<long> evictBatch = new();
+    long frameCounter;
+
+    /// <summary>Meshes unselected for this many frames (~1 min) get evicted; the quadtree re-requests on demand.</summary>
+    const int EvictAfterFrames = 3600;
+    const int EvictSweepInterval = 300;
+
+    public int EvictedTotal { get; private set; }
     readonly Matrixf modelMat = new();
     readonly List<long> drawList = new();
     IShaderProgram? prog;
@@ -149,32 +158,73 @@ public class LodTerrainRenderer : IRenderer
     {
         bool hasMesh = HasAnyMesh(key);
         int level = LodWorld.KeyLevel(key);
+        int wanted = WantedLevel(NearestDistanceTo(key));
 
-        if (level > 0)
+        // Demand-driven meshing: request ONLY at the level the walk actually wants
+        // here. Descending through meshless parents must not request every leaf the
+        // recursion happens to reach — coarser/finer nodes on the path stay unmeshed
+        // until the wanted level for their own distance says otherwise.
+        if (!hasMesh && level == wanted) RequestMesh(key);
+
+        if (level > 0 && ((level > wanted && AllChildrenCovered(key)) || !hasMesh))
         {
-            bool wantFiner = level > WantedLevel(NearestDistanceTo(key));
-
-            if ((wantFiner && AllChildrenCovered(key)) || !hasMesh)
+            bool anyChildDrew = false;
+            for (int qz = 0; qz < 2; qz++)
             {
-                bool anyChildDrew = false;
-                for (int qz = 0; qz < 2; qz++)
+                for (int qx = 0; qx < 2; qx++)
                 {
-                    for (int qx = 0; qx < 2; qx++)
-                    {
-                        long ck = LodWorld.ChildKey(key, qx, qz);
-                        if (world.HasDataSet.Contains(ck)) anyChildDrew |= CollectDrawNodes(ck);
-                    }
+                    long ck = LodWorld.ChildKey(key, qx, qz);
+                    if (world.HasDataSet.Contains(ck)) anyChildDrew |= CollectDrawNodes(ck);
                 }
-                if (anyChildDrew || !hasMesh) return anyChildDrew;
             }
+            if (anyChildDrew || !hasMesh) return anyChildDrew;
         }
 
         if (hasMesh)
         {
             drawList.Add(key);
+            lastSelectedFrame[key] = frameCounter;
             return true;
         }
         return false;
+    }
+
+    /// <summary>Demand-driven (re)meshing: the selection walk is the load queue (Voxy's idea, CPU-side).</summary>
+    void RequestMesh(long key)
+    {
+        if (meshJobInFlight.Contains(key)) return;
+        if (!world.Sections.TryGetValue(key, out LodSection? section) || section.CapturedColumns == 0) return;
+        world.RenderDirty.Add(key);
+    }
+
+    void EvictStaleMeshes()
+    {
+        if (frameCounter % EvictSweepInterval != 0) return;
+
+        evictBatch.Clear();
+        foreach ((long key, MeshRef _) in sectionMeshes)
+        {
+            if (!lastSelectedFrame.TryGetValue(key, out long last) || frameCounter - last > EvictAfterFrames)
+            {
+                evictBatch.Add(key);
+            }
+        }
+        foreach ((long key, MeshRef _) in waterMeshes)
+        {
+            if (!sectionMeshes.ContainsKey(key)
+                && (!lastSelectedFrame.TryGetValue(key, out long last) || frameCounter - last > EvictAfterFrames))
+            {
+                evictBatch.Add(key);
+            }
+        }
+
+        foreach (long key in evictBatch)
+        {
+            if (sectionMeshes.Remove(key, out MeshRef? mesh)) mesh.Dispose();
+            if (waterMeshes.Remove(key, out MeshRef? water)) water.Dispose();
+            lastSelectedFrame.Remove(key);
+            EvictedTotal++;
+        }
     }
 
     // ---- Mesh job scheduling + result upload ----
@@ -247,6 +297,9 @@ public class LodTerrainRenderer : IRenderer
                 waterMeshes[result.Key] = Upload(result.WaterXyz, result.WaterRgba!, result.WaterIndices!,
                     result.WaterVertexCount, result.WaterIndexCount);
             }
+
+            // Fresh uploads get a grace stamp so they aren't evicted before first selection.
+            lastSelectedFrame[result.Key] = frameCounter;
         }
     }
 
@@ -273,9 +326,11 @@ public class LodTerrainRenderer : IRenderer
         if (rapi.FrameWidth == 0) return;
 
         camPos = capi.World.Player.Entity.CameraPos;
+        frameCounter++;
 
         ScheduleMeshJobs();
         UploadFinishedMeshes();
+        EvictStaleMeshes();
         if (sectionMeshes.Count == 0 && waterMeshes.Count == 0) return;
 
         var playerData = capi.World.Player.WorldData;
@@ -362,6 +417,7 @@ public class LodTerrainRenderer : IRenderer
         sectionMeshes.Clear();
         waterMeshes.Clear();
         meshJobInFlight.Clear();
+        lastSelectedFrame.Clear();
     }
 
     public void Dispose()
