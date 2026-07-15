@@ -99,15 +99,25 @@ public class LodWorld
     /// quadtree semantics intact). Cold = the walk wants this area at least two
     /// levels coarser than this section, and nothing dirty references it.
     /// </summary>
+    public int LastSweepChecked { get; private set; }
+    public int LastSweepPinned { get; private set; }
+    public int LastSweepCold { get; private set; }
+
     public void EvictColdSections(double camX, double camZ, int budget)
     {
         List<long>? evict = null;
+        LastSweepChecked = 0;
+        LastSweepPinned = 0;
+        LastSweepCold = 0;
 
         foreach ((long key, LodSection _) in Sections)
         {
+            LastSweepChecked++;
             int level = KeyLevel(key);
             if (level >= MaxLevel) continue;
-            if (SaveDirty.Contains(key) || MipDirty.Contains(key) || RenderDirty.Contains(key)) continue;
+            // Unsaved or unpropagated data pins a section; a pending mesh rebuild does
+            // NOT — the scheduler demand-reloads from disk when its turn comes.
+            if (SaveDirty.Contains(key) || MipDirty.Contains(key)) { LastSweepPinned++; continue; }
 
             int footprint = KeyFootprintBlocks(key);
             double minX = KeySx(key) * (double)footprint;
@@ -118,6 +128,7 @@ public class LodWorld
 
             if (WantedLevelFor(dist) < level + 2) continue;
 
+            LastSweepCold++;
             (evict ??= new List<long>()).Add(key);
             if (evict.Count >= budget) break;
         }
@@ -163,14 +174,14 @@ public class LodWorld
     }
 
     /// <summary>
-    /// Adds a section loaded from the persistent cache. Deliberately NOT render-dirty:
-    /// the quadtree walk demand-requests meshes for exactly the nodes it selects,
-    /// so startup meshes what's visible instead of everything ever explored.
+    /// Registers a stored section KEY from the persistent cache — no data attached.
+    /// The quadtree skeleton (HasDataSet/TopLevelKeys) and pending-mip flags come
+    /// from keys alone; section data demand-loads when first needed, so join time
+    /// and RAM stay independent of how much was ever explored.
     /// </summary>
-    public void InstallLoadedSection(int level, int sx, int sz, LodSection section, bool applyToParent)
+    public void InstallStoredKey(int level, int sx, int sz, bool applyToParent)
     {
         long key = SectionKey(level, sx, sz);
-        Sections[key] = section;
         RegisterInTree(key);
         if (applyToParent && level < MaxLevel) MipDirty.Add(key);
     }
@@ -195,7 +206,7 @@ public class LodWorld
             SaveDirty.Add(childKey); // persist the cleared ApplyToParent flag
 
             if (KeyLevel(childKey) >= MaxLevel) continue;
-            if (!Sections.TryGetValue(childKey, out LodSection? child) || child.CapturedColumns == 0) continue;
+            if (!TryGetOrLoad(childKey, out LodSection child) || child.CapturedColumns == 0) continue;
 
             long parentKey = ParentKey(childKey);
             LodSection parent = GetOrCreateSection(parentKey);

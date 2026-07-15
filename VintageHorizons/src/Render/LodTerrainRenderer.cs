@@ -336,6 +336,29 @@ public class LodTerrainRenderer : IRenderer
 
     // ---- Mesh job scheduling + result upload ----
 
+    readonly List<long> dirtyPrune = new();
+
+    /// <summary>
+    /// Drop meaningless render-dirty entries: no live mesh AND not at the level the
+    /// walk wants there. Meshing them would waste work and pin their sections
+    /// against RAM eviction; demand re-requests cover them if ever needed. Runs
+    /// every frame regardless of worker backlog — pruning must never starve.
+    /// </summary>
+    void PruneRenderDirty()
+    {
+        if (world.RenderDirty.Count == 0) return;
+
+        dirtyPrune.Clear();
+        foreach (long key in world.RenderDirty)
+        {
+            if (!HasAnyMesh(key) && LodWorld.KeyLevel(key) != WantedLevel(NearestDistanceTo(key)))
+            {
+                dirtyPrune.Add(key);
+            }
+        }
+        foreach (long key in dirtyPrune) world.RenderDirty.Remove(key);
+    }
+
     void ScheduleMeshJobs()
     {
         if (world.RenderDirty.Count == 0 || worker.PendingMeshes >= MaxWorkerMeshBacklog) return;
@@ -355,7 +378,7 @@ public class LodTerrainRenderer : IRenderer
                     best = key;
                 }
             }
-            if (bestDist == double.MaxValue) return; // everything dirty is already in flight
+            if (bestDist == double.MaxValue) return; // everything dirty is in flight
 
             world.RenderDirty.Remove(best);
 
@@ -435,6 +458,7 @@ public class LodTerrainRenderer : IRenderer
         camPos = capi.World.Player.Entity.CameraPos;
         frameCounter++;
 
+        PruneRenderDirty();
         ScheduleMeshJobs();
         UploadFinishedMeshes();
         EvictStaleMeshes();

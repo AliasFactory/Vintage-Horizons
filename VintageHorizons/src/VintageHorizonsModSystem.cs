@@ -25,7 +25,7 @@ public class VintageHorizonsModSystem : ModSystem
     const int CaptureSchedulesPerTick = 8;
     const int CaptureAppliesPerTick = 8;
     const int PropagationsPerTick = 3;
-    const int SectionSavesPerTick = 2;
+    const int SectionSavesPerTick = 6;
     const int MaxWorkerCaptureBacklog = 24;
     const int ChunkSize = GlobalConstants.ChunkSize;
 
@@ -92,9 +92,15 @@ public class VintageHorizonsModSystem : ModSystem
     }
 
     int tickCounter;
+    bool pipelineActive;
 
     void OnGameTick(float dt)
     {
+        // Nothing may touch sections before the store loader exists: applying a
+        // capture to a freshly-created empty section would shadow (and later
+        // overwrite) the stored row. The column queue holds work until then.
+        if (!pipelineActive) return;
+
         ScheduleCaptures();
         ApplyCaptureResults();
         world.ProcessPropagation(PropagationsPerTick);
@@ -105,6 +111,12 @@ public class VintageHorizonsModSystem : ModSystem
         {
             var pos = capi.World.Player.Entity.Pos;
             world.EvictColdSections(pos.X, pos.Z, 50);
+            if (tickCounter % 1200 == 0)
+            {
+                Mod.Logger.Notification("Evict sweep at {0},{1}: checked {2}, pinned {3}, cold {4}, total evicted {5}",
+                    (int)pos.X, (int)pos.Z, world.LastSweepChecked, world.LastSweepPinned,
+                    world.LastSweepCold, world.EvictedSectionsTotal);
+            }
         }
     }
 
@@ -231,6 +243,7 @@ public class VintageHorizonsModSystem : ModSystem
     {
         renderer.ApplyZFar();
         OpenLodCache();
+        pipelineActive = true;
 
         Mod.Logger.Notification(
             "Level finalized. LOD capture active (render distance: unlimited, {0} sections from cache{1}).",
@@ -255,9 +268,12 @@ public class VintageHorizonsModSystem : ModSystem
         }
     }
 
+    static readonly int ExploreHopBlocks =
+        int.TryParse(Environment.GetEnvironmentVariable("VINTAGEHORIZONS_EXPLORE_HOP"), out int h) && h > 0 ? h : 350;
+
     void ExploreHop()
     {
-        const int hop = 350;
+        int hop = ExploreHopBlocks;
 
         exploreX += exploreDirX * hop;
         exploreZ += exploreDirZ * hop;
@@ -279,11 +295,12 @@ public class VintageHorizonsModSystem : ModSystem
         Mod.Logger.Notification(
             "{0}: {1} sections resident [{2}] ({3} RAM-evicted, {4} from cache), {5} meshes ({6} evicted), " +
             "{7} drawn [{8}], {9} columns captured, {10} pending, " +
-            "worker: {11} captures / {12} meshes queued / {13}+{14} errors, {15} awaiting mip, {16} render-dirty",
+            "worker: {11} captures / {12} meshes queued / {13}+{14} errors, {15} awaiting mip, {16} render-dirty, {17} unsaved",
             prefix, world.Sections.Count, world.DescribeLevels(), world.EvictedSectionsTotal, cachedSectionsLoaded,
             renderer.MeshCount, renderer.EvictedTotal, renderer.LastDrawCount, renderer.DescribeDrawnLevels(),
             columnsCaptured, pendingColumns.Count, worker.PendingCaptures, worker.PendingMeshes,
-            worker.CaptureErrors, worker.MeshErrors, world.MipDirty.Count, world.RenderDirty.Count);
+            worker.CaptureErrors, worker.MeshErrors, world.MipDirty.Count, world.RenderDirty.Count,
+            world.SaveDirty.Count);
     }
 
     void OpenLodCache()
@@ -305,12 +322,13 @@ public class VintageHorizonsModSystem : ModSystem
         store = newStore;
         world.LoadFromStore = key => store?.LoadSection(
             LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key), capi.World);
-        cachedSectionsLoaded = store.LoadAllSections(capi.World, world.InstallLoadedSection);
+        cachedSectionsLoaded = store.LoadAllKeys(world.InstallStoredKey);
         Mod.Logger.Notification("LOD cache: {0}", dbPath);
     }
 
     void OnLeaveWorld()
     {
+        pipelineActive = false;
         world.LoadFromStore = null;
         if (store != null)
         {

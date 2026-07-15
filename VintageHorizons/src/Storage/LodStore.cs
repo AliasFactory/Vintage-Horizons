@@ -128,34 +128,45 @@ public class LodStore : SQLiteDBConnection
 
             object? blob = loadOneCmd.ExecuteScalar();
             if (blob is not byte[] bytes) return null;
-            return Deserialize(bytes, world);
+
+            LodSection? section = Deserialize(bytes, world);
+            if (section == null)
+            {
+                // Unreadable data must never linger to slow down or confuse future
+                // sessions — delete on sight; the area recaptures on exploration.
+                logger.Warning("[VintageHorizons] Deleting unreadable cached section L{0} {1},{2}", level, sx, sz);
+                DeleteSection(level, sx, sz);
+            }
+            return section;
         }
     }
 
-    public int LoadAllSections(IWorldAccessor world, Action<int, int, int, LodSection, bool> onSection)
+    void DeleteSection(int level, int sx, int sz)
+    {
+        using var cmd = sqliteConn.CreateCommand();
+        cmd.CommandText = "DELETE FROM Section WHERE Detail=@detail AND SX=@sx AND SZ=@sz";
+        cmd.Parameters.AddWithValue("@detail", level);
+        cmd.Parameters.AddWithValue("@sx", sx);
+        cmd.Parameters.AddWithValue("@sz", sz);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Enumerate stored section KEYS only — no blob parsing. Join-time cost stays
+    /// proportional to explored area count, not data size; section data itself is
+    /// demand-loaded when the renderer or pipeline first needs it.
+    /// </summary>
+    public int LoadAllKeys(Action<int, int, int, bool> onKey)
     {
         int count = 0;
         lock (transactionLock)
         {
             using var cmd = sqliteConn.CreateCommand();
-            cmd.CommandText = "SELECT Detail, SX, SZ, Data, ApplyToParent FROM Section";
+            cmd.CommandText = "SELECT Detail, SX, SZ, ApplyToParent FROM Section";
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
             {
-                int level = reader.GetInt32(0);
-                int sx = reader.GetInt32(1);
-                int sz = reader.GetInt32(2);
-                var blob = (byte[])reader[3];
-                bool applyToParent = reader.GetInt32(4) != 0;
-
-                LodSection? section = Deserialize(blob, world);
-                if (section == null)
-                {
-                    logger.Warning("[VintageHorizons] Skipping unreadable cached section L{0} {1},{2}", level, sx, sz);
-                    continue;
-                }
-
-                onSection(level, sx, sz, section, applyToParent);
+                onKey(reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3) != 0);
                 count++;
             }
         }
