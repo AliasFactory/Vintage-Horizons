@@ -1,26 +1,40 @@
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
 
 namespace VintageHorizons;
 
 /// <summary>
-/// Entry point. Client-only: builds LODs purely from chunk data the client receives,
-/// so it works on any server. See DESIGN.md at the repo root.
+/// Entry point and main-thread coordinator. Client-only: builds LODs purely from
+/// chunk data the client receives, so it works on any server. Chunk columns are
+/// captured into RLE sections on a worker thread; this class owns all mutation of
+/// the LodWorld (palette remaps, applies, mip propagation, saves) on game ticks.
+/// See DESIGN.md at the repo root.
 /// </summary>
 public class VintageHorizonsModSystem : ModSystem
 {
-    const int ColumnsPerTick = 8;
-    const int PropagationsPerTick = 4;
-    const int RegionSavesPerTick = 2;
+    const int CaptureSchedulesPerTick = 4;
+    const int CaptureAppliesPerTick = 4;
+    const int PropagationsPerTick = 3;
+    const int SectionSavesPerTick = 2;
+    const int MaxWorkerCaptureBacklog = 24;
+    const int ChunkSize = GlobalConstants.ChunkSize;
 
     ICoreClientAPI capi = null!;
-    LodGrid grid = null!;
+    LodWorld world = null!;
+    LodWorker worker = null!;
     LodTerrainRenderer renderer = null!;
     LodStore? store;
     long tickListenerId;
-    int cachedRegionsLoaded;
+    int cachedSectionsLoaded;
+    int columnsCaptured;
+
+    readonly ConcurrentDictionary<long, byte> queuedColumns = new();
+    readonly ConcurrentQueue<long> pendingColumns = new();
+    readonly BlockPos paletteSamplePos = new(0, 0, 0);
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Client;
 
@@ -28,8 +42,12 @@ public class VintageHorizonsModSystem : ModSystem
     {
         capi = api;
 
-        grid = new LodGrid(capi);
-        renderer = new LodTerrainRenderer(capi, grid);
+        world = new LodWorld();
+        worker = new LodWorker();
+        renderer = new LodTerrainRenderer(capi, world, worker)
+        {
+            AutoUnpause = Environment.GetEnvironmentVariable("VINTAGEHORIZONS_AUTOUNPAUSE") == "1",
+        };
 
         capi.Event.ChunkDirty += OnChunkDirty;
         capi.Event.LevelFinalize += OnLevelFinalize;
@@ -44,35 +62,124 @@ public class VintageHorizonsModSystem : ModSystem
 
     void OnChunkDirty(Vec3i chunkCoord, IWorldChunk chunk, EnumChunkDirtyReason reason)
     {
-        // Any reason warrants a resample: new terrain or changed terrain.
-        grid.EnqueueColumn(chunkCoord.X, chunkCoord.Z);
+        long key = ((long)chunkCoord.Z << 32) | (uint)chunkCoord.X;
+        if (queuedColumns.TryAdd(key, 0)) pendingColumns.Enqueue(key);
     }
 
     void OnGameTick(float dt)
     {
-        grid.ProcessPending(ColumnsPerTick);
-        grid.ProcessPropagation(PropagationsPerTick);
-        SaveSomeDirtyRegions(RegionSavesPerTick);
+        ScheduleCaptures();
+        ApplyCaptureResults();
+        world.ProcessPropagation(PropagationsPerTick);
+        SaveSomeDirtySections(SectionSavesPerTick);
     }
 
-    void SaveSomeDirtyRegions(int budget)
+    // ---- Capture scheduling (main thread gathers refs, worker reads blocks) ----
+
+    void ScheduleCaptures()
     {
-        if (store == null || grid.SaveDirtyRegions.Count == 0) return;
+        if (worker.PendingCaptures >= MaxWorkerCaptureBacklog) return;
+
+        int chunkYCount = capi.World.BlockAccessor.MapSizeY / ChunkSize;
+
+        for (int n = 0; n < CaptureSchedulesPerTick && pendingColumns.TryDequeue(out long key); n++)
+        {
+            queuedColumns.TryRemove(key, out _);
+            int cx = (int)(key & 0xFFFFFFFF);
+            int cz = (int)(key >> 32);
+
+            IMapChunk? mapChunk = capi.World.BlockAccessor.GetMapChunk(cx, cz);
+            ushort[]? rainMap = mapChunk?.RainHeightMap;
+            if (rainMap == null) continue;
+
+            var chunks = new IWorldChunk?[chunkYCount];
+            for (int cy = 0; cy < chunkYCount; cy++)
+            {
+                chunks[cy] = capi.World.BlockAccessor.GetChunk(cx, cy, cz);
+            }
+
+            worker.EnqueueCapture(new CaptureJob
+            {
+                Cx = cx,
+                Cz = cz,
+                Chunks = chunks,
+                RainMap = (ushort[])rainMap.Clone(),
+            });
+        }
+    }
+
+    // ---- Applying capture results: block ids → section palette ids ----
+
+    void ApplyCaptureResults()
+    {
+        for (int n = 0; n < CaptureAppliesPerTick && worker.CaptureResults.TryDequeue(out CaptureResult? result); n++)
+        {
+            LodSection section = world.GetOrCreateSection(result.SectionKey);
+
+            var pidByBlockId = new Dictionary<int, int>();
+            ulong[]?[] batch = result.RunsByColumn;
+
+            for (int col = 0; col < batch.Length; col++)
+            {
+                ulong[]? runs = batch[col];
+                if (runs == null) continue;
+
+                for (int i = 0; i < runs.Length; i++)
+                {
+                    int blockId = LodSection.RunPaletteId(runs[i]); // raw block id from capture
+                    if (!pidByBlockId.TryGetValue(blockId, out int pid))
+                    {
+                        pid = RegisterPaletteEntry(section, result, blockId, LodSection.RunYTop(runs[i]));
+                        pidByBlockId[blockId] = pid;
+                    }
+                    runs[i] = LodSection.PackRun(pid, LodSection.RunYTop(runs[i]), LodSection.RunYBottom(runs[i]));
+                }
+            }
+
+            columnsCaptured++;
+            if (section.ReplaceColumns(batch))
+            {
+                world.MarkChanged(result.SectionKey);
+            }
+        }
+    }
+
+    int RegisterPaletteEntry(LodSection section, CaptureResult result, int blockId, int sampleY)
+    {
+        Block block = capi.World.Blocks[blockId];
+
+        paletteSamplePos.Set(result.Cx * ChunkSize + ChunkSize / 2, sampleY, result.Cz * ChunkSize + ChunkSize / 2);
+        int color = block.GetColor(capi, paletteSamplePos);
+
+        byte flags = 0;
+        if (block.BlockMaterial == EnumBlockMaterial.Water
+            || block.BlockMaterial == EnumBlockMaterial.Lava
+            || block.BlockMaterial == EnumBlockMaterial.Ice)
+        {
+            flags |= LodPaletteEntry.FlagWater;
+        }
+
+        return section.FindOrAddPaletteEntry(blockId, color, flags);
+    }
+
+    // ---- Persistence ----
+
+    void SaveSomeDirtySections(int budget)
+    {
+        if (store == null || world.SaveDirty.Count == 0) return;
 
         List<long>? saved = null;
-        foreach (long rkey in grid.SaveDirtyRegions)
+        foreach (long key in world.SaveDirty)
         {
-            if (grid.Regions.TryGetValue(rkey, out LodRegion? region))
+            if (world.Sections.TryGetValue(key, out LodSection? section))
             {
-                // Persisting the mip-dirty flag makes pyramid propagation crash-safe:
-                // on load, flagged rows re-enter the propagation queue.
-                store.SaveRegion(LodGrid.KeyLevel(rkey), LodGrid.KeyRx(rkey), LodGrid.KeyRz(rkey),
-                    region, grid.MipDirty.Contains(rkey));
+                store.SaveSection(LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key),
+                    section, capi.World, world.MipDirty.Contains(key));
             }
-            (saved ??= new List<long>()).Add(rkey);
+            (saved ??= new List<long>()).Add(key);
             if (--budget <= 0) break;
         }
-        if (saved != null) foreach (long rkey in saved) grid.SaveDirtyRegions.Remove(rkey);
+        if (saved != null) foreach (long key in saved) world.SaveDirty.Remove(key);
     }
 
     void OnLevelFinalize()
@@ -81,13 +188,27 @@ public class VintageHorizonsModSystem : ModSystem
         OpenLodCache();
 
         Mod.Logger.Notification(
-            "Level finalized. LOD capture active (render distance: unlimited, {0} regions from cache).",
-            cachedRegionsLoaded);
+            "Level finalized. LOD capture active (render distance: unlimited, {0} sections from cache{1}).",
+            cachedSectionsLoaded, renderer.AutoUnpause ? ", auto-unpause on" : "");
 
-        capi.Event.RegisterCallback(_ => Mod.Logger.Notification(
-            "Stats after 30s: {0} regions [{1}] ({2} from cache), {3} meshes, {4} drawn, {5} columns processed, {6} pending, {7} awaiting mip",
-            grid.Regions.Count, grid.DescribeLevels(), cachedRegionsLoaded, renderer.MeshCount,
-            renderer.LastDrawCount, grid.ColumnsProcessed, grid.PendingColumns, grid.MipDirty.Count), 30000);
+        capi.Event.RegisterCallback(_ => LogStats("Stats after 30s"), 30000);
+
+        // Dev mode: continuous telemetry for unattended runs.
+        if (renderer.AutoUnpause)
+        {
+            capi.Event.RegisterGameTickListener(_ => LogStats("Stats"), 60000);
+        }
+    }
+
+    void LogStats(string prefix)
+    {
+        Mod.Logger.Notification(
+            "{0}: {1} sections [{2}] ({3} from cache), {4} meshes, {5} drawn [{6}], {7} columns captured, " +
+            "{8} pending, worker: {9} captures / {10} meshes queued, {11} awaiting mip, {12} render-dirty",
+            prefix, world.Sections.Count, world.DescribeLevels(), cachedSectionsLoaded,
+            renderer.MeshCount, renderer.LastDrawCount, renderer.DescribeDrawnLevels(), columnsCaptured,
+            pendingColumns.Count, worker.PendingCaptures, worker.PendingMeshes, world.MipDirty.Count,
+            world.RenderDirty.Count);
     }
 
     void OpenLodCache()
@@ -107,7 +228,7 @@ public class VintageHorizonsModSystem : ModSystem
         }
 
         store = newStore;
-        cachedRegionsLoaded = store.LoadAllRegions(grid.InstallLoadedRegion);
+        cachedSectionsLoaded = store.LoadAllSections(capi.World, world.InstallLoadedSection);
         Mod.Logger.Notification("LOD cache: {0}", dbPath);
     }
 
@@ -115,13 +236,18 @@ public class VintageHorizonsModSystem : ModSystem
     {
         if (store != null)
         {
-            SaveSomeDirtyRegions(int.MaxValue);
+            SaveSomeDirtySections(int.MaxValue);
             store.Close();
             store.Dispose();
             store = null;
         }
-        cachedRegionsLoaded = 0;
-        grid.Clear();
+        cachedSectionsLoaded = 0;
+        columnsCaptured = 0;
+        queuedColumns.Clear();
+        while (pendingColumns.TryDequeue(out _)) { }
+        while (worker.CaptureResults.TryDequeue(out _)) { }
+        while (worker.MeshResults.TryDequeue(out _)) { }
+        world.Clear();
         renderer.ClearMeshes();
     }
 
@@ -130,11 +256,11 @@ public class VintageHorizonsModSystem : ModSystem
         capi.ChatCommands.Create("vhinfo")
             .WithDescription("VintageHorizons status")
             .HandleWith(_ => TextCommandResult.Success(
-                $"[VintageHorizons] regions: {grid.Regions.Count} [{grid.DescribeLevels()}] ({cachedRegionsLoaded} from cache), " +
-                $"meshes: {renderer.MeshCount}, drawn: {renderer.LastDrawCount}, " +
-                $"columns processed: {grid.ColumnsProcessed}, pending: {grid.PendingColumns}, " +
-                $"awaiting mip: {grid.MipDirty.Count}, unsaved: {grid.SaveDirtyRegions.Count}, " +
-                $"persistence: {(store != null ? "on" : "off")}, " +
+                $"[VintageHorizons] sections: {world.Sections.Count} [{world.DescribeLevels()}] " +
+                $"({cachedSectionsLoaded} from cache), meshes: {renderer.MeshCount}, drawn: {renderer.LastDrawCount}, " +
+                $"columns captured: {columnsCaptured}, pending: {pendingColumns.Count}, " +
+                $"worker: {worker.PendingCaptures}c/{worker.PendingMeshes}m, awaiting mip: {world.MipDirty.Count}, " +
+                $"unsaved: {world.SaveDirty.Count}, persistence: {(store != null ? "on" : "off")}, " +
                 $"render distance: {(renderer.FarViewDistanceCap > 0 ? renderer.FarViewDistanceCap + " (capped)" : "unlimited")}, " +
                 $"current far edge: {(int)renderer.EffectiveFarDistance}"));
 
@@ -160,6 +286,7 @@ public class VintageHorizonsModSystem : ModSystem
             capi.Event.LeaveWorld -= OnLeaveWorld;
             capi.Event.UnregisterGameTickListener(tickListenerId);
             store?.Dispose();
+            worker?.Dispose();
             renderer?.Dispose();
         }
     }
