@@ -16,8 +16,8 @@ namespace VintageHorizons;
 /// </summary>
 public class VintageHorizonsModSystem : ModSystem
 {
-    const int CaptureSchedulesPerTick = 4;
-    const int CaptureAppliesPerTick = 4;
+    const int CaptureSchedulesPerTick = 8;
+    const int CaptureAppliesPerTick = 8;
     const int PropagationsPerTick = 3;
     const int SectionSavesPerTick = 2;
     const int MaxWorkerCaptureBacklog = 24;
@@ -213,8 +213,8 @@ public class VintageHorizonsModSystem : ModSystem
             exploreX = capi.World.Player.Entity.Pos.X;
             exploreZ = capi.World.Player.Entity.Pos.Z;
             capi.Event.RegisterCallback(_ => capi.SendChatMessage("/gamemode creative"), 10000);
-            capi.Event.RegisterGameTickListener(_ => ExploreHop(), 25000);
-            Mod.Logger.Notification("Auto-explore active (spiral teleports every 25s)");
+            capi.Event.RegisterGameTickListener(_ => ExploreHop(), 60000);
+            Mod.Logger.Notification("Auto-explore active (spiral teleports every 60s)");
         }
     }
 
