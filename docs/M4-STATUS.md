@@ -35,19 +35,33 @@ Replaces the M3 heightmap data model with the real Distant Horizons-style pipeli
   lines should show the walk descending as meshes complete.
 - (See git log on this branch for exact telemetry at each iteration.)
 
+## Verified later in the night
+
+- **v4 persistence round-trip**: 29 sections saved with block-code palettes reloaded
+  cleanly on rejoin ("29 sections from cache", zero unreadable rows).
+- **Quadtree draw histogram**: once the cached subtree was fully meshed, the walk
+  descended to `16 drawn [L0:16]` — full leaf detail near the player. The earlier
+  "1 drawn" was the no-holes swap rule during buildup, as suspected.
+- **Water pass added** (commit b764052): water meshes into a separate buffer drawn
+  alpha-blended (α=168) after the opaque pass, with phase-aware face culling —
+  solid faces only culled by solid neighbors so lake/ocean floors render under
+  translucent water. NEEDS EYEBALLING in-game.
+
 ## Known gaps / follow-ups (deliberate for a first pass)
 
-1. **Water renders opaque** (flagged in palette, not yet blended/translucent).
-2. **No greedy quad merging** — vertex counts are box-naive; fine at current scale.
-3. **Cross-level seams**: section borders between different detail levels may show
+1. **No greedy quad merging** — vertex counts are box-naive; fine at current scale.
+2. **Cross-level seams**: section borders between different detail levels may show
    cracks (M3's skirts were removed with the heightmap mesher; box walls go deep so
    it's less severe — needs eyeballing).
-4. **Initial-buildup coarseness**: until a subtree fully meshes, the coarse parent
+3. **Initial-buildup coarseness**: until a subtree fully meshes, the coarse parent
    renders even close to the player (swap rule). Cosmetic; refine in M5.
-5. **Worker exceptions are silently swallowed** (chunk-disposal races) — add counters.
-6. **Mesh memory**: all levels stay in RAM and VRAM; eviction is M5 territory.
-7. Sea-level oceans: unexplored ocean beyond the rain-height... capture starts at the
-   rain height so deep ocean columns include the full water depth — verify visuals.
+4. **Mesh memory**: all levels stay in RAM and VRAM; eviction is M5 territory.
+   Baseline RSS during soak: ~3.8GB (game itself is most of it; watch the trend,
+   not the absolute).
+5. Deep oceans: capture includes full water depth from the rain height — verify
+   visuals and mesh sizes over large water bodies.
+6. Water draws unsorted within the blended pass (fine for a single surface;
+   revisit if stacked water layers show artifacts).
 
 ## How to run
 
