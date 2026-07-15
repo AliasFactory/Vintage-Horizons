@@ -6,12 +6,17 @@ namespace VintageHorizons;
 
 /// <summary>
 /// Per-world SQLite cache for LOD regions, built on the game's own SQLiteDBConnection
-/// (bundled Microsoft.Data.Sqlite — no external dependencies). One row per region;
-/// heights + colors + presence bitset are packed into a single deflate-compressed blob.
+/// (bundled Microsoft.Data.Sqlite — no external dependencies). One row per
+/// (detail level, region); heights + colors + presence bitset are packed into a
+/// single deflate-compressed blob. The ApplyToParent flag persists the mip-pyramid
+/// propagation queue so it survives crashes (DH-style pull-based propagation).
 /// </summary>
 public class LodStore : SQLiteDBConnection
 {
     const byte BlobFormatVersion = 1;
+
+    /// <summary>Bump when stored data SEMANTICS change (not just schema); old rows are purged.</summary>
+    const string SchemaVersion = "3";
 
     public override string DBTypeCode => "vintagehorizons lod cache";
 
@@ -31,17 +36,41 @@ public class LodStore : SQLiteDBConnection
 
     protected override void CreateTablesIfNotExists(SqliteConnection sqliteConn)
     {
+        using (var cmd = sqliteConn.CreateCommand())
+        {
+            cmd.CommandText = @"
+                CREATE TABLE IF NOT EXISTS Meta (Key TEXT PRIMARY KEY, Value TEXT);
+                CREATE TABLE IF NOT EXISTS Region2 (
+                    Detail INTEGER NOT NULL,
+                    RX INTEGER NOT NULL,
+                    RZ INTEGER NOT NULL,
+                    Data BLOB NOT NULL,
+                    ApplyToParent INTEGER NOT NULL DEFAULT 0,
+                    ModifiedMs INTEGER NOT NULL,
+                    PRIMARY KEY (Detail, RX, RZ)
+                );
+                DROP TABLE IF EXISTS Region;";
+            cmd.ExecuteNonQuery();
+        }
+
+        PurgeOutdatedData(sqliteConn);
+    }
+
+    /// <summary>
+    /// Cached data whose *meaning* predates the current sampling/mip rules is worse
+    /// than no data (e.g. canopy-spike heights) — purge it and let exploration refill.
+    /// </summary>
+    void PurgeOutdatedData(SqliteConnection sqliteConn)
+    {
+        using (var check = sqliteConn.CreateCommand())
+        {
+            check.CommandText = "SELECT Value FROM Meta WHERE Key='FormatVersion'";
+            if (check.ExecuteScalar() as string == SchemaVersion) return;
+        }
+
+        logger.Notification("[VintageHorizons] LOD cache semantics changed; discarding old cached regions");
         using var cmd = sqliteConn.CreateCommand();
-        cmd.CommandText = @"
-            CREATE TABLE IF NOT EXISTS Meta (Key TEXT PRIMARY KEY, Value TEXT);
-            CREATE TABLE IF NOT EXISTS Region (
-                RX INTEGER NOT NULL,
-                RZ INTEGER NOT NULL,
-                Data BLOB NOT NULL,
-                ModifiedMs INTEGER NOT NULL,
-                PRIMARY KEY (RX, RZ)
-            );
-            INSERT OR IGNORE INTO Meta (Key, Value) VALUES ('FormatVersion', '1');";
+        cmd.CommandText = "DELETE FROM Region2; INSERT OR REPLACE INTO Meta (Key, Value) VALUES ('FormatVersion', '" + SchemaVersion + "');";
         cmd.ExecuteNonQuery();
     }
 
@@ -50,51 +79,59 @@ public class LodStore : SQLiteDBConnection
         base.OnOpened();
 
         upsertCmd = sqliteConn.CreateCommand();
-        upsertCmd.CommandText = "INSERT OR REPLACE INTO Region (RX, RZ, Data, ModifiedMs) VALUES (@rx, @rz, @data, @ms)";
+        upsertCmd.CommandText =
+            "INSERT OR REPLACE INTO Region2 (Detail, RX, RZ, Data, ApplyToParent, ModifiedMs) " +
+            "VALUES (@detail, @rx, @rz, @data, @atp, @ms)";
+        upsertCmd.Parameters.Add("@detail", SqliteType.Integer);
         upsertCmd.Parameters.Add("@rx", SqliteType.Integer);
         upsertCmd.Parameters.Add("@rz", SqliteType.Integer);
         upsertCmd.Parameters.Add("@data", SqliteType.Blob);
+        upsertCmd.Parameters.Add("@atp", SqliteType.Integer);
         upsertCmd.Parameters.Add("@ms", SqliteType.Integer);
         upsertCmd.Prepare();
     }
 
-    public void SaveRegion(int rx, int rz, LodRegion region)
+    public void SaveRegion(int level, int rx, int rz, LodRegion region, bool applyToParent)
     {
         if (upsertCmd == null) return;
 
         lock (transactionLock)
         {
+            upsertCmd.Parameters["@detail"].Value = level;
             upsertCmd.Parameters["@rx"].Value = rx;
             upsertCmd.Parameters["@rz"].Value = rz;
             upsertCmd.Parameters["@data"].Value = Serialize(region);
+            upsertCmd.Parameters["@atp"].Value = applyToParent ? 1 : 0;
             upsertCmd.Parameters["@ms"].Value = Environment.TickCount64;
             upsertCmd.ExecuteNonQuery();
         }
     }
 
     /// <summary>Streams every stored region to the callback. Returns the number loaded.</summary>
-    public int LoadAllRegions(Action<int, int, LodRegion> onRegion)
+    public int LoadAllRegions(Action<int, int, int, LodRegion, bool> onRegion)
     {
         int count = 0;
         lock (transactionLock)
         {
             using var cmd = sqliteConn.CreateCommand();
-            cmd.CommandText = "SELECT RX, RZ, Data FROM Region";
+            cmd.CommandText = "SELECT Detail, RX, RZ, Data, ApplyToParent FROM Region2";
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
             {
-                int rx = reader.GetInt32(0);
-                int rz = reader.GetInt32(1);
-                var blob = (byte[])reader[2];
+                int level = reader.GetInt32(0);
+                int rx = reader.GetInt32(1);
+                int rz = reader.GetInt32(2);
+                var blob = (byte[])reader[3];
+                bool applyToParent = reader.GetInt32(4) != 0;
 
                 LodRegion? region = Deserialize(blob);
                 if (region == null)
                 {
-                    logger.Warning("[VintageHorizons] Skipping unreadable cached region {0},{1}", rx, rz);
+                    logger.Warning("[VintageHorizons] Skipping unreadable cached region L{0} {1},{2}", level, rx, rz);
                     continue;
                 }
 
-                onRegion(rx, rz, region);
+                onRegion(level, rx, rz, region, applyToParent);
                 count++;
             }
         }

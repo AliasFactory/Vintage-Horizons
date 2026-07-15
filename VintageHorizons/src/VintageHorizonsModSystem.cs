@@ -12,6 +12,7 @@ namespace VintageHorizons;
 public class VintageHorizonsModSystem : ModSystem
 {
     const int ColumnsPerTick = 8;
+    const int PropagationsPerTick = 4;
     const int RegionSavesPerTick = 2;
 
     ICoreClientAPI capi = null!;
@@ -50,6 +51,7 @@ public class VintageHorizonsModSystem : ModSystem
     void OnGameTick(float dt)
     {
         grid.ProcessPending(ColumnsPerTick);
+        grid.ProcessPropagation(PropagationsPerTick);
         SaveSomeDirtyRegions(RegionSavesPerTick);
     }
 
@@ -62,7 +64,10 @@ public class VintageHorizonsModSystem : ModSystem
         {
             if (grid.Regions.TryGetValue(rkey, out LodRegion? region))
             {
-                store.SaveRegion((int)(rkey & 0xFFFFFFFF), (int)(rkey >> 32), region);
+                // Persisting the mip-dirty flag makes pyramid propagation crash-safe:
+                // on load, flagged rows re-enter the propagation queue.
+                store.SaveRegion(LodGrid.KeyLevel(rkey), LodGrid.KeyRx(rkey), LodGrid.KeyRz(rkey),
+                    region, grid.MipDirty.Contains(rkey));
             }
             (saved ??= new List<long>()).Add(rkey);
             if (--budget <= 0) break;
@@ -80,9 +85,9 @@ public class VintageHorizonsModSystem : ModSystem
             cachedRegionsLoaded);
 
         capi.Event.RegisterCallback(_ => Mod.Logger.Notification(
-            "Stats after 30s: {0} regions ({1} from cache), {2} meshes, {3} columns processed, {4} pending",
-            grid.Regions.Count, cachedRegionsLoaded, renderer.MeshCount,
-            grid.ColumnsProcessed, grid.PendingColumns), 30000);
+            "Stats after 30s: {0} regions [{1}] ({2} from cache), {3} meshes, {4} drawn, {5} columns processed, {6} pending, {7} awaiting mip",
+            grid.Regions.Count, grid.DescribeLevels(), cachedRegionsLoaded, renderer.MeshCount,
+            renderer.LastDrawCount, grid.ColumnsProcessed, grid.PendingColumns, grid.MipDirty.Count), 30000);
     }
 
     void OpenLodCache()
@@ -125,9 +130,10 @@ public class VintageHorizonsModSystem : ModSystem
         capi.ChatCommands.Create("vhinfo")
             .WithDescription("VintageHorizons status")
             .HandleWith(_ => TextCommandResult.Success(
-                $"[VintageHorizons] regions: {grid.Regions.Count} ({cachedRegionsLoaded} from cache), " +
-                $"meshes: {renderer.MeshCount}, columns processed: {grid.ColumnsProcessed}, " +
-                $"pending: {grid.PendingColumns}, unsaved: {grid.SaveDirtyRegions.Count}, " +
+                $"[VintageHorizons] regions: {grid.Regions.Count} [{grid.DescribeLevels()}] ({cachedRegionsLoaded} from cache), " +
+                $"meshes: {renderer.MeshCount}, drawn: {renderer.LastDrawCount}, " +
+                $"columns processed: {grid.ColumnsProcessed}, pending: {grid.PendingColumns}, " +
+                $"awaiting mip: {grid.MipDirty.Count}, unsaved: {grid.SaveDirtyRegions.Count}, " +
                 $"persistence: {(store != null ? "on" : "off")}, " +
                 $"render distance: {(renderer.FarViewDistanceCap > 0 ? renderer.FarViewDistanceCap + " (capped)" : "unlimited")}, " +
                 $"current far edge: {(int)renderer.EffectiveFarDistance}"));
