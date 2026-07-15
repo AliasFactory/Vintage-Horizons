@@ -10,7 +10,7 @@ namespace VintageHorizons;
 /// </summary>
 public class LodWorld
 {
-    public const int MaxLevel = 5; // L5 sections span 4096 blocks
+    public const int MaxLevel = 6; // L6 sections span 4096 blocks (64-block columns at the horizon)
 
     public readonly Dictionary<long, LodSection> Sections = new();
 

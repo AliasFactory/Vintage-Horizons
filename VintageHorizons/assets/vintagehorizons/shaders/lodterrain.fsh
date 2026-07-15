@@ -19,6 +19,12 @@ uniform vec3 sunPosition;
 uniform vec3 sunColor;
 uniform float dayLight;
 
+// Live seasonal state: tints applied to untinted base colors, decoded from the
+// alpha byte (255 = none, 254 = grass, 253 = foliage, < 200 = water).
+uniform vec3 grassTint;
+uniform vec3 foliageTint;
+uniform float snowLineY;
+
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outGlow;
 #if SSAOLEVEL > 0
@@ -42,7 +48,26 @@ void main()
     float sunAngle = max(0.0, dot(normal, normalize(sunPosition)));
     float shade = 0.55 + 0.45 * sunAngle;
 
-    vec4 terraColor = vertexColor; // alpha < 1 marks the blended water pass
+    // Seasonal tint by class (alpha byte), then snow line on up-facing terrain.
+    float aByte = vertexColor.a * 255.0;
+    vec3 albedo = vertexColor.rgb;
+    float outAlpha = 1.0;
+
+    if (aByte < 200.0) {
+        outAlpha = vertexColor.a; // water: translucent, untinted
+    } else if (aByte < 253.5) {
+        albedo *= foliageTint;
+    } else if (aByte < 254.5) {
+        albedo *= grassTint;
+    }
+
+    if (aByte >= 200.0) {
+        float upness = clamp(normal.y, 0.0, 1.0);
+        float snowMix = smoothstep(snowLineY, snowLineY + 24.0, yLevel) * upness;
+        albedo = mix(albedo, vec3(0.93, 0.94, 0.97), snowMix);
+    }
+
+    vec4 terraColor = vec4(albedo, outAlpha);
     terraColor.rgb *= shade * clamp(sunColor * dayLight, 0.02, 1.0);
 
     terraColor = applyFog(terraColor, fogAmount);

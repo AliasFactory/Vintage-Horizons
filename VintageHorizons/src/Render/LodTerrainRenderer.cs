@@ -1,4 +1,5 @@
 using Vintagestory.API.Client;
+using Vintagestory.API.Common;
 using Vintagestory.API.MathTools;
 using Vintagestory.Client.NoObf;
 
@@ -51,6 +52,16 @@ public class LodTerrainRenderer : IRenderer
 
     /// <summary>Dev/testing: keep the game unpaused even without window focus.</summary>
     public bool AutoUnpause;
+
+    // Live seasonal state, refreshed periodically and fed to the shader as uniforms.
+    Block? grassTintBlock;
+    Block? foliageTintBlock;
+    bool tintBlocksResolved;
+    readonly Vec3f grassTint = new(1, 1, 1);
+    readonly Vec3f foliageTint = new(1, 1, 1);
+    float snowLineY = 99999;
+    long lastSeasonRefreshFrame = -99999;
+    readonly BlockPos climatePos = new(0, 0, 0);
 
     /// <summary>Optional hard cap in blocks; 0 = unlimited (render every cached section).</summary>
     public int FarViewDistanceCap = 0;
@@ -143,15 +154,30 @@ public class LodTerrainRenderer : IRenderer
 
     bool AllChildrenCovered(long key)
     {
+        bool covered = true;
         for (int qz = 0; qz < 2; qz++)
         {
             for (int qx = 0; qx < 2; qx++)
             {
                 long ck = LodWorld.ChildKey(key, qx, qz);
-                if (world.HasDataSet.Contains(ck) && !HasAnyMesh(ck)) return false;
+                if (!world.HasDataSet.Contains(ck)) continue;
+
+                if (HasAnyMesh(ck))
+                {
+                    // Gate meshes are load-bearing even when never drawn (the walk
+                    // descends THROUGH them) — stamp so the evictor spares them.
+                    lastSelectedFrame[ck] = frameCounter;
+                }
+                else
+                {
+                    // Missing gate: re-request (evicted, or never built) so descent
+                    // can resume; the parent keeps covering meanwhile.
+                    RequestMesh(ck);
+                    covered = false;
+                }
             }
         }
-        return true;
+        return covered;
     }
 
     bool CollectDrawNodes(long key)
@@ -187,6 +213,80 @@ public class LodTerrainRenderer : IRenderer
             return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// Refresh the live seasonal tints and snow line (~every 4s). Tints come from
+    /// applying the game's climate/season color maps to pure white at the player's
+    /// position; the snow line extrapolates the local temperature lapse rate to the
+    /// altitude where it hits freezing.
+    /// </summary>
+    void RefreshSeasonalState()
+    {
+        if (frameCounter - lastSeasonRefreshFrame < 240) return;
+        lastSeasonRefreshFrame = frameCounter;
+
+        if (!tintBlocksResolved)
+        {
+            tintBlocksResolved = true;
+            foreach (Block block in capi.World.Blocks)
+            {
+                if (block?.Code == null) continue;
+                if (foliageTintBlock == null && block.SeasonColorMapResolved != null) foliageTintBlock = block;
+                else if (grassTintBlock == null && block.ClimateColorMapResolved != null
+                    && block.SeasonColorMapResolved == null) grassTintBlock = block;
+                if (grassTintBlock != null && foliageTintBlock != null) break;
+            }
+        }
+
+        int px = (int)camPos.X;
+        int py = (int)camPos.Y;
+        int pz = (int)camPos.Z;
+
+        if (grassTintBlock != null)
+        {
+            UnpackTint(capi.World.ApplyColorMapOnRgba(
+                grassTintBlock.ClimateColorMapResolved, grassTintBlock.SeasonColorMapResolved,
+                unchecked((int)0xFFFFFFFF), px, py, pz), grassTint);
+        }
+        if (foliageTintBlock != null)
+        {
+            UnpackTint(capi.World.ApplyColorMapOnRgba(
+                foliageTintBlock.ClimateColorMapResolved, foliageTintBlock.SeasonColorMapResolved,
+                unchecked((int)0xFFFFFFFF), px, py, pz), foliageTint);
+        }
+
+        try
+        {
+            int seaLevel = capi.World.SeaLevel;
+            climatePos.Set(px, seaLevel, pz);
+            ClimateCondition? low = capi.World.BlockAccessor.GetClimateAt(climatePos);
+            climatePos.Set(px, seaLevel + 150, pz);
+            ClimateCondition? high = capi.World.BlockAccessor.GetClimateAt(climatePos);
+
+            if (low == null || high == null || low.Temperature <= high.Temperature)
+            {
+                snowLineY = 99999; // no usable lapse rate → snow line disabled
+            }
+            else
+            {
+                float lapsePerBlock = (low.Temperature - high.Temperature) / 150f;
+                snowLineY = seaLevel + (low.Temperature - (-1f)) / lapsePerBlock;
+                snowLineY = GameMath.Clamp(snowLineY, seaLevel - 64, 99999);
+            }
+        }
+        catch
+        {
+            snowLineY = 99999;
+        }
+    }
+
+    static void UnpackTint(int rgba, Vec3f into)
+    {
+        // ApplyColorMapOnRgba defaults to flipRb=true, so red arrives in the high byte.
+        into.X = ((rgba >> 16) & 0xFF) / 255f;
+        into.Y = ((rgba >> 8) & 0xFF) / 255f;
+        into.Z = (rgba & 0xFF) / 255f;
     }
 
     /// <summary>Demand-driven (re)meshing: the selection walk is the load queue (Voxy's idea, CPU-side).</summary>
@@ -331,6 +431,7 @@ public class LodTerrainRenderer : IRenderer
         ScheduleMeshJobs();
         UploadFinishedMeshes();
         EvictStaleMeshes();
+        RefreshSeasonalState();
         if (sectionMeshes.Count == 0 && waterMeshes.Count == 0) return;
 
         var playerData = capi.World.Player.WorldData;
@@ -365,6 +466,10 @@ public class LodTerrainRenderer : IRenderer
 
         prog.Uniform("viewDistance", viewDistance);
         prog.Uniform("farViewDistance", EffectiveFarDistance);
+
+        prog.Uniform("grassTint", grassTint);
+        prog.Uniform("foliageTint", foliageTint);
+        prog.Uniform("snowLineY", snowLineY);
 
         float cullDistSq = float.MaxValue;
         if (FarViewDistanceCap > 0)

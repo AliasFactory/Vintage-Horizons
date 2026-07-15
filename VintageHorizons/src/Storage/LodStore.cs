@@ -17,7 +17,7 @@ public class LodStore : SQLiteDBConnection
     const byte BlobFormatVersion = 4;
 
     /// <summary>Bump when stored data SEMANTICS change; old rows are purged.</summary>
-    const string SchemaVersion = "4";
+    const string SchemaVersion = "6"; // v6: palette colors are now UNTINTED + tint-class flags (v5: 1-block leaves)
 
     public override string DBTypeCode => "vintagehorizons lod cache";
 

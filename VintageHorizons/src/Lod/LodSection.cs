@@ -10,10 +10,15 @@ namespace VintageHorizons;
 public struct LodPaletteEntry
 {
     public int BlockId;
+
+    /// <summary>Untinted base color; seasonal/climate tint is applied live in the shader.</summary>
     public int Color;
+
     public byte Flags;
 
     public const byte FlagWater = 1;
+    public const byte FlagTintGrass = 2;   // block uses a climate color map
+    public const byte FlagTintFoliage = 4; // block uses a seasonal color map
 }
 
 /// <summary>
@@ -26,8 +31,8 @@ public struct LodPaletteEntry
 public class LodSection
 {
     public const int GridSize = 64;                 // columns per section edge
-    public const int ColumnStepBlocks = 2;          // blocks per column at level 0
-    public const int SectionBlocks = GridSize * ColumnStepBlocks; // 128 at level 0
+    public const int ColumnStepBlocks = 1;          // blocks per column at level 0 — full DH-parity resolution
+    public const int SectionBlocks = GridSize * ColumnStepBlocks; // 64 at level 0
 
     /// <summary>Run packing: paletteId(16) | yTop(14) | yBottom(14). Run spans [yBottom, yTop).</summary>
     public static ulong PackRun(int paletteId, int yTop, int yBottom) =>

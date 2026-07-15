@@ -173,8 +173,11 @@ public class VintageHorizonsModSystem : ModSystem
     {
         Block block = capi.World.Blocks[blockId];
 
+        // Store the UNTINTED color; the shader applies the current season/climate tint
+        // live, so cached horizons follow the calendar instead of freezing the season
+        // they were captured in.
         paletteSamplePos.Set(result.Cx * ChunkSize + ChunkSize / 2, sampleY, result.Cz * ChunkSize + ChunkSize / 2);
-        int color = block.GetColor(capi, paletteSamplePos);
+        int color = block.GetColorWithoutTint(capi, paletteSamplePos);
 
         byte flags = 0;
         if (block.BlockMaterial == EnumBlockMaterial.Water
@@ -182,6 +185,14 @@ public class VintageHorizonsModSystem : ModSystem
             || block.BlockMaterial == EnumBlockMaterial.Ice)
         {
             flags |= LodPaletteEntry.FlagWater;
+        }
+        else if (block.SeasonColorMapResolved != null)
+        {
+            flags |= LodPaletteEntry.FlagTintFoliage;
+        }
+        else if (block.ClimateColorMapResolved != null)
+        {
+            flags |= LodPaletteEntry.FlagTintGrass;
         }
 
         return section.FindOrAddPaletteEntry(blockId, color, flags);
