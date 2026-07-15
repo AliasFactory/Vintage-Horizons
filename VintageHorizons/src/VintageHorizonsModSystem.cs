@@ -36,6 +36,14 @@ public class VintageHorizonsModSystem : ModSystem
     readonly ConcurrentQueue<long> pendingColumns = new();
     readonly BlockPos paletteSamplePos = new(0, 0, 0);
 
+    // Dev auto-explore (unattended stress testing): teleport along an expanding
+    // spiral so fresh chunks stream through the pipeline continuously.
+    bool autoExplore;
+    int exploreLeg;      // spiral leg counter
+    int exploreStep;     // steps taken on current leg
+    int exploreDirX = 1, exploreDirZ;
+    double exploreX, exploreZ;
+
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Client;
 
     public override void StartClientSide(ICoreClientAPI api)
@@ -198,6 +206,35 @@ public class VintageHorizonsModSystem : ModSystem
         {
             capi.Event.RegisterGameTickListener(_ => LogStats("Stats"), 60000);
         }
+
+        autoExplore = Environment.GetEnvironmentVariable("VINTAGEHORIZONS_AUTOEXPLORE") == "1";
+        if (autoExplore)
+        {
+            exploreX = capi.World.Player.Entity.Pos.X;
+            exploreZ = capi.World.Player.Entity.Pos.Z;
+            capi.Event.RegisterCallback(_ => capi.SendChatMessage("/gamemode creative"), 10000);
+            capi.Event.RegisterGameTickListener(_ => ExploreHop(), 25000);
+            Mod.Logger.Notification("Auto-explore active (spiral teleports every 25s)");
+        }
+    }
+
+    void ExploreHop()
+    {
+        const int hop = 350;
+
+        exploreX += exploreDirX * hop;
+        exploreZ += exploreDirZ * hop;
+
+        // Square spiral: legs lengthen every second turn.
+        if (++exploreStep >= exploreLeg / 2 + 1)
+        {
+            exploreStep = 0;
+            exploreLeg++;
+            (exploreDirX, exploreDirZ) = (-exploreDirZ, exploreDirX);
+        }
+
+        int y = capi.World.SeaLevel + 140;
+        capi.SendChatMessage($"/tp ={(int)exploreX} {y} ={(int)exploreZ}");
     }
 
     void LogStats(string prefix)
