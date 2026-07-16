@@ -31,6 +31,9 @@ export TMPDIR="$DATA/tmp"
 export DOTNET_ROOT=/usr/share/dotnet
 
 cd "$GAME"
-dotnet Vintagestory.dll --dataPath "$DATA" "$@" > "$DATA/launch.log" 2>&1 &
+# --addModPath: a relative 'Mods' entry in clientsettings modPaths resolves
+# against the game install dir, NOT the dataPath — without this flag, mods
+# placed in .testdata/Mods are silently ignored.
+dotnet Vintagestory.dll --dataPath "$DATA" --addModPath "$DATA/Mods" "$@" > "$DATA/launch.log" 2>&1 &
 echo $! > "$PIDFILE"
 echo "Test client started: pid $(cat "$PIDFILE"), dataPath $DATA, TMPDIR $TMPDIR"

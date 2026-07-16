@@ -22,10 +22,10 @@ stop_one() {
             sleep 0.5
         done
         if kill -0 "$pid" 2>/dev/null; then
-            echo "$label: pid $pid did not exit after 10s; NOT force-killing — check it manually" >&2
-        else
-            echo "$label: pid $pid stopped"
+            echo "$label: pid $pid did not exit after 10s; NOT force-killing — pidfile kept, check it manually" >&2
+            return
         fi
+        echo "$label: pid $pid stopped"
     else
         echo "$label: pid $pid already gone"
     fi
