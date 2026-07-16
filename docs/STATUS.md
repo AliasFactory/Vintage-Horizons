@@ -1,5 +1,30 @@
 # M4/M5 status notes
 
+## Multiplayer verified (2026-07-16 evening)
+
+The headline claim — client-side-only install working on an unmodded server —
+is now tested: a strictly vanilla dedicated server (`scripts/test-server.sh`,
+fresh dataPath, zero mods) with the release zip as the client's only mod.
+Full pipeline flowed from server-streamed chunks: 3,183 columns captured,
+311 sections across all 7 levels, meshing/draw/persistence all live, fresh
+per-world cache db keyed by SavegameIdentifier (works in MP), 343 sections
+persisted. Capture errors accumulate faster in MP than SP (50 in ~5 min,
+suspected chunk-disposed-mid-read after teleport hops); worker now records
+the first swallowed exception and logs it with the next stats line.
+
+### Test isolation (hard rules — a violation crashed the user's game once)
+
+- The VS client is single-instance via a global named pipe in `$TMPDIR`
+  (`CoreFxPipe_SingleInstanceVintageStoryWithUriScheme`). A `-c host:port`
+  launch FORWARDS the connect into any already-running instance (even with
+  `--dataPath`!) and exits silently. `scripts/test-client.sh` isolates via a
+  sandbox-private TMPDIR.
+- Start test instances only via `scripts/test-client.sh` / `test-server.sh`;
+  stop them only via `scripts/test-stop.sh` (pidfiles from `$!`). Never
+  locate game processes by name/args — the user plays concurrently.
+- Sandbox mods go in `.testdata/Mods` and load via `--addModPath` (a relative
+  `Mods` entry in clientsettings resolves against the game install dir).
+
 ## M5 progress (2026-07-15 morning)
 
 - **VRAM eviction + demand-driven re-meshing** (first M5 item): meshes the quadtree

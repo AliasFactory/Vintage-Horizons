@@ -290,8 +290,21 @@ public class VintageHorizonsModSystem : ModSystem
         capi.SendChatMessage($"/tp ={(int)exploreX} {y} ={(int)exploreZ}");
     }
 
+    bool loggedFirstCaptureError, loggedFirstMeshError;
+
     void LogStats(string prefix)
     {
+        if (!loggedFirstCaptureError && worker.FirstCaptureError != null)
+        {
+            loggedFirstCaptureError = true;
+            Mod.Logger.Warning("First capture error was: {0}", worker.FirstCaptureError);
+        }
+        if (!loggedFirstMeshError && worker.FirstMeshError != null)
+        {
+            loggedFirstMeshError = true;
+            Mod.Logger.Warning("First mesh error was: {0}", worker.FirstMeshError);
+        }
+
         Mod.Logger.Notification(
             "{0}: {1} sections resident [{2}] ({3} RAM-evicted, {4} from cache), {5} meshes ({6} evicted), " +
             "{7} drawn [{8}], {9} columns captured, {10} pending, " +

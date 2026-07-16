@@ -32,5 +32,8 @@ stop_one() {
     rm -f "$pidfile"
 }
 
-stop_one "test client" "$ROOT/.testdata/test-instance.pid"
-stop_one "test server" "$ROOT/.testdata/server/server.pid"
+# Usage: test-stop.sh [client|server|all]  (default: all)
+what="${1:-all}"
+[[ "$what" == "client" || "$what" == "all" ]] && stop_one "test client" "$ROOT/.testdata/test-instance.pid"
+[[ "$what" == "server" || "$what" == "all" ]] && stop_one "test server" "$ROOT/.testdata/server/server.pid"
+exit 0

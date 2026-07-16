@@ -100,6 +100,10 @@ public class LodWorker : IDisposable
     public int CaptureErrors;
     public int MeshErrors;
 
+    /// <summary>First swallowed exception of each kind, for soak-log diagnosis.</summary>
+    public string? FirstCaptureError;
+    public string? FirstMeshError;
+
     public LodWorker()
     {
         thread = new Thread(Loop)
@@ -137,10 +141,11 @@ public class LodWorker : IDisposable
                     CaptureResult? result = Capture(cjob);
                     if (result != null) CaptureResults.Enqueue(result);
                 }
-                catch
+                catch (Exception e)
                 {
                     // Chunk disposed mid-read or similar; the column re-enqueues on its next ChunkDirty.
                     Interlocked.Increment(ref CaptureErrors);
+                    FirstCaptureError ??= e.ToString();
                 }
             }
 
@@ -151,10 +156,11 @@ public class LodWorker : IDisposable
                 {
                     MeshResults.Enqueue(LodMesher.BuildMesh(mjob));
                 }
-                catch
+                catch (Exception e)
                 {
                     // Snapshot inconsistency; section will re-mesh on its next change.
                     Interlocked.Increment(ref MeshErrors);
+                    FirstMeshError ??= e.ToString();
                 }
             }
 
@@ -180,13 +186,17 @@ public class LodWorker : IDisposable
         var runs = new List<ulong>(24);
         bool anyColumn = false;
 
+        // Rain map values can sit at/above map height on freshly streamed columns
+        // (uninitialized sentinel) — clamp so the y walk stays inside the chunk stack.
+        int maxY = job.Chunks.Length * ChunkSize - 1;
+
         for (int cz = 0; cz < colsPerChunk; cz++)
         {
             for (int cx = 0; cx < colsPerChunk; cx++)
             {
                 int lx = cx * step;
                 int lz = cz * step;
-                int startY = job.RainMap[lz * ChunkSize + lx];
+                int startY = Math.Min(job.RainMap[lz * ChunkSize + lx], maxY);
                 if (startY <= 0) continue;
 
                 runs.Clear();
