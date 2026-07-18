@@ -339,10 +339,12 @@ public class LodTerrainRenderer : IRenderer
     readonly List<long> dirtyPrune = new();
 
     /// <summary>
-    /// Drop meaningless render-dirty entries: no live mesh AND not at the level the
-    /// walk wants there. Meshing them would waste work and pin their sections
-    /// against RAM eviction; demand re-requests cover them if ever needed. Runs
-    /// every frame regardless of worker backlog — pruning must never starve.
+    /// Drop meaningless render-dirty entries: no live mesh AND finer than the level
+    /// the walk wants there — meshing those wastes work. Entries at wanted level or
+    /// COARSER must survive: they are draw targets or gate meshes the walk descends
+    /// through (pruning gates stalls descent and freezes approached terrain at the
+    /// coarse level it was first meshed at). Runs every frame regardless of worker
+    /// backlog — pruning must never starve.
     /// </summary>
     void PruneRenderDirty()
     {
@@ -351,7 +353,7 @@ public class LodTerrainRenderer : IRenderer
         dirtyPrune.Clear();
         foreach (long key in world.RenderDirty)
         {
-            if (!HasAnyMesh(key) && LodWorld.KeyLevel(key) != WantedLevel(NearestDistanceTo(key)))
+            if (!HasAnyMesh(key) && LodWorld.KeyLevel(key) < WantedLevel(NearestDistanceTo(key)))
             {
                 dirtyPrune.Add(key);
             }
