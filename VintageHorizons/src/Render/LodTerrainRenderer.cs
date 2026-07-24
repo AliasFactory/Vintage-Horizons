@@ -69,6 +69,12 @@ public class LodTerrainRenderer : IRenderer
     public int MeshCount => sectionMeshes.Count;
     public int LastDrawCount { get; private set; }
 
+    /// <summary>Sections selected by the walk but skipped this frame as off-screen.</summary>
+    public int LastCulledCount { get; private set; }
+
+    readonly LodFrustum frustum = new();
+    int worldHeight = 1024;
+
     public string DescribeDrawnLevels()
     {
         var counts = new int[LodWorld.MaxLevel + 1];
@@ -488,6 +494,11 @@ public class LodTerrainRenderer : IRenderer
         prog.UniformMatrix("viewMatrix", rapi.CameraMatrixOriginf);
         prog.UniformMatrix("projectionMatrix", rapi.CurrentProjectionMatrix);
 
+        // Same matrices the shader gets, so the cull can never disagree with the draw.
+        worldHeight = capi.World.BlockAccessor.MapSizeY;
+        frustum.Update(rapi.CurrentProjectionMatrix, rapi.CameraMatrixOriginf);
+        culledThisFrame = 0;
+
         prog.Uniform("sunPosition", capi.World.Calendar.SunPositionNormalized);
         prog.Uniform("sunColor", capi.World.Calendar.SunColor);
         prog.Uniform("dayLight", Math.Max(0, capi.World.Calendar.DayLightStrength));
@@ -519,6 +530,8 @@ public class LodTerrainRenderer : IRenderer
             capi.Render.RenderMesh(mesh);
         }
 
+        LastCulledCount = culledThisFrame; // opaque pass only: water covers a subset
+
         // Pass 2: water, alpha-blended over the terrain.
         rapi.GlToggleBlend(true);
         foreach (long key in drawList)
@@ -543,10 +556,23 @@ public class LodTerrainRenderer : IRenderer
         double dz = originZ + footprint / 2.0 - camPos.Z;
         if (dx * dx + dz * dz > cullDistSq) return false;
 
-        modelMat.Identity().Translate(originX - camPos.X, -camPos.Y, originZ - camPos.Z);
+        // Camera-relative box, matching the model matrix below. Y spans the whole
+        // world: sections don't track their vertical extent, and the wins that matter
+        // (sections behind or beside the camera) come from the side planes anyway.
+        double relX = originX - camPos.X;
+        double relZ = originZ - camPos.Z;
+        if (!frustum.BoxInView(relX, -camPos.Y, relZ, relX + footprint, worldHeight - camPos.Y, relZ + footprint))
+        {
+            culledThisFrame++;
+            return false;
+        }
+
+        modelMat.Identity().Translate(relX, -camPos.Y, relZ);
         prog!.UniformMatrix("modelMatrix", modelMat.Values);
         return true;
     }
+
+    int culledThisFrame;
 
     public void ClearMeshes()
     {
