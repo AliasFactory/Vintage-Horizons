@@ -34,6 +34,7 @@ public class VintageHorizonsModSystem : ModSystem
     LodWorker worker = null!;
     LodTerrainRenderer renderer = null!;
     LodStore? store;
+    LodStorageThread? storageThread;
     long tickListenerId;
     int cachedSectionsLoaded;
     int columnsCaptured;
@@ -221,22 +222,55 @@ public class VintageHorizonsModSystem : ModSystem
 
     // ---- Persistence ----
 
+    // Main-thread storage cost, measured to decide whether moving SQLite work to a
+    // background thread is worth its complexity.
+    readonly System.Diagnostics.Stopwatch storageClock = new();
+    public double SaveMsMax { get; private set; }
+    public double SaveMsTotal { get; private set; }
+    public int SaveCalls { get; private set; }
+    public double LoadMsMax { get; private set; }
+    public double LoadMsTotal { get; private set; }
+    public int LoadCalls { get; private set; }
+
+    void ResetStorageStats()
+    {
+        SaveMsMax = SaveMsTotal = LoadMsMax = LoadMsTotal = 0;
+        SaveCalls = LoadCalls = 0;
+    }
+
+    /// <summary>
+    /// Queued snapshots hold copies of their section's run data, so an unbounded queue
+    /// is an unbounded memory leak if the disk can't keep up. Past this depth the
+    /// sections simply stay dirty (and therefore RAM-resident) and retry later.
+    /// </summary>
+    const int MaxStorageBacklog = 256;
+
     void SaveSomeDirtySections(int budget)
     {
         if (store == null || world.SaveDirty.Count == 0) return;
+        if (storageThread != null && storageThread.Backlog >= MaxStorageBacklog) return;
 
+        storageClock.Restart();
         List<long>? saved = null;
         foreach (long key in world.SaveDirty)
         {
             if (world.Sections.TryGetValue(key, out LodSection? section))
             {
-                store.SaveSection(LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key),
+                // Freeze on this thread (the section keeps mutating), compress and
+                // write on the storage thread.
+                var snap = LodSaveSnapshot.Of(LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key),
                     section, capi.World, world.MipDirty.Contains(key));
+                storageThread?.Enqueue(snap);
             }
             (saved ??= new List<long>()).Add(key);
             if (--budget <= 0) break;
         }
         if (saved != null) foreach (long key in saved) world.SaveDirty.Remove(key);
+
+        double ms = storageClock.Elapsed.TotalMilliseconds;
+        SaveCalls++;
+        SaveMsTotal += ms;
+        if (ms > SaveMsMax) SaveMsMax = ms;
     }
 
     void OnLevelFinalize()
@@ -290,7 +324,7 @@ public class VintageHorizonsModSystem : ModSystem
         capi.SendChatMessage($"/tp ={(int)exploreX} {y} ={(int)exploreZ}");
     }
 
-    bool loggedFirstCaptureError, loggedFirstMeshError;
+    bool loggedFirstCaptureError, loggedFirstMeshError, loggedFirstSaveError;
 
     void LogStats(string prefix)
     {
@@ -307,13 +341,27 @@ public class VintageHorizonsModSystem : ModSystem
 
         Mod.Logger.Notification(
             "{0}: {1} sections resident [{2}] ({3} RAM-evicted, {4} from cache), {5} meshes ({6} evicted), " +
-            "{7} drawn [{8}], {9} columns captured, {10} pending, " +
-            "worker: {11} captures / {12} meshes queued / {13}+{14} errors, {15} awaiting mip, {16} render-dirty, {17} unsaved",
+            "{7} selected [{8}] minus {9} frustum-culled, {10} columns captured, {11} pending, " +
+            "worker: {12} captures / {13} meshes queued / {14}+{15} errors, {16} awaiting mip, {17} render-dirty, {18} unsaved",
             prefix, world.Sections.Count, world.DescribeLevels(), world.EvictedSectionsTotal, cachedSectionsLoaded,
             renderer.MeshCount, renderer.EvictedTotal, renderer.LastDrawCount, renderer.DescribeDrawnLevels(),
-            columnsCaptured, pendingColumns.Count, worker.PendingCaptures, worker.PendingMeshes,
+            renderer.LastCulledCount, columnsCaptured, pendingColumns.Count, worker.PendingCaptures, worker.PendingMeshes,
             worker.CaptureErrors, worker.MeshErrors, world.MipDirty.Count, world.RenderDirty.Count,
             world.SaveDirty.Count);
+
+        Mod.Logger.Notification(
+            "  storage on main thread since last report: snapshot {0} calls, {1:0.00}ms avg, {2:0.00}ms max | " +
+            "loads {3} calls, {4:0.00}ms avg, {5:0.00}ms max | writer thread: {6} backlog, {7} written, {8} errors",
+            SaveCalls, SaveCalls > 0 ? SaveMsTotal / SaveCalls : 0, SaveMsMax,
+            LoadCalls, LoadCalls > 0 ? LoadMsTotal / LoadCalls : 0, LoadMsMax,
+            storageThread?.Backlog ?? 0, storageThread?.SectionsWritten ?? 0, storageThread?.SaveErrors ?? 0);
+
+        if (storageThread?.FirstSaveError != null && !loggedFirstSaveError)
+        {
+            loggedFirstSaveError = true;
+            Mod.Logger.Warning("First storage-write error was: {0}", storageThread.FirstSaveError);
+        }
+        ResetStorageStats();
     }
 
     void OpenLodCache()
@@ -333,8 +381,18 @@ public class VintageHorizonsModSystem : ModSystem
         }
 
         store = newStore;
-        world.LoadFromStore = key => store?.LoadSection(
-            LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key), capi.World);
+        storageThread = new LodStorageThread(newStore);
+        world.LoadFromStore = key =>
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            LodSection? loaded = store?.LoadSection(
+                LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key), capi.World);
+            double ms = clock.Elapsed.TotalMilliseconds;
+            LoadCalls++;
+            LoadMsTotal += ms;
+            if (ms > LoadMsMax) LoadMsMax = ms;
+            return loaded;
+        };
         cachedSectionsLoaded = store.LoadAllKeys(world.InstallStoredKey);
         Mod.Logger.Notification("LOD cache: {0}", dbPath);
     }
@@ -345,7 +403,19 @@ public class VintageHorizonsModSystem : ModSystem
         world.LoadFromStore = null;
         if (store != null)
         {
+            // Order matters: queue everything, let the writer finish, stop the thread,
+            // and only then close the connection it was writing through.
             SaveSomeDirtySections(int.MaxValue);
+            if (storageThread != null)
+            {
+                storageThread.Drain();
+                if (storageThread.Backlog > 0)
+                {
+                    Mod.Logger.Warning("Storage drain timed out with {0} sections unwritten", storageThread.Backlog);
+                }
+                storageThread.Dispose();
+                storageThread = null;
+            }
             store.Close();
             store.Dispose();
             store = null;
@@ -398,6 +468,10 @@ public class VintageHorizonsModSystem : ModSystem
             capi.Event.LevelFinalize -= OnLevelFinalize;
             capi.Event.LeaveWorld -= OnLeaveWorld;
             capi.Event.UnregisterGameTickListener(tickListenerId);
+            // Stop the writer before the connection it writes through.
+            storageThread?.Drain();
+            storageThread?.Dispose();
+            storageThread = null;
             store?.Dispose();
             worker?.Dispose();
             renderer?.Dispose();

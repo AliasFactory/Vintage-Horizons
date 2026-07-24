@@ -89,7 +89,12 @@ public class LodStore : SQLiteDBConnection
         upsertCmd.Prepare();
     }
 
-    public void SaveSection(int level, int sx, int sz, LodSection section, IWorldAccessor world, bool applyToParent)
+    /// <summary>
+    /// Write an already-serialized section. Deflate happens in Serialize (outside any
+    /// lock, on the storage thread); the lock is held only for the row write, so a
+    /// main-thread demand load never waits behind compression.
+    /// </summary>
+    public void SaveBlob(int level, int sx, int sz, byte[] data, bool applyToParent)
     {
         if (upsertCmd == null) return;
 
@@ -98,12 +103,18 @@ public class LodStore : SQLiteDBConnection
             upsertCmd.Parameters["@detail"].Value = level;
             upsertCmd.Parameters["@sx"].Value = sx;
             upsertCmd.Parameters["@sz"].Value = sz;
-            upsertCmd.Parameters["@data"].Value = Serialize(section, world);
+            upsertCmd.Parameters["@data"].Value = data;
             upsertCmd.Parameters["@atp"].Value = applyToParent ? 1 : 0;
             upsertCmd.Parameters["@ms"].Value = Environment.TickCount64;
             upsertCmd.ExecuteNonQuery();
         }
     }
+
+    /// <summary>
+    /// Block code -> id. Per-store on purpose: block ids are savegame-local, so a
+    /// cache shared between worlds would resolve the previous world's ids.
+    /// </summary>
+    readonly Dictionary<string, int> blockIdByCode = new();
 
     SqliteCommand? loadOneCmd;
 
@@ -173,7 +184,8 @@ public class LodStore : SQLiteDBConnection
         return count;
     }
 
-    static byte[] Serialize(LodSection section, IWorldAccessor world)
+    /// <summary>Thread-safe: reads only the snapshot's private arrays, never live world state.</summary>
+    public static byte[] Serialize(LodSaveSnapshot snap)
     {
         using var ms = new MemoryStream();
         ms.WriteByte(BlobFormatVersion);
@@ -181,26 +193,25 @@ public class LodStore : SQLiteDBConnection
         using (var deflate = new DeflateStream(ms, CompressionLevel.Fastest, leaveOpen: true))
         using (var w = new BinaryWriter(deflate, Encoding.UTF8))
         {
-            w.Write((ushort)section.Palette.Count);
-            foreach (LodPaletteEntry e in section.Palette)
+            w.Write((ushort)snap.PaletteCodes.Length);
+            for (int i = 0; i < snap.PaletteCodes.Length; i++)
             {
-                Block? block = e.BlockId > 0 ? world.Blocks[e.BlockId] : null;
-                w.Write(block?.Code?.ToShortString() ?? "");
-                w.Write(e.Color);
-                w.Write(e.Flags);
+                w.Write(snap.PaletteCodes[i]);
+                w.Write(snap.PaletteColors[i]);
+                w.Write(snap.PaletteFlags[i]);
             }
 
             int total = LodSection.GridSize * LodSection.GridSize;
             for (int col = 0; col < total; col++)
             {
-                w.Write((ushort)section.RunCount(col));
+                w.Write((ushort)snap.RunCount(col));
             }
-            foreach (ulong run in section.Runs) w.Write(run);
+            foreach (ulong run in snap.Runs) w.Write(run);
 
             var capturedBits = new byte[total / 8];
             for (int i = 0; i < total; i++)
             {
-                if (section.Captured[i]) capturedBits[i >> 3] |= (byte)(1 << (i & 7));
+                if (snap.Captured[i]) capturedBits[i >> 3] |= (byte)(1 << (i & 7));
             }
             w.Write(capturedBits);
         }
@@ -208,7 +219,7 @@ public class LodStore : SQLiteDBConnection
         return ms.ToArray();
     }
 
-    static LodSection? Deserialize(byte[] blob, IWorldAccessor world)
+    LodSection? Deserialize(byte[] blob, IWorldAccessor world)
     {
         if (blob.Length < 2 || blob[0] != BlobFormatVersion) return null;
 
@@ -227,11 +238,15 @@ public class LodStore : SQLiteDBConnection
                 int color = r.ReadInt32();
                 byte flags = r.ReadByte();
 
+                // Cached: a session reloads the same few hundred block codes across
+                // thousands of sections, and each miss costs an AssetLocation parse
+                // plus a registry lookup.
                 int blockId = 0;
-                if (code.Length > 0)
+                if (code.Length > 0 && !blockIdByCode.TryGetValue(code, out blockId))
                 {
                     Block? block = world.GetBlock(new Vintagestory.API.Common.AssetLocation(code));
                     blockId = block?.BlockId ?? 0;
+                    blockIdByCode[code] = blockId;
                 }
                 section.Palette.Add(new LodPaletteEntry { BlockId = blockId, Color = color, Flags = flags });
             }
