@@ -1,5 +1,40 @@
 # M4/M5 status notes
 
+## Performance pass (2026-07-24)
+
+Three changes, each measured rather than assumed:
+
+- **Frustum culling.** The quadtree walk selects in every direction, so sections
+  behind the camera were still issuing draw calls. Planes are extracted from the
+  same projection*view matrices the LOD shader gets, and tested at DRAW time only
+  — culling inside the selection walk would evict off-screen meshes and re-mesh
+  them the instant you turned around. Cull share runs 12%->59% depending on how
+  much captured data surrounds the camera. Plane math has a standalone harness
+  (behind/left/right/above/beyond-far reject; in-view cases pass).
+- **Writes off the render thread.** Save batches measured 10-22ms average and
+  49ms peak on the main thread — a whole 50ms tick — because serializing deflates
+  ~100-300KB inline. Sections are frozen on the main thread (copies: the live
+  section keeps mutating and SetColumn edits Runs in place) and compressed +
+  written by a storage thread, with deflate outside the DB lock. After: 0.3ms
+  average, ~3ms peak on an equivalent batch (~32x).
+- **Reads off the render thread.** 302 inline loads at join (4.3ms avg, 29.5ms
+  peak) -> 47, with 600 served in the background. Capture and mip propagation
+  stay synchronous on purpose: they must merge into stored data before creating a
+  section, which is exactly how stored rows got shadowed and overwritten before.
+
+Two hazards found and closed while doing it: the storage thread must not touch
+the block registry (the sibling `GetBlock(int)` lazily mutates a dictionary), so
+off-thread loads keep palette CODES and resolve ids at install on the main
+thread; and a reload that comes back empty is remembered, or the walk
+re-requests that key every frame forever.
+
+Verification beyond the counters: restart reloaded 958 sections with zero
+unreadable rows, and decompressing freshly written blobs showed 0 empty block
+codes across L0/L1/L2 (a failed id resolution would have written empty codes).
+
+Remaining known costs: 47 inline loads per join from the capture/propagation
+paths (8ms avg, 33ms peak) — making propagation defer safely is the next step.
+
 ## Multiplayer verified (2026-07-16 evening)
 
 The headline claim — client-side-only install working on an unmodded server —
