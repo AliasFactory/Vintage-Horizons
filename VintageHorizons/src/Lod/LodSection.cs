@@ -54,6 +54,13 @@ public class LodSection
 
     public int CapturedColumns;
 
+    /// <summary>
+    /// Set when a section was deserialized off the main thread: palette BlockIds are
+    /// not resolved yet, because the game's block registry may only be touched from
+    /// the main thread. Resolved and cleared on install, before anything reads ids.
+    /// </summary>
+    public string[]? PendingPaletteCodes;
+
     public bool IsEmpty => Runs.Length == 0;
 
     public int RunCount(int col) => ColumnStart[col + 1] - ColumnStart[col];

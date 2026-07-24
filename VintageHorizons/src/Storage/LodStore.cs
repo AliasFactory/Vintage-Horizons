@@ -112,14 +112,20 @@ public class LodStore : SQLiteDBConnection
 
     /// <summary>
     /// Block code -> id. Per-store on purpose: block ids are savegame-local, so a
-    /// cache shared between worlds would resolve the previous world's ids.
+    /// cache shared between worlds would resolve the previous world's ids. Concurrent
+    /// because sections deserialize on both the main and storage threads.
     /// </summary>
-    readonly Dictionary<string, int> blockIdByCode = new();
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> blockIdByCode = new();
 
     SqliteCommand? loadOneCmd;
 
     /// <summary>Load a single section row, or null if absent/unreadable. Used for demand reload after RAM eviction.</summary>
-    public LodSection? LoadSection(int level, int sx, int sz, IWorldAccessor world)
+    /// <param name="resolveBlockIds">
+    /// False when called from the storage thread: palette codes are kept on the
+    /// section and resolved later on the main thread, so the block registry is never
+    /// read off-thread.
+    /// </param>
+    public LodSection? LoadSection(int level, int sx, int sz, IWorldAccessor world, bool resolveBlockIds = true)
     {
         lock (transactionLock)
         {
@@ -140,7 +146,7 @@ public class LodStore : SQLiteDBConnection
             object? blob = loadOneCmd.ExecuteScalar();
             if (blob is not byte[] bytes) return null;
 
-            LodSection? section = Deserialize(bytes, world);
+            LodSection? section = Deserialize(bytes, resolveBlockIds ? world : null);
             if (section == null)
             {
                 // Unreadable data must never linger to slow down or confuse future
@@ -150,6 +156,35 @@ public class LodStore : SQLiteDBConnection
             }
             return section;
         }
+    }
+
+    /// <summary>
+    /// Finish a section that was deserialized off-thread by resolving its palette
+    /// block ids. MUST run on the main thread — it reads the block registry.
+    /// </summary>
+    public void ResolvePendingPalette(LodSection section, IWorldAccessor world)
+    {
+        string[]? codes = section.PendingPaletteCodes;
+        if (codes == null) return;
+
+        for (int i = 0; i < codes.Length && i < section.Palette.Count; i++)
+        {
+            string code = codes[i];
+            if (code.Length == 0) continue;
+
+            if (!blockIdByCode.TryGetValue(code, out int blockId))
+            {
+                Block? block = world.GetBlock(new Vintagestory.API.Common.AssetLocation(code));
+                blockId = block?.BlockId ?? 0;
+                blockIdByCode[code] = blockId;
+            }
+
+            LodPaletteEntry e = section.Palette[i];
+            e.BlockId = blockId;
+            section.Palette[i] = e;
+        }
+
+        section.PendingPaletteCodes = null;
     }
 
     void DeleteSection(int level, int sx, int sz)
@@ -219,7 +254,8 @@ public class LodStore : SQLiteDBConnection
         return ms.ToArray();
     }
 
-    LodSection? Deserialize(byte[] blob, IWorldAccessor world)
+    /// <param name="world">Null to defer block-id resolution to the main thread.</param>
+    LodSection? Deserialize(byte[] blob, IWorldAccessor? world)
     {
         if (blob.Length < 2 || blob[0] != BlobFormatVersion) return null;
 
@@ -232,24 +268,32 @@ public class LodStore : SQLiteDBConnection
             var section = new LodSection();
 
             int paletteCount = r.ReadUInt16();
+            string[]? deferredCodes = world == null ? new string[paletteCount] : null;
+
             for (int i = 0; i < paletteCount; i++)
             {
                 string code = r.ReadString();
                 int color = r.ReadInt32();
                 byte flags = r.ReadByte();
 
-                // Cached: a session reloads the same few hundred block codes across
-                // thousands of sections, and each miss costs an AssetLocation parse
-                // plus a registry lookup.
                 int blockId = 0;
-                if (code.Length > 0 && !blockIdByCode.TryGetValue(code, out blockId))
+                if (deferredCodes != null)
                 {
-                    Block? block = world.GetBlock(new Vintagestory.API.Common.AssetLocation(code));
+                    deferredCodes[i] = code;
+                }
+                else if (code.Length > 0 && !blockIdByCode.TryGetValue(code, out blockId))
+                {
+                    // Cached: a session reloads the same few hundred codes across
+                    // thousands of sections, each miss costing an AssetLocation parse
+                    // plus a registry lookup.
+                    Block? block = world!.GetBlock(new Vintagestory.API.Common.AssetLocation(code));
                     blockId = block?.BlockId ?? 0;
                     blockIdByCode[code] = blockId;
                 }
                 section.Palette.Add(new LodPaletteEntry { BlockId = blockId, Color = color, Flags = flags });
             }
+
+            section.PendingPaletteCodes = deferredCodes;
 
             int total = LodSection.GridSize * LodSection.GridSize;
             var counts = new ushort[total];

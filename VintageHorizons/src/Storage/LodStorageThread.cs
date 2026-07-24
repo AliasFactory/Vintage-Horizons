@@ -23,6 +23,22 @@ public class LodStorageThread : IDisposable
     readonly Thread thread;
     volatile bool running = true;
 
+    // Demand reloads. Requests come from the render path, which can tolerate a
+    // section arriving a few frames late; the capture path still loads inline
+    // because it must merge into stored data before it may create anything.
+    readonly ConcurrentQueue<long> loadRequests = new();
+    public readonly ConcurrentQueue<(long Key, LodSection? Section)> LoadResults = new();
+    Func<long, LodSection?>? loadFunc;
+
+    /// <summary>Set by the coordinator: performs one blocking read, called on this thread.</summary>
+    public void SetLoader(Func<long, LodSection?> loader) => loadFunc = loader;
+
+    public void RequestLoad(long key)
+    {
+        loadRequests.Enqueue(key);
+        signal.Set();
+    }
+
     public int Pending => queue.Count;
     public int SaveErrors;
     public string? FirstSaveError;
@@ -57,17 +73,51 @@ public class LodStorageThread : IDisposable
         while (running)
         {
             bool didWork = false;
-            while (queue.TryDequeue(out LodSaveSnapshot? snap))
+
+            // Loads first: a pending read is blocking terrain from appearing, a
+            // pending write is not blocking anything.
+            while (loadRequests.TryDequeue(out long key))
+            {
+                didWork = true;
+                ReadOne(key);
+            }
+
+            if (queue.TryDequeue(out LodSaveSnapshot? snap))
             {
                 didWork = true;
                 WriteOne(snap);
             }
+
             if (!didWork) signal.WaitOne(200);
         }
 
         // Shutting down: never drop queued work, the rows are the player's cache.
         while (queue.TryDequeue(out LodSaveSnapshot? snap)) WriteOne(snap);
     }
+
+    void ReadOne(long key)
+    {
+        LodSection? section = null;
+        try
+        {
+            section = loadFunc?.Invoke(key);
+        }
+        catch (Exception e)
+        {
+            Interlocked.Increment(ref LoadErrors);
+            try { FirstLoadError ??= e.ToString(); } catch { /* diagnostics must not kill the thread */ }
+        }
+
+        if (section != null) SectionsRead++;
+
+        // Always answer, even on failure/miss: the requester clears its in-flight
+        // marker from this queue and would otherwise never retry the key.
+        LoadResults.Enqueue((key, section));
+    }
+
+    public int LoadErrors;
+    public string? FirstLoadError;
+    public long SectionsRead;
 
     void WriteOne(LodSaveSnapshot snap)
     {

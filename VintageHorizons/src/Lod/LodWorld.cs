@@ -77,6 +77,7 @@ public class LodWorld
         }
 
         Sections[key] = section = new LodSection();
+        LoadFailed.Remove(key); // it has data again; a past miss must not block reloads
         RegisterInTree(key);
         return section;
     }
@@ -92,6 +93,58 @@ public class LodWorld
 
         Sections[key] = section = loaded;
         return true;
+    }
+
+    /// <summary>Ask the storage thread to reload an evicted section; null when unavailable.</summary>
+    public Action<long>? RequestAsyncLoad;
+
+    /// <summary>Keys with a reload in flight, so the render path stops re-requesting them.</summary>
+    public readonly HashSet<long> LoadsInFlight = new();
+
+    /// <summary>
+    /// Keys whose reload came back empty (row missing, or deleted as unreadable).
+    /// Without this the selection walk would re-request them every single frame
+    /// forever, since the section never becomes resident.
+    /// </summary>
+    public readonly HashSet<long> LoadFailed = new();
+
+    /// <summary>
+    /// Non-blocking variant for the render path: returns false and starts a background
+    /// reload rather than stalling the frame on a decompress. The selection walk
+    /// re-requests the mesh on later frames, so the section is picked up once it lands.
+    /// </summary>
+    public bool TryGetForRender(long key, out LodSection section)
+    {
+        if (Sections.TryGetValue(key, out section!)) return true;
+        if (!HasDataSet.Contains(key) || LoadFailed.Contains(key)) return false;
+
+        if (RequestAsyncLoad == null)
+        {
+            // No storage thread (no persistence this session): fall back to inline.
+            return TryGetOrLoad(key, out section);
+        }
+
+        if (LoadsInFlight.Add(key)) RequestAsyncLoad(key);
+        return false;
+    }
+
+    /// <summary>
+    /// Install a section that finished loading in the background. A section that
+    /// became resident while the read was in flight (a capture created or reloaded it
+    /// inline) is strictly newer, so the arriving copy is discarded.
+    /// </summary>
+    public void InstallLoaded(long key, LodSection? section)
+    {
+        LoadsInFlight.Remove(key);
+        if (section == null)
+        {
+            LoadFailed.Add(key);
+            return;
+        }
+        if (Sections.ContainsKey(key)) return;
+
+        Sections[key] = section;
+        RenderDirty.Add(key); // it was demanded for meshing; let the scheduler pick it up
     }
 
     /// <summary>
@@ -233,5 +286,7 @@ public class LodWorld
         MipDirty.Clear();
         HasDataSet.Clear();
         TopLevelKeys.Clear();
+        LoadsInFlight.Clear();
+        LoadFailed.Clear();
     }
 }

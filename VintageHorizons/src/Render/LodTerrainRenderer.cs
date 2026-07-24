@@ -378,7 +378,9 @@ public class LodTerrainRenderer : IRenderer
             double bestDist = double.MaxValue;
             foreach (long key in world.RenderDirty)
             {
-                if (meshJobInFlight.Contains(key)) continue;
+                // Skip anything already being meshed or reloaded, so the per-frame
+                // budget goes to sections that can actually start work now.
+                if (meshJobInFlight.Contains(key) || world.LoadsInFlight.Contains(key)) continue;
                 double d = NearestDistanceTo(key);
                 if (d < bestDist)
                 {
@@ -390,7 +392,20 @@ public class LodTerrainRenderer : IRenderer
 
             world.RenderDirty.Remove(best);
 
-            if (!world.TryGetOrLoad(best, out LodSection section) || section.CapturedColumns == 0)
+            // Non-blocking: an evicted section starts a background reload and is
+            // re-requested by the selection walk once it lands, rather than stalling
+            // this frame on a decompress.
+            if (!world.TryGetForRender(best, out LodSection section))
+            {
+                if (!world.LoadsInFlight.Contains(best))
+                {
+                    if (sectionMeshes.Remove(best, out MeshRef? gone)) gone.Dispose();
+                    if (waterMeshes.Remove(best, out MeshRef? goneWater)) goneWater.Dispose();
+                }
+                continue;
+            }
+
+            if (section.CapturedColumns == 0)
             {
                 if (sectionMeshes.Remove(best, out MeshRef? stale)) stale.Dispose();
                 if (waterMeshes.Remove(best, out MeshRef? staleWater)) staleWater.Dispose();

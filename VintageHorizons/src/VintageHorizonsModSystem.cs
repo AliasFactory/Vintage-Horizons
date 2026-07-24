@@ -102,6 +102,7 @@ public class VintageHorizonsModSystem : ModSystem
         // overwrite) the stored row. The column queue holds work until then.
         if (!pipelineActive) return;
 
+        InstallLoadedSections();
         ScheduleCaptures();
         ApplyCaptureResults();
         world.ProcessPropagation(PropagationsPerTick);
@@ -118,6 +119,26 @@ public class VintageHorizonsModSystem : ModSystem
                     (int)pos.X, (int)pos.Z, world.LastSweepChecked, world.LastSweepPinned,
                     world.LastSweepCold, world.EvictedSectionsTotal);
             }
+        }
+    }
+
+    /// <summary>
+    /// Adopt sections the storage thread finished reading. Cheap: the decompress
+    /// already happened off-thread, this only publishes the reference.
+    /// </summary>
+    void InstallLoadedSections()
+    {
+        if (storageThread == null) return;
+
+        while (storageThread.LoadResults.TryDequeue(out (long Key, LodSection? Section) result))
+        {
+            // Palette ids are resolved here, on the main thread, before anything can
+            // read them: the storage thread must not touch the block registry.
+            if (result.Section != null && store != null)
+            {
+                store.ResolvePendingPalette(result.Section, capi.World);
+            }
+            world.InstallLoaded(result.Key, result.Section);
         }
     }
 
@@ -351,10 +372,12 @@ public class VintageHorizonsModSystem : ModSystem
 
         Mod.Logger.Notification(
             "  storage on main thread since last report: snapshot {0} calls, {1:0.00}ms avg, {2:0.00}ms max | " +
-            "loads {3} calls, {4:0.00}ms avg, {5:0.00}ms max | writer thread: {6} backlog, {7} written, {8} errors",
+            "inline loads {3} calls, {4:0.00}ms avg, {5:0.00}ms max | storage thread: {6} write backlog, " +
+            "{7} written, {8} write errors, {11} read, {9} async loads in flight, {10} read errors",
             SaveCalls, SaveCalls > 0 ? SaveMsTotal / SaveCalls : 0, SaveMsMax,
             LoadCalls, LoadCalls > 0 ? LoadMsTotal / LoadCalls : 0, LoadMsMax,
-            storageThread?.Backlog ?? 0, storageThread?.SectionsWritten ?? 0, storageThread?.SaveErrors ?? 0);
+            storageThread?.Backlog ?? 0, storageThread?.SectionsWritten ?? 0, storageThread?.SaveErrors ?? 0,
+            world.LoadsInFlight.Count, storageThread?.LoadErrors ?? 0, storageThread?.SectionsRead ?? 0);
 
         if (storageThread?.FirstSaveError != null && !loggedFirstSaveError)
         {
@@ -382,6 +405,13 @@ public class VintageHorizonsModSystem : ModSystem
 
         store = newStore;
         storageThread = new LodStorageThread(newStore);
+
+        // Background reloads for the render path. The loader runs on the storage
+        // thread; results are installed on the main thread in OnGameTick.
+        storageThread.SetLoader(key => newStore.LoadSection(
+            LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key), capi.World, resolveBlockIds: false));
+        world.RequestAsyncLoad = key => storageThread?.RequestLoad(key);
+
         world.LoadFromStore = key =>
         {
             var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -401,6 +431,7 @@ public class VintageHorizonsModSystem : ModSystem
     {
         pipelineActive = false;
         world.LoadFromStore = null;
+        world.RequestAsyncLoad = null;
         if (store != null)
         {
             // Order matters: queue everything, let the writer finish, stop the thread,
