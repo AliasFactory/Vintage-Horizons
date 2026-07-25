@@ -258,6 +258,14 @@ public class VintageHorizonsModSystem : ModSystem
             return LodPaletteEntry.FlagWater;
         }
 
+        // Flowers only, not all ground cover: grass and ferns read fine as solid colour
+        // at distance, but a flower's texture is mostly transparent pixels so its cube
+        // came out an opaque pale-grey blob.
+        if (block.Code?.Path?.StartsWith("flower", StringComparison.Ordinal) == true)
+        {
+            return LodPaletteEntry.FlagThin;
+        }
+
         // Only things that are not terrain at all. Plants are deliberately NOT skipped:
         // dropping ground cover flattened the landscape into cartoonish blocks of solid
         // colour, and the greyness that prompted it was really a missing tint — plants

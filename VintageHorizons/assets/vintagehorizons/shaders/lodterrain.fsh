@@ -20,9 +20,10 @@ uniform vec3 sunPosition;
 uniform vec3 sunColor;
 uniform float dayLight;
 
-// Live tint table. The alpha byte carries a tint SLOT, not a class:
-//   0..63    opaque,      slot = alpha
-//   64..127  translucent, slot = alpha - 64
+// Live tint table. The alpha byte carries a tint SLOT plus a blend band:
+//   0..63    opaque,     slot = alpha
+//   64..127  water,      slot = alpha - 64
+//   128..191 thin plant, slot = alpha - 128
 // Slot 0 is the identity tint. One slot per distinct (climate map, season map) pair,
 // because leaves pick a seasonal map per species and water has its own -- a single
 // shared foliage tint left every tree the same colour and water untinted grey.
@@ -36,8 +37,11 @@ uniform float tintYLow;
 uniform float tintYHigh;
 uniform float snowLineY;
 
-// Water blend factor now that alpha carries the slot instead of an opacity.
+// Blend factors per band, now that alpha carries the slot instead of an opacity.
+// Flowers are crossed quads in vanilla; as a solid cube they read as a grey blob, so
+// they are drawn mostly see-through and the ground shows through them.
 const float WATER_ALPHA = 0.66;
+const float THIN_ALPHA = 0.30;
 
 // Blocks per column in the section being drawn (1 at level 0, doubling per level).
 // Coarse sections merge whole neighbourhoods into one colour, and greedy meshing
@@ -73,13 +77,13 @@ void main()
     // Decode the tint slot, then snow line on up-facing terrain.
     float aByte = vertexColor.a * 255.0;
     int slotRaw = int(aByte + 0.5);
-    bool translucent = slotRaw >= TINT_SLOTS;
-    int slot = translucent ? slotRaw - TINT_SLOTS : slotRaw;
-    slot = clamp(slot, 0, TINT_SLOTS - 1);
+    int band = slotRaw / TINT_SLOTS;          // 0 opaque, 1 water, 2 thin plant
+    bool translucent = band > 0;
+    int slot = clamp(slotRaw - band * TINT_SLOTS, 0, TINT_SLOTS - 1);
 
     float tintBlend = clamp((yLevel - tintYLow) / max(1.0, tintYHigh - tintYLow), 0.0, 1.0);
     vec3 albedo = vertexColor.rgb * mix(tintsLow[slot].rgb, tintsHigh[slot].rgb, tintBlend);
-    float outAlpha = translucent ? WATER_ALPHA : 1.0;
+    float outAlpha = band == 2 ? THIN_ALPHA : (band == 1 ? WATER_ALPHA : 1.0);
 
     if (!translucent) {
         float upness = clamp(normal.y, 0.0, 1.0);

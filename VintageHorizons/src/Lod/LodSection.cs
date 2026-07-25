@@ -34,6 +34,13 @@ public struct LodPaletteEntry
     /// a field of flowers became a field of grey blocks. Dropped so the ground shows.
     /// </summary>
     public const byte FlagSkip = 8;
+
+    /// <summary>
+    /// Thin decorative geometry (flowers) that vanilla draws as crossed quads. As a
+    /// solid LOD cube it reads as a grey blob; drawn see-through it reads as a plant
+    /// and the ground shows through it.
+    /// </summary>
+    public const byte FlagThin = 16;
 }
 
 /// <summary>

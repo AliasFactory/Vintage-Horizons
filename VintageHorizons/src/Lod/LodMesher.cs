@@ -21,16 +21,19 @@ public static class LodMesher
     const int W = 0, E = 1, N = 2, S = 3;
 
     // The tint slot rides in the alpha byte, so the vertex format stays position+colour:
-    //   0..63    opaque,      tint slot = alpha
-    //   64..127  translucent, tint slot = alpha - 64
-    // Slot 0 is the identity tint. Translucency is a flag here rather than an alpha
-    // value; the shader supplies the actual blend factor.
-    const byte TranslucentBase = LodTintRegistry.MaxSlots;
+    //   0..63    opaque,     tint slot = alpha
+    //   64..127  water,      tint slot = alpha - 64
+    //   128..191 thin plant, tint slot = alpha - 128
+    // Slot 0 is the identity tint. The band picks the blend factor in the shader, so
+    // water and flowers can be see-through by different amounts.
+    const byte WaterBase = LodTintRegistry.MaxSlots;
+    const byte ThinBase = LodTintRegistry.MaxSlots * 2;
 
     static byte AlphaFor(byte paletteFlags, byte tintSlot)
     {
         byte slot = tintSlot < LodTintRegistry.MaxSlots ? tintSlot : (byte)LodTintRegistry.SlotNone;
-        if ((paletteFlags & LodPaletteEntry.FlagWater) != 0) return (byte)(TranslucentBase + slot);
+        if ((paletteFlags & LodPaletteEntry.FlagWater) != 0) return (byte)(WaterBase + slot);
+        if ((paletteFlags & LodPaletteEntry.FlagThin) != 0) return (byte)(ThinBase + slot);
         return slot;
     }
 
@@ -81,26 +84,26 @@ public static class LodMesher
                     int yTop = LodSection.RunYTop(run);
                     int yBottom = LodSection.RunYBottom(run);
                     int pid = LodSection.RunPaletteId(run);
-                    bool isWater = (self.PaletteFlags[pid] & LodPaletteEntry.FlagWater) != 0;
+                    bool isTranslucent = IsTranslucent(self.PaletteFlags[pid]);
 
                     bool topCovered = r > 0
                         && LodSection.RunYBottom(runs[r - 1]) == yTop
-                        && IsWater(self, runs[r - 1]) == isWater;
-                    if (!topCovered) hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, isWater));
+                        && IsTranslucentRun(self, runs[r - 1]) == isTranslucent;
+                    if (!topCovered) hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, isTranslucent));
 
                     bool bottomCovered = r < runs.Length - 1
                         && LodSection.RunYTop(runs[r + 1]) == yBottom
-                        && IsWater(self, runs[r + 1]) == isWater;
-                    if (!bottomCovered && yBottom > 1 && !isWater)
+                        && IsTranslucentRun(self, runs[r + 1]) == isTranslucent;
+                    if (!bottomCovered && yBottom > 1 && !isTranslucent)
                     {
                         hf.Add(new HFace((short)cx, (short)cz, (short)yBottom, (short)pid, true, false));
                     }
 
-                    bool solidCoverOnly = !isWater;
-                    CollectSide(vf, job, W, cx, cz, cx - 1, cz, yTop, yBottom, pid, isWater, solidCoverOnly);
-                    CollectSide(vf, job, E, cx, cz, cx + 1, cz, yTop, yBottom, pid, isWater, solidCoverOnly);
-                    CollectSide(vf, job, N, cx, cz, cx, cz - 1, yTop, yBottom, pid, isWater, solidCoverOnly);
-                    CollectSide(vf, job, S, cx, cz, cx, cz + 1, yTop, yBottom, pid, isWater, solidCoverOnly);
+                    bool solidCoverOnly = !isTranslucent;
+                    CollectSide(vf, job, W, cx, cz, cx - 1, cz, yTop, yBottom, pid, isTranslucent, solidCoverOnly);
+                    CollectSide(vf, job, E, cx, cz, cx + 1, cz, yTop, yBottom, pid, isTranslucent, solidCoverOnly);
+                    CollectSide(vf, job, N, cx, cz, cx, cz - 1, yTop, yBottom, pid, isTranslucent, solidCoverOnly);
+                    CollectSide(vf, job, S, cx, cz, cx, cz + 1, yTop, yBottom, pid, isTranslucent, solidCoverOnly);
                 }
             }
         }
@@ -298,8 +301,11 @@ public static class LodMesher
 
     // ---- Face collection helpers ----
 
-    static bool IsWater(SectionSnapshot s, ulong run) =>
-        (s.PaletteFlags[LodSection.RunPaletteId(run)] & LodPaletteEntry.FlagWater) != 0;
+    static bool IsTranslucent(byte flags) =>
+        (flags & (LodPaletteEntry.FlagWater | LodPaletteEntry.FlagThin)) != 0;
+
+    static bool IsTranslucentRun(SectionSnapshot s, ulong run) =>
+        IsTranslucent(s.PaletteFlags[LodSection.RunPaletteId(run)]);
 
     static (SectionSnapshot? snap, int col) NeighborColumn(MeshJob job, int cx, int cz)
     {
@@ -322,7 +328,7 @@ public static class LodMesher
 
     /// <summary>Collect exposed wall segments for [yBottom, yTop) minus the neighbor's covered intervals.</summary>
     static void CollectSide(List<VFace> vf, MeshJob job, int dir, int cx, int cz, int ncx, int ncz,
-        int yTop, int yBottom, int pid, bool isWater, bool solidCoverOnly)
+        int yTop, int yBottom, int pid, bool isTranslucent, bool solidCoverOnly)
     {
         var (nb, ncol) = NeighborColumn(job, ncx, ncz);
         Span<ulong> neighborRuns = nb != null && nb.Captured[ncol] ? nb.ColumnRuns(ncol) : Span<ulong>.Empty;
@@ -335,7 +341,7 @@ public static class LodMesher
 
         for (int i = 0; i < neighborRuns.Length && cur > yBottom; i++)
         {
-            if (solidCoverOnly && IsWater(nb!, neighborRuns[i])) continue;
+            if (solidCoverOnly && IsTranslucentRun(nb!, neighborRuns[i])) continue;
 
             int nTop = LodSection.RunYTop(neighborRuns[i]);
             int nBottom = LodSection.RunYBottom(neighborRuns[i]);
@@ -345,14 +351,14 @@ public static class LodMesher
             int coverTop = Math.Min(nTop, cur);
             if (coverTop < cur)
             {
-                vf.Add(new VFace((byte)dir, fix, along, (short)cur, (short)coverTop, (short)pid, isWater));
+                vf.Add(new VFace((byte)dir, fix, along, (short)cur, (short)coverTop, (short)pid, isTranslucent));
             }
             cur = Math.Max(nBottom, yBottom);
         }
 
         if (cur > yBottom)
         {
-            vf.Add(new VFace((byte)dir, fix, along, (short)cur, (short)yBottom, (short)pid, isWater));
+            vf.Add(new VFace((byte)dir, fix, along, (short)cur, (short)yBottom, (short)pid, isTranslucent));
         }
     }
 
