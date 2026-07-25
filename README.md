@@ -109,4 +109,10 @@ current status, measurements, and known gaps.
 
 ## License
 
-[MIT](LICENSE)
+[The MIT License plus one condition](LICENSE): permission is not granted to
+anyone who escalates a benign disagreement to moderators rather than engaging
+with it directly. Reporting harassment, threats, or abuse is explicitly not
+covered by that condition and is always legitimate.
+
+Note that this makes the project **not** plain MIT and not an OSI-approved
+licence, so please do not label it as MIT when redistributing.
