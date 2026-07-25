@@ -22,9 +22,33 @@ vh_guard_not_running "Test server" "$PIDFILE"
 mkdir -p "$DATA/tmp"
 export TMPDIR="$DATA/tmp"
 
-vh_launch "Test server" "$PIDFILE" "$DATA/console.log" \
-    dotnet VintagestoryServer.dll --dataPath "$DATA" \
-    --withconfig="{ Port: $PORT, VerifyPlayerAuth: false, WhitelistMode: 'off', AdvertiseServer: false, DefaultRoleCode: 'admin' }" \
-    "$@"
+# Retry: stopping and immediately restarting leaves the port in TIME_WAIT, and the
+# bind failure is transient. Anything else fails loudly with the console tail.
+for attempt in 1 2 3 4; do
+    ready=0
+    if vh_launch "Test server" "$PIDFILE" "$DATA/console.log" \
+        dotnet VintagestoryServer.dll --dataPath "$DATA" \
+        --withconfig="{ Port: $PORT, VerifyPlayerAuth: false, WhitelistMode: 'off', AdvertiseServer: false, DefaultRoleCode: 'admin' }" \
+        "$@"
+    then
+        # Wait for readiness here rather than making every caller know the marker --
+        # getting that wrong once launched a client against a server that never started.
+        vh_wait_for "$DATA/console.log" "Dedicated Server now running" 180 "$PIDFILE" && ready=1
+    fi
 
-echo "  port $PORT, dataPath $DATA"
+    if [ "$ready" = 1 ]; then
+        echo "  port $PORT, dataPath $DATA"
+        exit 0
+    fi
+
+    rm -f "$PIDFILE"
+    if grep -q "Address already in use" "$DATA/console.log" 2>/dev/null && [ "$attempt" -lt 4 ]; then
+        echo "Test server: port $PORT still in use, retrying in 10s (attempt $attempt)" >&2
+        sleep 10
+        continue
+    fi
+
+    echo "Test server failed to become ready. Last lines of console.log:" >&2
+    tail -n 20 "$DATA/console.log" >&2 || true
+    exit 1
+done

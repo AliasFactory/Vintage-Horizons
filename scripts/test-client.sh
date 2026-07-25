@@ -34,7 +34,11 @@ export TMPDIR="$DATA/tmp"
 # --addModPath: a relative 'Mods' entry in clientsettings modPaths resolves
 # against the game install dir, NOT the dataPath — without this flag, mods
 # placed in .testdata/Mods are silently ignored.
-vh_launch "Test client" "$PIDFILE" "$DATA/launch.log" \
-    dotnet Vintagestory.dll --dataPath "$DATA" --addModPath "$DATA/Mods" "$@"
+if ! vh_launch "Test client" "$PIDFILE" "$DATA/launch.log" \
+    dotnet Vintagestory.dll --dataPath "$DATA" --addModPath "$DATA/Mods" "$@"; then
+    echo "Test client died during startup. Last lines of launch.log:" >&2
+    tail -n 20 "$DATA/launch.log" >&2 || true
+    exit 1
+fi
 
 echo "  dataPath $DATA, TMPDIR $TMPDIR"

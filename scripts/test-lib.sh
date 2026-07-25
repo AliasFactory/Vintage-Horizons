@@ -68,10 +68,36 @@ vh_launch() {
     sleep 2
     if ! kill -0 "$pid" 2>/dev/null; then
         rm -f "$pidfile"
-        echo "$label failed to start — last lines of $log:" >&2
-        tail -n 15 "$log" >&2 || true
-        exit 1
+        # Return rather than exit: callers may want to retry (a just-stopped server
+        # leaves its port in TIME_WAIT, which fails the bind for a few seconds).
+        return 1
     fi
 
     echo "$label started: pid $pid"
+    return 0
+}
+
+# Wait for a marker to appear in a log, giving up if the process dies first (a crash
+# reporter can keep a doomed process alive well past vh_launch's liveness check, so
+# process liveness alone is not proof of a successful start).
+# Returns 0 on success, 1 on timeout or death.
+vh_wait_for() {
+    local log="$1" marker="$2" timeoutSec="$3" pidfile="$4"
+    local waited=0
+
+    while [ "$waited" -lt "$timeoutSec" ]; do
+        if grep -qF -- "$marker" "$log" 2>/dev/null; then
+            return 0
+        fi
+        if [[ -n "$pidfile" && -f "$pidfile" ]]; then
+            local pid
+            pid="$(cat "$pidfile" 2>/dev/null || true)"
+            if ! vh_is_ours "$pid"; then
+                return 1
+            fi
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    return 1
 }

@@ -17,12 +17,21 @@ uniform float fogDensityIn;
 
 uniform float farViewDistance;
 
+// Which of this section's four sides border on area we have NO captured data for
+// (-X, +X, -Z, +Z; 1 = open). Client-side-only means coverage is whatever the
+// server has streamed us, so the cache genuinely runs out mid-air along the edges
+// of wherever the player has been. Those boundaries are dissolved into the
+// horizon rather than left standing as cliffs.
+uniform vec4 openEdges;
+uniform float sectionSize;
+
 out vec4 worldPos;
 out vec4 vertexColor;
 out float yLevel;
 out vec4 rgbaFog;
 out float dist;
 out float fogAmount;
+out float edgeFade;
 
 #include vertexflagbits.ash
 #include colorutil.ash
@@ -45,6 +54,21 @@ void main()
     // Sink LOD terrain into the ground near the transition ring so the seam with
     // real chunks reads as terrain, not a floating shelf.
     worldPos.y -= max(0.0, mix(5.0, 0.0, dist * 50.0));
+
+    // Distance into the section from each open side, as a 0..1 ramp over the outer
+    // third. Vertex positions are section-local, so this is just the local x/z.
+    float fadeWidth = max(8.0, sectionSize * 0.34);
+    vec4 inset = vec4(
+        vertexPositionIn.x,
+        sectionSize - vertexPositionIn.x,
+        vertexPositionIn.z,
+        sectionSize - vertexPositionIn.z);
+    vec4 nearness = clamp(1.0 - inset / fadeWidth, 0.0, 1.0) * openEdges;
+    edgeFade = max(max(nearness.x, nearness.y), max(nearness.z, nearness.w));
+
+    // Only past the transition ring: terrain beside the player is covered by real
+    // chunks, and dissolving it there would read as a hole rather than haze.
+    edgeFade *= clamp(dist * 4.0, 0.0, 1.0);
 
     fogAmount = getFogLevel(worldPos, fogMinIn, fogDensityIn);
     rgbaFog = rgbaFogIn;

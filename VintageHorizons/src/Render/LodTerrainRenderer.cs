@@ -585,10 +585,27 @@ public class LodTerrainRenderer : IRenderer
         modelMat.Identity().Translate(relX, -camPos.Y, relZ);
         prog!.UniformMatrix("modelMatrix", modelMat.Values);
         prog.Uniform("columnBlocks", (float)LodWorld.ColumnStepBlocks(LodWorld.KeyLevel(key)));
+
+        // Sides that border on never-captured area, so the shader can dissolve them
+        // into the horizon instead of leaving a cliff at the edge of what we've seen.
+        prog.Uniform("sectionSize", (float)footprint);
+        prog.Uniform("openEdges",
+            HasNeighbourData(key, -1, 0) ? 0f : 1f,
+            HasNeighbourData(key, 1, 0) ? 0f : 1f,
+            HasNeighbourData(key, 0, -1) ? 0f : 1f,
+            HasNeighbourData(key, 0, 1) ? 0f : 1f);
         return true;
     }
 
     int culledThisFrame;
+
+    /// <summary>
+    /// Whether the neighbouring section holds (or covers) data. Checked at the drawn
+    /// section's own level: a coarse section's neighbour is coarse too, and its
+    /// presence in HasDataSet means something in that subtree was captured.
+    /// </summary>
+    bool HasNeighbourData(long key, int dx, int dz) =>
+        world.HasDataSet.Contains(LodWorld.NeighborKey(key, dx, dz));
 
     public void ClearMeshes()
     {

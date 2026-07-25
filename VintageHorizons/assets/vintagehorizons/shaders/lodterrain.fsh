@@ -11,6 +11,7 @@ in float yLevel;
 in vec4 rgbaFog;
 in float dist;
 in float fogAmount;
+in float edgeFade;
 
 uniform float fogDensityIn;
 uniform float fogMinIn;
@@ -97,7 +98,9 @@ void main()
     skyColor.rgb = applyUnderwaterEffects(skyColor.rgb, murkiness);
     skyGlow.y *= clamp((dayLight - 0.05) * 2.0 - 50.0 * murkiness, 0.0, 1.0);
 
-    float fade = smoothstep(0.75, 1.0, dist);
+    // Dissolve both the far edge of the cache and the edges of the explored area
+    // into the sky, so neither ends in a visible wall.
+    float fade = max(smoothstep(0.75, 1.0, dist), edgeFade);
     outColor = mix(terraColor, skyColor, fade);
     outGlow = mix(vec4(0.0), skyGlow, fade);
 
