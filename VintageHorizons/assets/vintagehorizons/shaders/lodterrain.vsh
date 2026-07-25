@@ -51,9 +51,22 @@ void main()
     float distStart = viewDistance * 0.785;
     dist = (length(worldPos.xz) - distStart) / (farViewDistance - distStart - 512.0);
 
-    // Sink LOD terrain into the ground near the transition ring so the seam with
-    // real chunks reads as terrain, not a floating shelf.
-    worldPos.y -= max(0.0, mix(5.0, 0.0, dist * 50.0));
+    // Sink LOD terrain into the ground near the transition ring so the seam with real
+    // chunks reads as terrain, not a floating shelf.
+    //
+    // Measured in BLOCKS from the start of the band, not as a fraction of it: dist is
+    // normalised over the whole cache, which grows as the player explores, so a
+    // fractional ramp changed width depending on how much of the world had been
+    // visited -- 86 blocks at a 5000-block edge, 390 at 20000.
+    //
+    // smoothstep rather than a linear ramp: a straight rise stops dead when it reaches
+    // full height and leaves a visible crease right where it finishes. This eases out
+    // to zero slope at both ends, so the sink is still there but the top of the bend
+    // is not something the eye can catch.
+    const float SINK_DEPTH = 5.0;
+    const float SINK_FADE_BLOCKS = 110.0;
+    float intoBand = length(worldPos.xz) - distStart;
+    worldPos.y -= SINK_DEPTH * (1.0 - smoothstep(0.0, SINK_FADE_BLOCKS, intoBand));
 
     // Distance into the section from each open side, as a 0..1 ramp over the outer
     // third. Vertex positions are section-local, so this is just the local x/z.
