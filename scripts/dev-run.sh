@@ -9,7 +9,7 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GAME_DIR="${VINTAGE_STORY:-$HOME/Games/vintagestory1.22.3}"
+GAME_DIR="${VINTAGE_STORY:-$HOME/Games/vintagestory1.22.5}"
 WORLD="${1:-vhsurvival}"
 PLAYSTYLE="${2:-preset-surviveandbuild}"
 

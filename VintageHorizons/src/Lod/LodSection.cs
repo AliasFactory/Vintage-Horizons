@@ -16,9 +16,16 @@ public struct LodPaletteEntry
 
     public byte Flags;
 
+    /// <summary>
+    /// Which live tint applies (see LodTintRegistry). Derived from the block, never
+    /// persisted: an existing cache gets correct per-species tints without re-capturing,
+    /// and the mapping stays right if a game update moves a block to a different map.
+    /// </summary>
+    public byte TintSlot;
+
     public const byte FlagWater = 1;
-    public const byte FlagTintGrass = 2;   // block uses a climate color map
-    public const byte FlagTintFoliage = 4; // block uses a seasonal color map
+    public const byte FlagTintGrass = 2;   // legacy: superseded by TintSlot
+    public const byte FlagTintFoliage = 4; // legacy: superseded by TintSlot
 }
 
 /// <summary>
@@ -69,13 +76,19 @@ public class LodSection
     public Span<ulong> ColumnRuns(int col) =>
         Runs.AsSpan(ColumnStart[col], ColumnStart[col + 1] - ColumnStart[col]);
 
-    public int FindOrAddPaletteEntry(int blockId, int color, byte flags)
+    public int FindOrAddPaletteEntry(int blockId, int color, byte flags, byte tintSlot = 0)
     {
         for (int i = 0; i < Palette.Count; i++)
         {
             if (Palette[i].BlockId == blockId) return i;
         }
-        Palette.Add(new LodPaletteEntry { BlockId = blockId, Color = color, Flags = flags });
+        Palette.Add(new LodPaletteEntry
+        {
+            BlockId = blockId,
+            Color = color,
+            Flags = flags,
+            TintSlot = tintSlot,
+        });
         return Palette.Count - 1;
     }
 

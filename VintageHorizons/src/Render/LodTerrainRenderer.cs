@@ -51,11 +51,6 @@ public class LodTerrainRenderer : IRenderer
     public bool AutoUnpause;
 
     // Live seasonal state, refreshed periodically and fed to the shader as uniforms.
-    Block? grassTintBlock;
-    Block? foliageTintBlock;
-    bool tintBlocksResolved;
-    readonly Vec3f grassTint = new(1, 1, 1);
-    readonly Vec3f foliageTint = new(1, 1, 1);
     float snowLineY = 99999;
     long lastSeasonRefreshFrame = -99999;
     readonly BlockPos climatePos = new(0, 0, 0);
@@ -75,6 +70,29 @@ public class LodTerrainRenderer : IRenderer
     readonly LodFrustum frustum = new();
     int worldHeight = 1024;
 
+    // Per-phase render-thread cost. The benchmark showed worst-1% frames at 13.7ms
+    // against vanilla's 2.5ms, so the question is which phase spends it -- guessing
+    // has been wrong twice already.
+    readonly System.Diagnostics.Stopwatch phaseClock = new();
+    public double MsUploadMax { get; private set; }
+    public double MsEvictMax { get; private set; }
+    public double MsScheduleMax { get; private set; }
+    public double MsWalkMax { get; private set; }
+    public double MsDrawMax { get; private set; }
+    public double MsFrameMax { get; private set; }
+
+    public void ResetPhaseStats()
+    {
+        MsUploadMax = MsEvictMax = MsScheduleMax = MsWalkMax = MsDrawMax = MsFrameMax = 0;
+    }
+
+    double Lap()
+    {
+        double ms = phaseClock.Elapsed.TotalMilliseconds;
+        phaseClock.Restart();
+        return ms;
+    }
+
     public string DescribeDrawnLevels()
     {
         var counts = new int[LodWorld.MaxLevel + 1];
@@ -82,11 +100,14 @@ public class LodTerrainRenderer : IRenderer
         return string.Join(" ", counts.Select((c, i) => $"L{i}:{c}"));
     }
 
-    public LodTerrainRenderer(ICoreClientAPI capi, LodWorld world, LodWorker worker)
+    readonly LodTintRegistry tints;
+
+    public LodTerrainRenderer(ICoreClientAPI capi, LodWorld world, LodWorker worker, LodTintRegistry tints)
     {
         this.capi = capi;
         this.world = world;
         this.worker = worker;
+        this.tints = tints;
 
         capi.Event.ReloadShader += LoadShader;
         LoadShader();
@@ -228,35 +249,14 @@ public class LodTerrainRenderer : IRenderer
         if (frameCounter - lastSeasonRefreshFrame < 240) return;
         lastSeasonRefreshFrame = frameCounter;
 
-        if (!tintBlocksResolved)
-        {
-            tintBlocksResolved = true;
-            foreach (Block block in capi.World.Blocks)
-            {
-                if (block?.Code == null) continue;
-                if (foliageTintBlock == null && block.SeasonColorMapResolved != null) foliageTintBlock = block;
-                else if (grassTintBlock == null && block.ClimateColorMapResolved != null
-                    && block.SeasonColorMapResolved == null) grassTintBlock = block;
-                if (grassTintBlock != null && foliageTintBlock != null) break;
-            }
-        }
-
         int px = (int)camPos.X;
         int py = (int)camPos.Y;
         int pz = (int)camPos.Z;
 
-        if (grassTintBlock != null)
-        {
-            UnpackTint(capi.World.ApplyColorMapOnRgba(
-                grassTintBlock.ClimateColorMapResolved, grassTintBlock.SeasonColorMapResolved,
-                unchecked((int)0xFFFFFFFF), px, py, pz), grassTint);
-        }
-        if (foliageTintBlock != null)
-        {
-            UnpackTint(capi.World.ApplyColorMapOnRgba(
-                foliageTintBlock.ClimateColorMapResolved, foliageTintBlock.SeasonColorMapResolved,
-                unchecked((int)0xFFFFFFFF), px, py, pz), foliageTint);
-        }
+        // Every registered colour-map pair at once: leaves are per species (oak turns
+        // while pine stays green) and water has its own map, so one shared foliage tint
+        // was never going to be right.
+        tints.Refresh(capi.World, px, py, pz);
 
         try
         {
@@ -283,13 +283,6 @@ public class LodTerrainRenderer : IRenderer
         }
     }
 
-    static void UnpackTint(int rgba, Vec3f into)
-    {
-        // ApplyColorMapOnRgba defaults to flipRb=true, so red arrives in the high byte.
-        into.X = ((rgba >> 16) & 0xFF) / 255f;
-        into.Y = ((rgba >> 8) & 0xFF) / 255f;
-        into.Z = (rgba & 0xFF) / 255f;
-    }
 
     /// <summary>Demand-driven (re)meshing: the selection walk is the load queue (Voxy's idea, CPU-side).</summary>
     void RequestMesh(long key)
@@ -481,10 +474,19 @@ public class LodTerrainRenderer : IRenderer
         camPos = capi.World.Player.Entity.CameraPos;
         frameCounter++;
 
+        var frameClock = System.Diagnostics.Stopwatch.StartNew();
+        phaseClock.Restart();
+
         PruneRenderDirty();
         ScheduleMeshJobs();
+        if (Lap() is double msSched && msSched > MsScheduleMax) MsScheduleMax = msSched;
+
         UploadFinishedMeshes();
+        if (Lap() is double msUp && msUp > MsUploadMax) MsUploadMax = msUp;
+
         EvictStaleMeshes();
+        if (Lap() is double msEv && msEv > MsEvictMax) MsEvictMax = msEv;
+
         RefreshSeasonalState();
         if (sectionMeshes.Count == 0 && waterMeshes.Count == 0) return;
 
@@ -498,11 +500,14 @@ public class LodTerrainRenderer : IRenderer
         UpdateEffectiveFarDistance(viewDistance);
         ApplyZFar();
 
+        phaseClock.Restart();
         drawList.Clear();
         foreach (long top in world.TopLevelKeys) CollectDrawNodes(top);
         LastDrawCount = drawList.Count;
+        if (Lap() is double msWalk && msWalk > MsWalkMax) MsWalkMax = msWalk;
         if (drawList.Count == 0) return;
 
+        phaseClock.Restart();
         prog.Use();
         rapi.GlDisableCullFace();
 
@@ -526,8 +531,7 @@ public class LodTerrainRenderer : IRenderer
         prog.Uniform("viewDistance", viewDistance);
         prog.Uniform("farViewDistance", EffectiveFarDistance);
 
-        prog.Uniform("grassTint", grassTint);
-        prog.Uniform("foliageTint", foliageTint);
+        prog.Uniforms4("tints", LodTintRegistry.MaxSlots, tints.Tints);
         prog.Uniform("snowLineY", snowLineY);
 
         float cullDistSq = float.MaxValue;
@@ -559,6 +563,10 @@ public class LodTerrainRenderer : IRenderer
 
         rapi.GlEnableCullFace();
         prog.Stop();
+
+        if (Lap() is double msDraw && msDraw > MsDrawMax) MsDrawMax = msDraw;
+        double msFrame = frameClock.Elapsed.TotalMilliseconds;
+        if (msFrame > MsFrameMax) MsFrameMax = msFrame;
     }
 
     bool SetupSectionTransform(long key, float cullDistSq)

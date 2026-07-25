@@ -20,11 +20,18 @@ uniform vec3 sunPosition;
 uniform vec3 sunColor;
 uniform float dayLight;
 
-// Live seasonal state: tints applied to untinted base colors, decoded from the
-// alpha byte (255 = none, 254 = grass, 253 = foliage, < 200 = water).
-uniform vec3 grassTint;
-uniform vec3 foliageTint;
+// Live tint table. The alpha byte carries a tint SLOT, not a class:
+//   0..63    opaque,      slot = alpha
+//   64..127  translucent, slot = alpha - 64
+// Slot 0 is the identity tint. One slot per distinct (climate map, season map) pair,
+// because leaves pick a seasonal map per species and water has its own -- a single
+// shared foliage tint left every tree the same colour and water untinted grey.
+const int TINT_SLOTS = 64;
+uniform vec4 tints[TINT_SLOTS];
 uniform float snowLineY;
+
+// Water blend factor now that alpha carries the slot instead of an opacity.
+const float WATER_ALPHA = 0.66;
 
 // Blocks per column in the section being drawn (1 at level 0, doubling per level).
 // Coarse sections merge whole neighbourhoods into one colour, and greedy meshing
@@ -57,27 +64,24 @@ void main()
     float sunAngle = max(0.0, dot(normal, normalize(sunPosition)));
     float shade = 0.55 + 0.45 * sunAngle;
 
-    // Seasonal tint by class (alpha byte), then snow line on up-facing terrain.
+    // Decode the tint slot, then snow line on up-facing terrain.
     float aByte = vertexColor.a * 255.0;
-    vec3 albedo = vertexColor.rgb;
-    float outAlpha = 1.0;
+    int slotRaw = int(aByte + 0.5);
+    bool translucent = slotRaw >= TINT_SLOTS;
+    int slot = translucent ? slotRaw - TINT_SLOTS : slotRaw;
+    slot = clamp(slot, 0, TINT_SLOTS - 1);
 
-    if (aByte < 200.0) {
-        outAlpha = vertexColor.a; // water: translucent, untinted
-    } else if (aByte < 253.5) {
-        albedo *= foliageTint;
-    } else if (aByte < 254.5) {
-        albedo *= grassTint;
-    }
+    vec3 albedo = vertexColor.rgb * tints[slot].rgb;
+    float outAlpha = translucent ? WATER_ALPHA : 1.0;
 
-    if (aByte >= 200.0) {
+    if (!translucent) {
         float upness = clamp(normal.y, 0.0, 1.0);
         float snowMix = smoothstep(snowLineY, snowLineY + 24.0, yLevel) * upness;
         albedo = mix(albedo, vec3(0.93, 0.94, 0.97), snowMix);
     }
 
     // Water is a smooth surface; only break up land.
-    if (aByte >= 200.0) {
+    if (!translucent) {
         float period = max(4.0, columnBlocks * 6.0);
         float n = valuenoise(worldPos.xyz / period);
         albedo *= 1.0 + 0.10 * (n - 0.5);

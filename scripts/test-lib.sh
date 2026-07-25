@@ -7,7 +7,7 @@
 
 VH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VH_SANDBOX="$VH_ROOT/.testdata"
-VH_GAME="${VINTAGE_STORY:-$HOME/Games/vintagestory1.22.3}"
+VH_GAME="${VINTAGE_STORY:-$HOME/Games/vintagestory1.22.5}"
 
 # The desktop launcher's DOTNET_ROOT (~/.dotnet) is stale on this machine, but a
 # caller who sets it deliberately must win — same contract as dev-run.sh.

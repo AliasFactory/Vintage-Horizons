@@ -41,6 +41,7 @@ route="$ROOT/bench/routes/vhsurvival.txt"
 settle=20
 measure=10
 detail=""
+watch=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -50,6 +51,7 @@ while [[ $# -gt 0 ]]; do
         --settle) settle="$2"; shift 2 ;;
         --measure) measure="$2"; shift 2 ;;
         --detail) detail="$2"; shift 2 ;;
+        --watch) watch=1; shift ;;
         *) echo "bench.sh: unknown option '$1'" >&2; exit 2 ;;
     esac
 done
@@ -97,17 +99,27 @@ fi
 # Uncap the frame rate. With vsync on, every configuration reports the monitor's
 # refresh rate as its average and the comparison says nothing; only the 1% lows would
 # differ. Written into the sandbox settings so it applies whatever mod is under test.
-python3 - "$VH_SANDBOX/clientsettings.json" <<'PY'
+#
+# --watch turns vsync back on so the run is comfortable to sit and watch: rendering
+# hundreds of uncapped frames per second does not present cleanly on a compositor and
+# makes the window look stale or blank. Numbers from a watch run are NOT comparable
+# with measured runs, and are labelled to keep them out of the comparison.
+python3 - "$VH_SANDBOX/clientsettings.json" "$watch" <<'PY'
 import json, sys
-path = sys.argv[1]
+path, watch = sys.argv[1], sys.argv[2] == "1"
 with open(path) as f:
     cfg = json.load(f)
-cfg.setdefault("intSettings", {})["vsyncMode"] = 0
-cfg["intSettings"]["maxFps"] = 0
+cfg.setdefault("intSettings", {})["vsyncMode"] = 1 if watch else 0
+cfg["intSettings"]["maxFps"] = 60 if watch else 0
 with open(path, "w") as f:
     json.dump(cfg, f, indent=1)
-print("  vsync off, fps uncapped")
+print("  vsync on, 60 fps cap (watchable)" if watch else "  vsync off, fps uncapped")
 PY
+
+if [[ "$watch" == 1 ]]; then
+    label="${label}-watch"
+    echo "  watch mode: results labelled '$label' so they cannot be mistaken for measurements"
+fi
 
 rm -f "$BENCH_OUT/$label.done" "$BENCH_OUT/$label.csv"
 

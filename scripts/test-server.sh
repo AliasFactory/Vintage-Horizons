@@ -19,8 +19,19 @@ PORT="${VH_TEST_PORT:-42425}"
 
 vh_guard_not_running "Test server" "$PIDFILE"
 
-mkdir -p "$DATA/tmp"
+mkdir -p "$DATA/tmp" "$DATA/Mods"
 export TMPDIR="$DATA/tmp"
+
+# A server-side mod left over from a previous benchmark makes the server demand it
+# from every joining client, which shows up as "You are missing 1 mods to join this
+# server" and looks like a bug in our own mod. bench.sh manages this set explicitly;
+# a plain run must at least say what is installed.
+leftover="$(ls -A "$DATA/Mods" 2>/dev/null || true)"
+if [[ -n "$leftover" ]]; then
+    echo "NOTE: server-side mods present, clients will be required to have them:" >&2
+    echo "$leftover" | sed 's/^/  /' >&2
+    echo "  (rm -rf $DATA/Mods/* for a vanilla server)" >&2
+fi
 
 # Retry: stopping and immediately restarting leaves the port in TIME_WAIT, and the
 # bind failure is transient. Anything else fails loudly with the console tail.

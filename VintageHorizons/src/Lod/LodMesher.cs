@@ -20,19 +20,18 @@ public static class LodMesher
 {
     const int W = 0, E = 1, N = 2, S = 3;
 
-    // Tint class rides in the alpha byte (no vertex format change): the shader decodes
-    // 255=untinted, 254=grass tint, 253=foliage tint; anything below 200 is water.
-    const byte WaterAlpha = 168;
-    const byte AlphaNone = 255;
-    const byte AlphaGrass = 254;
-    const byte AlphaFoliage = 253;
+    // The tint slot rides in the alpha byte, so the vertex format stays position+colour:
+    //   0..63    opaque,      tint slot = alpha
+    //   64..127  translucent, tint slot = alpha - 64
+    // Slot 0 is the identity tint. Translucency is a flag here rather than an alpha
+    // value; the shader supplies the actual blend factor.
+    const byte TranslucentBase = LodTintRegistry.MaxSlots;
 
-    static byte AlphaFor(byte paletteFlags)
+    static byte AlphaFor(byte paletteFlags, byte tintSlot)
     {
-        if ((paletteFlags & LodPaletteEntry.FlagWater) != 0) return WaterAlpha;
-        if ((paletteFlags & LodPaletteEntry.FlagTintFoliage) != 0) return AlphaFoliage;
-        if ((paletteFlags & LodPaletteEntry.FlagTintGrass) != 0) return AlphaGrass;
-        return AlphaNone;
+        byte slot = tintSlot < LodTintRegistry.MaxSlots ? tintSlot : (byte)LodTintRegistry.SlotNone;
+        if ((paletteFlags & LodPaletteEntry.FlagWater) != 0) return (byte)(TranslucentBase + slot);
+        return slot;
     }
 
     class Buffers
@@ -174,7 +173,7 @@ public static class LodMesher
 
             Buffers buf = first.Water ? water : opaque;
             int color = self.PaletteColors[first.Pid];
-            byte alpha = AlphaFor(self.PaletteFlags[first.Pid]);
+            byte alpha = AlphaFor(self.PaletteFlags[first.Pid], self.PaletteTintSlots[first.Pid]);
 
             for (int i = start; i < end; i++)
             {
@@ -266,7 +265,7 @@ public static class LodMesher
 
             Buffers buf = seg.Water ? water : opaque;
             int color = self.PaletteColors[seg.Pid];
-            byte alpha = AlphaFor(self.PaletteFlags[seg.Pid]);
+            byte alpha = AlphaFor(self.PaletteFlags[seg.Pid], self.PaletteTintSlots[seg.Pid]);
 
             // W/E walls run along Z at fixed X; N/S walls run along X at fixed Z.
             bool xWall = seg.Dir is W or E;

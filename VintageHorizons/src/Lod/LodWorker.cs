@@ -12,6 +12,7 @@ public class SectionSnapshot
     public required bool[] Captured;
     public required int[] PaletteColors;
     public required byte[] PaletteFlags;
+    public required byte[] PaletteTintSlots;
 
     public Span<ulong> ColumnRuns(int col) =>
         Runs.AsSpan(ColumnStart[col], ColumnStart[col + 1] - ColumnStart[col]);
@@ -20,10 +21,12 @@ public class SectionSnapshot
     {
         var colors = new int[s.Palette.Count];
         var flags = new byte[s.Palette.Count];
+        var slots = new byte[s.Palette.Count];
         for (int i = 0; i < s.Palette.Count; i++)
         {
             colors[i] = s.Palette[i].Color;
             flags[i] = s.Palette[i].Flags;
+            slots[i] = s.Palette[i].TintSlot;
         }
         return new SectionSnapshot
         {
@@ -32,6 +35,7 @@ public class SectionSnapshot
             Captured = (bool[])s.Captured.Clone(),
             PaletteColors = colors,
             PaletteFlags = flags,
+            PaletteTintSlots = slots,
         };
     }
 }

@@ -48,7 +48,7 @@ stale cache can never degrade a newer version.
 Requires the .NET 10 SDK and a Vintage Story 1.22.x install.
 
 ```sh
-export VINTAGE_STORY="$HOME/Games/vintagestory1.22.3"   # your game path
+export VINTAGE_STORY="$HOME/Games/vintagestory1.22.5"   # your game path
 dotnet build VintageHorizons
 ```
 

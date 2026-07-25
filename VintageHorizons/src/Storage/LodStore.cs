@@ -162,6 +162,23 @@ public class LodStore : SQLiteDBConnection
     /// Finish a section that was deserialized off-thread by resolving its palette
     /// block ids. MUST run on the main thread — it reads the block registry.
     /// </summary>
+    /// <summary>
+    /// Recompute a palette entry's flags and tint slot from the live block. Set by the
+    /// coordinator; runs on the main thread only.
+    /// </summary>
+    public System.Func<int, (byte Flags, byte TintSlot)>? ClassifyBlock;
+
+    void Reclassify(LodSection section, int index, int blockId)
+    {
+        if (ClassifyBlock == null || blockId <= 0) return;
+
+        (byte flags, byte slot) = ClassifyBlock(blockId);
+        LodPaletteEntry e = section.Palette[index];
+        e.Flags = flags;
+        e.TintSlot = slot;
+        section.Palette[index] = e;
+    }
+
     public void ResolvePendingPalette(LodSection section, IWorldAccessor world)
     {
         string[]? codes = section.PendingPaletteCodes;
@@ -182,6 +199,7 @@ public class LodStore : SQLiteDBConnection
             LodPaletteEntry e = section.Palette[i];
             e.BlockId = blockId;
             section.Palette[i] = e;
+            Reclassify(section, i, blockId);
         }
 
         section.PendingPaletteCodes = null;
@@ -291,6 +309,11 @@ public class LodStore : SQLiteDBConnection
                     blockIdByCode[code] = blockId;
                 }
                 section.Palette.Add(new LodPaletteEntry { BlockId = blockId, Color = color, Flags = flags });
+
+                // Stored flags predate per-species tint slots (and can go stale if a game
+                // update moves a block to a different colour map), so the live block is
+                // the authority whenever we can resolve it here.
+                if (deferredCodes == null) Reclassify(section, section.Palette.Count - 1, blockId);
             }
 
             section.PendingPaletteCodes = deferredCodes;

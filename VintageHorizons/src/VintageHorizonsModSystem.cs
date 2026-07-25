@@ -38,6 +38,9 @@ public class VintageHorizonsModSystem : ModSystem
     LodTerrainRenderer renderer = null!;
     LodStore? store;
     LodStorageThread? storageThread;
+
+    /// <summary>Block -> live tint slot; shared by capture, cache loads and the renderer.</summary>
+    readonly LodTintRegistry tints = new();
     long tickListenerId;
     int cachedSectionsLoaded;
     int columnsCaptured;
@@ -75,7 +78,7 @@ public class VintageHorizonsModSystem : ModSystem
 
         world = new LodWorld();
         worker = new LodWorker();
-        renderer = new LodTerrainRenderer(capi, world, worker)
+        renderer = new LodTerrainRenderer(capi, world, worker, tints)
         {
             AutoUnpause = Environment.GetEnvironmentVariable("VINTAGEHORIZONS_AUTOUNPAUSE") == "1",
             FarViewDistanceCap = config.FarViewDistanceCap,
@@ -228,24 +231,18 @@ public class VintageHorizonsModSystem : ModSystem
         paletteSamplePos.Set(result.Cx * ChunkSize + ChunkSize / 2, sampleY, result.Cz * ChunkSize + ChunkSize / 2);
         int color = block.GetColorWithoutTint(capi, paletteSamplePos);
 
-        byte flags = 0;
-        if (block.BlockMaterial == EnumBlockMaterial.Water
-            || block.BlockMaterial == EnumBlockMaterial.Lava
-            || block.BlockMaterial == EnumBlockMaterial.Ice)
-        {
-            flags |= LodPaletteEntry.FlagWater;
-        }
-        else if (block.SeasonColorMapResolved != null)
-        {
-            flags |= LodPaletteEntry.FlagTintFoliage;
-        }
-        else if (block.ClimateColorMapResolved != null)
-        {
-            flags |= LodPaletteEntry.FlagTintGrass;
-        }
-
-        return section.FindOrAddPaletteEntry(blockId, color, flags);
+        return section.FindOrAddPaletteEntry(blockId, color, FlagsFor(block), (byte)tints.SlotFor(block));
     }
+
+    /// <summary>
+    /// Translucency only. Which tint applies is a separate question answered by
+    /// LodTintRegistry: water, leaves and grass all carry colour maps, but water also
+    /// has to be drawn see-through.
+    /// </summary>
+    static byte FlagsFor(Block block) =>
+        block.BlockMaterial is EnumBlockMaterial.Water or EnumBlockMaterial.Lava or EnumBlockMaterial.Ice
+            ? LodPaletteEntry.FlagWater
+            : (byte)0;
 
     // ---- Persistence ----
 
@@ -410,6 +407,11 @@ public class VintageHorizonsModSystem : ModSystem
         }
 
         store = newStore;
+        newStore.ClassifyBlock = blockId =>
+        {
+            Block? block = blockId > 0 && blockId < capi.World.Blocks.Count ? capi.World.Blocks[blockId] : null;
+            return block == null ? ((byte)0, (byte)0) : (FlagsFor(block), (byte)tints.SlotFor(block));
+        };
         storageThread = new LodStorageThread(newStore);
 
         // Background reloads for the render path. The loader runs on the storage
