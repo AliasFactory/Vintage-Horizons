@@ -59,6 +59,14 @@ public class LodTintRegistry
         for (int i = 0; i < tintsLow.Length; i++) tintsLow[i] = tintsHigh[i] = 1f;
     }
 
+    /// <summary>
+    /// A block carrying climatePlantTint, used for plants that declare no colour map of
+    /// their own. Ferns are the case that forced this: their textures ship greyscale
+    /// (stored colour is exactly RGB 148,148,148) and vanilla greens them from its block
+    /// class rather than from JSON, so an untinted LOD cube came out grey.
+    /// </summary>
+    public Block? PlantTintFallback;
+
     /// <summary>Slot for this block, registering a new one if this map pair is unseen.</summary>
     public int SlotFor(Block? block)
     {
@@ -66,7 +74,13 @@ public class LodTintRegistry
 
         string? climate = block.ClimateColorMapResolved != null ? block.ClimateColorMap : null;
         string? season = block.SeasonColorMapResolved != null ? block.SeasonColorMap : null;
-        if (climate == null && season == null) return SlotNone;
+
+        if (climate == null && season == null)
+        {
+            return block.BlockMaterial == EnumBlockMaterial.Plant && PlantTintFallback != null
+                ? SlotFor(PlantTintFallback)
+                : SlotNone;
+        }
 
         var key = (climate, season);
         if (slotByMaps.TryGetValue(key, out int slot)) return slot;

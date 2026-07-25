@@ -258,10 +258,12 @@ public class VintageHorizonsModSystem : ModSystem
             return LodPaletteEntry.FlagWater;
         }
 
-        // Flowers only, not all ground cover: grass and ferns read fine as solid colour
-        // at distance, but a flower's texture is mostly transparent pixels so its cube
-        // came out an opaque pale-grey blob.
-        if (block.Code?.Path?.StartsWith("flower", StringComparison.Ordinal) == true)
+        // Sparse, mostly-transparent ground cover. As solid LOD cubes these come out as
+        // pale grey blobs, because their textures average toward the transparent pixels.
+        // Not all of EnumBlockMaterial.Plant: skipping every plant was tried and
+        // flattened the landscape, and dense cover like grass reads fine as solid colour.
+        // The Plant guard also keeps ferntree (material Wood, an actual tree) opaque.
+        if (block.BlockMaterial == EnumBlockMaterial.Plant && IsThinGroundCover(block))
         {
             return LodPaletteEntry.FlagThin;
         }
@@ -276,6 +278,38 @@ public class VintageHorizonsModSystem : ModSystem
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Find a block using the standard plant tint, so plants that declare no colour map
+    /// (ferns) can borrow it instead of rendering as their greyscale texture.
+    /// </summary>
+    void ResolvePlantTintFallback()
+    {
+        foreach (Block block in capi.World.Blocks)
+        {
+            if (block?.Code == null) continue;
+            if (block.SeasonColorMapResolved != null) continue;
+            if (block.ClimateColorMapResolved == null) continue;
+            if (block.ClimateColorMap != "climatePlantTint") continue;
+
+            tints.PlantTintFallback = block;
+            return;
+        }
+    }
+
+    static readonly string[] ThinGroundCoverPrefixes = { "flower", "fern", "tallfern" };
+
+    static bool IsThinGroundCover(Block block)
+    {
+        string? path = block.Code?.Path;
+        if (path == null) return false;
+
+        foreach (string prefix in ThinGroundCoverPrefixes)
+        {
+            if (path.StartsWith(prefix, StringComparison.Ordinal)) return true;
+        }
+        return false;
     }
 
     // ---- Persistence ----
@@ -350,6 +384,7 @@ public class VintageHorizonsModSystem : ModSystem
 
     void OnLevelFinalize()
     {
+        ResolvePlantTintFallback();
         renderer.ApplyZFar();
         OpenLodCache();
         pipelineActive = true;

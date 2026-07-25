@@ -41,7 +41,7 @@ uniform float snowLineY;
 // Flowers are crossed quads in vanilla; as a solid cube they read as a grey blob, so
 // they are drawn mostly see-through and the ground shows through them.
 const float WATER_ALPHA = 0.66;
-const float THIN_ALPHA = 0.30;
+const float THIN_ALPHA = 0.50;
 
 // Blocks per column in the section being drawn (1 at level 0, doubling per level).
 // Coarse sections merge whole neighbourhoods into one colour, and greedy meshing
