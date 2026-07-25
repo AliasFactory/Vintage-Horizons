@@ -146,6 +146,9 @@ public class VintageHorizonsModSystem : ModSystem
             if (result.Section != null && store != null)
             {
                 store.ResolvePendingPalette(result.Section, capi.World);
+                // Cached sections predate skipping decorative plants; drop those runs so
+                // old terrain loses its grey flower cubes without being re-explored.
+                result.Section.RemoveRunsWithFlag(LodPaletteEntry.FlagSkip);
             }
             world.InstallLoaded(result.Key, result.Section);
         }
@@ -201,6 +204,7 @@ public class VintageHorizonsModSystem : ModSystem
                 ulong[]? runs = batch[col];
                 if (runs == null) continue;
 
+                int kept = 0;
                 for (int i = 0; i < runs.Length; i++)
                 {
                     int blockId = LodSection.RunPaletteId(runs[i]); // raw block id from capture
@@ -209,8 +213,15 @@ public class VintageHorizonsModSystem : ModSystem
                         pid = RegisterPaletteEntry(section, result, blockId, LodSection.RunYTop(runs[i]));
                         pidByBlockId[blockId] = pid;
                     }
-                    runs[i] = LodSection.PackRun(pid, LodSection.RunYTop(runs[i]), LodSection.RunYBottom(runs[i]));
+
+                    // Decorative ground cover never becomes terrain: a flower would
+                    // otherwise be a solid, pale-grey 1-block cube.
+                    if ((section.Palette[pid].Flags & LodPaletteEntry.FlagSkip) != 0) continue;
+
+                    runs[kept++] = LodSection.PackRun(pid, LodSection.RunYTop(runs[i]), LodSection.RunYBottom(runs[i]));
                 }
+
+                if (kept != runs.Length) batch[col] = runs[..kept];
             }
 
             columnsCaptured++;
@@ -239,10 +250,24 @@ public class VintageHorizonsModSystem : ModSystem
     /// LodTintRegistry: water, leaves and grass all carry colour maps, but water also
     /// has to be drawn see-through.
     /// </summary>
-    static byte FlagsFor(Block block) =>
-        block.BlockMaterial is EnumBlockMaterial.Water or EnumBlockMaterial.Lava or EnumBlockMaterial.Ice
-            ? LodPaletteEntry.FlagWater
-            : (byte)0;
+    static byte FlagsFor(Block block)
+    {
+        if (block.BlockMaterial is EnumBlockMaterial.Water or EnumBlockMaterial.Lava or EnumBlockMaterial.Ice)
+        {
+            return LodPaletteEntry.FlagWater;
+        }
+
+        // Only things that are not terrain at all. Plants are deliberately NOT skipped:
+        // dropping ground cover flattened the landscape into cartoonish blocks of solid
+        // colour, and the greyness that prompted it was really a missing tint — plants
+        // carry climatePlantTint, which the tint-slot table now applies.
+        if (block.BlockMaterial is EnumBlockMaterial.Fire or EnumBlockMaterial.Meta)
+        {
+            return LodPaletteEntry.FlagSkip;
+        }
+
+        return 0;
+    }
 
     // ---- Persistence ----
 

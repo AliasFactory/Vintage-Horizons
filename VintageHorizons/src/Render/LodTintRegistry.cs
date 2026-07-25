@@ -34,17 +34,29 @@ public class LodTintRegistry
 
     readonly Dictionary<(string?, string?), int> slotByMaps = new();
     readonly List<Block?> representative = new();
+
     // vec4 per slot: the uniform upload path takes 4 components per element.
-    readonly float[] tints = new float[MaxSlots * 4];
+    // Two altitude samples per slot, because the climate maps are indexed by
+    // temperature and temperature falls with height — the same lapse rate the snow
+    // line uses. Sampling once at the player's feet painted mountaintops with valley
+    // green instead of the colder, redder grass that actually grows up there. The
+    // shader interpolates between these by vertex height.
+    readonly float[] tintsLow = new float[MaxSlots * 4];
+    readonly float[] tintsHigh = new float[MaxSlots * 4];
 
     public int SlotCount => representative.Count;
-    public float[] Tints => tints;
+    public float[] TintsLow => tintsLow;
+    public float[] TintsHigh => tintsHigh;
+
+    /// <summary>World Y the two tint tables were sampled at.</summary>
+    public float SampleYLow { get; private set; }
+    public float SampleYHigh { get; private set; }
 
     public LodTintRegistry()
     {
         representative.Add(null);              // slot 0: no tint
         slotByMaps[(null, null)] = SlotNone;
-        for (int i = 0; i < tints.Length; i++) tints[i] = 1f;
+        for (int i = 0; i < tintsLow.Length; i++) tintsLow[i] = tintsHigh[i] = 1f;
     }
 
     /// <summary>Slot for this block, registering a new one if this map pair is unseen.</summary>
@@ -72,20 +84,31 @@ public class LodTintRegistry
     /// </summary>
     public void Refresh(IClientWorldAccessor world, int x, int y, int z)
     {
+        // Span the height range terrain actually occupies around the viewer, so the
+        // interpolation covers valley floor to peak rather than extrapolating.
+        SampleYLow = world.SeaLevel;
+        SampleYHigh = world.SeaLevel + 320;
+
         for (int slot = 1; slot < representative.Count; slot++)
         {
             Block? block = representative[slot];
             if (block == null) continue;
 
-            int rgba = world.ApplyColorMapOnRgba(
-                block.ClimateColorMapResolved, block.SeasonColorMapResolved,
-                unchecked((int)0xFFFFFFFF), x, y, z);
-
-            // ApplyColorMapOnRgba flips red and blue by default, so red is the high byte.
-            tints[slot * 4 + 0] = ((rgba >> 16) & 0xFF) / 255f;
-            tints[slot * 4 + 1] = ((rgba >> 8) & 0xFF) / 255f;
-            tints[slot * 4 + 2] = (rgba & 0xFF) / 255f;
-            tints[slot * 4 + 3] = 1f;
+            Sample(world, block, x, (int)SampleYLow, z, tintsLow, slot);
+            Sample(world, block, x, (int)SampleYHigh, z, tintsHigh, slot);
         }
+    }
+
+    static void Sample(IClientWorldAccessor world, Block block, int x, int y, int z, float[] into, int slot)
+    {
+        int rgba = world.ApplyColorMapOnRgba(
+            block.ClimateColorMapResolved, block.SeasonColorMapResolved,
+            unchecked((int)0xFFFFFFFF), x, y, z);
+
+        // ApplyColorMapOnRgba flips red and blue by default, so red is the high byte.
+        into[slot * 4 + 0] = ((rgba >> 16) & 0xFF) / 255f;
+        into[slot * 4 + 1] = ((rgba >> 8) & 0xFF) / 255f;
+        into[slot * 4 + 2] = (rgba & 0xFF) / 255f;
+        into[slot * 4 + 3] = 1f;
     }
 }

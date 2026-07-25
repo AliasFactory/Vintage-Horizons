@@ -531,7 +531,10 @@ public class LodTerrainRenderer : IRenderer
         prog.Uniform("viewDistance", viewDistance);
         prog.Uniform("farViewDistance", EffectiveFarDistance);
 
-        prog.Uniforms4("tints", LodTintRegistry.MaxSlots, tints.Tints);
+        prog.Uniforms4("tintsLow", LodTintRegistry.MaxSlots, tints.TintsLow);
+        prog.Uniforms4("tintsHigh", LodTintRegistry.MaxSlots, tints.TintsHigh);
+        prog.Uniform("tintYLow", tints.SampleYLow);
+        prog.Uniform("tintYHigh", tints.SampleYHigh);
         prog.Uniform("snowLineY", snowLineY);
 
         float cullDistSq = float.MaxValue;

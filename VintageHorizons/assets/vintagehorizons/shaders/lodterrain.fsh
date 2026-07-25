@@ -26,8 +26,14 @@ uniform float dayLight;
 // Slot 0 is the identity tint. One slot per distinct (climate map, season map) pair,
 // because leaves pick a seasonal map per species and water has its own -- a single
 // shared foliage tint left every tree the same colour and water untinted grey.
+// Sampled at two heights and blended by vertex height: the climate maps are indexed
+// by temperature, which drops with altitude, so one sample at the player's feet gave
+// mountaintops the same lush green as the valley floor.
 const int TINT_SLOTS = 64;
-uniform vec4 tints[TINT_SLOTS];
+uniform vec4 tintsLow[TINT_SLOTS];
+uniform vec4 tintsHigh[TINT_SLOTS];
+uniform float tintYLow;
+uniform float tintYHigh;
 uniform float snowLineY;
 
 // Water blend factor now that alpha carries the slot instead of an opacity.
@@ -71,7 +77,8 @@ void main()
     int slot = translucent ? slotRaw - TINT_SLOTS : slotRaw;
     slot = clamp(slot, 0, TINT_SLOTS - 1);
 
-    vec3 albedo = vertexColor.rgb * tints[slot].rgb;
+    float tintBlend = clamp((yLevel - tintYLow) / max(1.0, tintYHigh - tintYLow), 0.0, 1.0);
+    vec3 albedo = vertexColor.rgb * mix(tintsLow[slot].rgb, tintsHigh[slot].rgb, tintBlend);
     float outAlpha = translucent ? WATER_ALPHA : 1.0;
 
     if (!translucent) {

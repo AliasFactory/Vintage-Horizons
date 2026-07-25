@@ -26,6 +26,14 @@ public struct LodPaletteEntry
     public const byte FlagWater = 1;
     public const byte FlagTintGrass = 2;   // legacy: superseded by TintSlot
     public const byte FlagTintFoliage = 4; // legacy: superseded by TintSlot
+
+    /// <summary>
+    /// Decorative ground cover (flowers, tall grass, ferns). Vanilla draws these as thin
+    /// crossed quads; an LOD column would turn each into a solid 1-block cube coloured by
+    /// its texture average, which is mostly transparent pixels and comes out pale grey —
+    /// a field of flowers became a field of grey blocks. Dropped so the ground shows.
+    /// </summary>
+    public const byte FlagSkip = 8;
 }
 
 /// <summary>
@@ -90,6 +98,44 @@ public class LodSection
             TintSlot = tintSlot,
         });
         return Palette.Count - 1;
+    }
+
+    /// <summary>
+    /// Drop every run whose palette entry carries <paramref name="flag"/>, rebuilding the
+    /// run storage. Applied after a section is loaded so terrain already in the cache is
+    /// corrected in place — no re-exploration, no cache wipe.
+    /// Returns true if anything was removed.
+    /// </summary>
+    public bool RemoveRunsWithFlag(byte flag)
+    {
+        bool anyFlagged = false;
+        for (int i = 0; i < Palette.Count; i++)
+        {
+            if ((Palette[i].Flags & flag) != 0) { anyFlagged = true; break; }
+        }
+        if (!anyFlagged) return false;
+
+        int total = GridSize * GridSize;
+        var nextRuns = new ulong[Runs.Length];
+        var nextStart = new int[total + 1];
+        int offset = 0;
+
+        for (int col = 0; col < total; col++)
+        {
+            nextStart[col] = offset;
+            int from = ColumnStart[col], to = ColumnStart[col + 1];
+            for (int r = from; r < to; r++)
+            {
+                if ((Palette[RunPaletteId(Runs[r])].Flags & flag) != 0) continue;
+                nextRuns[offset++] = Runs[r];
+            }
+        }
+        nextStart[total] = offset;
+
+        Array.Resize(ref nextRuns, offset);
+        Runs = nextRuns;
+        ColumnStart = nextStart;
+        return true;
     }
 
     /// <summary>
