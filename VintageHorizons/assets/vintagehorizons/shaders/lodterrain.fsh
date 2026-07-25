@@ -25,6 +25,14 @@ uniform vec3 grassTint;
 uniform vec3 foliageTint;
 uniform float snowLineY;
 
+// Blocks per column in the section being drawn (1 at level 0, doubling per level).
+// Coarse sections merge whole neighbourhoods into one colour, and greedy meshing
+// then fuses them into large single-colour quads; a little world-space variation
+// scaled to the column size breaks those plates up without inventing detail.
+// Scaling by column size is what keeps the pattern roughly constant on screen
+// instead of aliasing into shimmer at distance.
+uniform float columnBlocks;
+
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outGlow;
 #if SSAOLEVEL > 0
@@ -65,6 +73,13 @@ void main()
         float upness = clamp(normal.y, 0.0, 1.0);
         float snowMix = smoothstep(snowLineY, snowLineY + 24.0, yLevel) * upness;
         albedo = mix(albedo, vec3(0.93, 0.94, 0.97), snowMix);
+    }
+
+    // Water is a smooth surface; only break up land.
+    if (aByte >= 200.0) {
+        float period = max(4.0, columnBlocks * 6.0);
+        float n = valuenoise(worldPos.xyz / period);
+        albedo *= 1.0 + 0.10 * (n - 0.5);
     }
 
     vec4 terraColor = vec4(albedo, outAlpha);

@@ -584,6 +584,7 @@ public class LodTerrainRenderer : IRenderer
 
         modelMat.Identity().Translate(relX, -camPos.Y, relZ);
         prog!.UniformMatrix("modelMatrix", modelMat.Values);
+        prog.Uniform("columnBlocks", (float)LodWorld.ColumnStepBlocks(LodWorld.KeyLevel(key)));
         return true;
     }
 

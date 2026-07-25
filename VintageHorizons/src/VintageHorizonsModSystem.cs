@@ -11,6 +11,9 @@ public class VintageHorizonsConfig
 {
     /// <summary>0 = unlimited.</summary>
     public int FarViewDistanceCap = 0;
+
+    /// <summary>Distance at which detail starts halving; see LodWorld.DetailDistance.</summary>
+    public int DetailDistance = 512;
 }
 
 /// <summary>
@@ -66,6 +69,9 @@ public class VintageHorizonsModSystem : ModSystem
         {
             config = new VintageHorizonsConfig();
         }
+
+        LodWorld.DetailDistance = GameMath.Clamp(config.DetailDistance,
+            (int)LodWorld.MinDetailDistance, (int)LodWorld.MaxDetailDistance);
 
         world = new LodWorld();
         worker = new LodWorker();
@@ -472,7 +478,8 @@ public class VintageHorizonsModSystem : ModSystem
                 $"worker: {worker.PendingCaptures}c/{worker.PendingMeshes}m, awaiting mip: {world.MipDirty.Count}, " +
                 $"unsaved: {world.SaveDirty.Count}, persistence: {(store != null ? "on" : "off")}, " +
                 $"render distance: {(renderer.FarViewDistanceCap > 0 ? renderer.FarViewDistanceCap + " (capped)" : "unlimited")}, " +
-                $"current far edge: {(int)renderer.EffectiveFarDistance}"));
+                $"current far edge: {(int)renderer.EffectiveFarDistance}, " +
+                $"detail distance: {(int)LodWorld.DetailDistance} (.vhdetail to change)"));
 
         capi.ChatCommands.Create("vhfar")
             .WithDescription("Cap VintageHorizons render distance in blocks (0 = unlimited)")
@@ -481,14 +488,42 @@ public class VintageHorizonsModSystem : ModSystem
             {
                 int blocks = (int)args[0];
                 renderer.FarViewDistanceCap = blocks <= 0 ? 0 : GameMath.Clamp(blocks, 1024, 262144);
-                capi.StoreModConfig(new VintageHorizonsConfig
-                {
-                    FarViewDistanceCap = renderer.FarViewDistanceCap,
-                }, "vintagehorizons.json");
+                SaveConfig();
                 return TextCommandResult.Success(renderer.FarViewDistanceCap > 0
                     ? $"[VintageHorizons] render distance capped at {renderer.FarViewDistanceCap} (saved)"
                     : "[VintageHorizons] render distance unlimited (saved)");
             });
+
+        capi.ChatCommands.Create("vhdetail")
+            .WithDescription("Distance in blocks before LOD detail starts halving (default 512; higher = sharper far terrain, more VRAM/CPU)")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalInt("blocks"))
+            .HandleWith(args =>
+            {
+                if (args.Parsers[0].IsMissing)
+                {
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] detail distance {(int)LodWorld.DetailDistance} " +
+                        $"(full 1-block detail out to {(int)LodWorld.DetailDistance * 2} blocks). " +
+                        $"Set between {(int)LodWorld.MinDetailDistance} and {(int)LodWorld.MaxDetailDistance}.");
+                }
+
+                LodWorld.DetailDistance = GameMath.Clamp((int)args[0],
+                    (int)LodWorld.MinDetailDistance, (int)LodWorld.MaxDetailDistance);
+                SaveConfig();
+                return TextCommandResult.Success(
+                    $"[VintageHorizons] detail distance {(int)LodWorld.DetailDistance} — full detail out to " +
+                    $"{(int)LodWorld.DetailDistance * 2} blocks (saved). Terrain re-selects over the next few seconds.");
+            });
+    }
+
+    /// <summary>Writes every setting: a partial write would silently reset the others.</summary>
+    void SaveConfig()
+    {
+        capi.StoreModConfig(new VintageHorizonsConfig
+        {
+            FarViewDistanceCap = renderer.FarViewDistanceCap,
+            DetailDistance = (int)LodWorld.DetailDistance,
+        }, "vintagehorizons.json");
     }
 
     public override void Dispose()

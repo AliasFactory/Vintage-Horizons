@@ -12,8 +12,18 @@ public class LodWorld
 {
     public const int MaxLevel = 6; // L6 sections span 4096 blocks (64-block columns at the horizon)
 
-    /// <summary>Level 0 is selected out to twice this distance; each level doubles the band.</summary>
-    public const double DetailDistance = 512;
+    /// <summary>
+    /// Level 0 is selected out to twice this distance; each level doubles the band.
+    /// Raising it pushes every detail level outward — the single biggest lever on
+    /// perceived quality, and also on cost: the level-0 band grows with the square of
+    /// this value, so doubling it asks for roughly four times as many leaf meshes.
+    /// Tunable live via .vhdetail; the selection walk simply picks different levels on
+    /// the next frame and demand-meshes whatever it newly wants.
+    /// </summary>
+    public static double DetailDistance = 512;
+
+    public const double MinDetailDistance = 256;
+    public const double MaxDetailDistance = 4096;
 
     public readonly Dictionary<long, LodSection> Sections = new();
 
