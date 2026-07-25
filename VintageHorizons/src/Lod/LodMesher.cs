@@ -45,7 +45,7 @@ public static class LodMesher
     }
 
     /// <summary>One exposed horizontal face: column cell + plane y + palette.</summary>
-    readonly record struct HFace(short Cx, short Cz, short Y, short Pid, bool Bottom, bool Water);
+    readonly record struct HFace(short Cx, short Cz, short Y, short Pid, bool Bottom, bool Water, bool Thin);
 
     /// <summary>One exposed wall segment on a column edge.</summary>
     readonly record struct VFace(byte Dir, short Fixed, short Along, short YTop, short YBottom, short Pid, bool Water);
@@ -86,17 +86,30 @@ public static class LodMesher
                     int pid = LodSection.RunPaletteId(run);
                     bool isTranslucent = IsTranslucent(self.PaletteFlags[pid]);
 
+                    bool isThin = (self.PaletteFlags[pid] & LodPaletteEntry.FlagThin) != 0;
+
+                    // Ground cover is a few centimetres of plant in a one-block cell, so
+                    // it is drawn as a low mat: top face only, dropped to just above the
+                    // soil. Rendering it as a full cube turned meadows into fields of
+                    // solid blocks, which was the real problem -- most flowers store
+                    // perfectly good colour.
+                    if (isThin)
+                    {
+                        hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, true, true));
+                        continue;
+                    }
+
                     bool topCovered = r > 0
                         && LodSection.RunYBottom(runs[r - 1]) == yTop
                         && IsTranslucentRun(self, runs[r - 1]) == isTranslucent;
-                    if (!topCovered) hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, isTranslucent));
+                    if (!topCovered) hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, isTranslucent, false));
 
                     bool bottomCovered = r < runs.Length - 1
                         && LodSection.RunYTop(runs[r + 1]) == yBottom
                         && IsTranslucentRun(self, runs[r + 1]) == isTranslucent;
                     if (!bottomCovered && yBottom > 1 && !isTranslucent)
                     {
-                        hf.Add(new HFace((short)cx, (short)cz, (short)yBottom, (short)pid, true, false));
+                        hf.Add(new HFace((short)cx, (short)cz, (short)yBottom, (short)pid, true, false, false));
                     }
 
                     bool solidCoverOnly = !isTranslucent;
@@ -163,7 +176,8 @@ public static class LodMesher
             while (end < faces.Count
                 && faces[end].Y == first.Y
                 && faces[end].Pid == first.Pid
-                && faces[end].Bottom == first.Bottom)
+                && faces[end].Bottom == first.Bottom
+                && faces[end].Thin == first.Thin)
             {
                 end++;
             }
@@ -212,7 +226,11 @@ public static class LodMesher
                 float x1 = (cx + wRect) * step;
                 float z0 = cz * step;
                 float z1 = (cz + hRect) * step;
-                float y = first.Y;
+                // A one-block-tall plant becomes a mat a quarter of a block above the
+                // soil it stands on: clear of z-fighting, invisible as a step.
+                // Y is absolute blocks and is NOT scaled by step, so the drop must not
+                // be either: scaling it sank the mat six blocks at coarse levels.
+                float y = first.Thin ? first.Y - 0.75f : first.Y;
 
                 if (first.Bottom)
                 {
