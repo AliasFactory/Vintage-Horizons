@@ -111,6 +111,7 @@ public class VintageHorizonsModSystem : ModSystem
         // overwrite) the stored row. The column queue holds work until then.
         if (!pipelineActive) return;
 
+        ReportFillIn();
         InstallLoadedSections();
         ScheduleCaptures();
         ApplyCaptureResults();
@@ -322,11 +323,30 @@ public class VintageHorizonsModSystem : ModSystem
         if (ms > SaveMsMax) SaveMsMax = ms;
     }
 
+    // How fast terrain actually appears after joining, which is what a player notices
+    // far more than steady-state fps. Milestones rather than a running log: three lines
+    // per session, comparable across builds.
+    readonly System.Diagnostics.Stopwatch joinClock = new();
+    static readonly int[] FillInMilestones = { 100, 300, 600, 1200 };
+    int nextMilestone;
+
+    void ReportFillIn()
+    {
+        while (nextMilestone < FillInMilestones.Length && renderer.MeshCount >= FillInMilestones[nextMilestone])
+        {
+            Mod.Logger.Notification("Fill-in: {0} meshes after {1:0.0}s",
+                FillInMilestones[nextMilestone], joinClock.Elapsed.TotalSeconds);
+            nextMilestone++;
+        }
+    }
+
     void OnLevelFinalize()
     {
         renderer.ApplyZFar();
         OpenLodCache();
         pipelineActive = true;
+        joinClock.Restart();
+        nextMilestone = 0;
 
         Mod.Logger.Notification(
             "Level finalized. LOD capture active (render distance: unlimited, {0} sections from cache{1}).",

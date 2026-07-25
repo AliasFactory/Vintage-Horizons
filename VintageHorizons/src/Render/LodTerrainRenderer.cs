@@ -25,6 +25,9 @@ public class LodTerrainRenderer : IRenderer
     const int MeshUploadsPerFrame = 4;
     const int MaxWorkerMeshBacklog = 12;
 
+    /// <summary>Reload requests per frame; only enqueues a key, so it can far exceed the mesh budget.</summary>
+    const int MeshLoadRequestsPerFrame = 32;
+
     readonly ICoreClientAPI capi;
     readonly LodWorld world;
     readonly LodWorker worker;
@@ -364,8 +367,13 @@ public class LodTerrainRenderer : IRenderer
     {
         if (world.RenderDirty.Count == 0 || worker.PendingMeshes >= MaxWorkerMeshBacklog) return;
 
-        int budget = MeshSchedulesPerFrame;
-        while (budget-- > 0 && world.RenderDirty.Count > 0)
+        // Two budgets. Starting a background reload costs this thread almost nothing
+        // (enqueue a key), whereas building a mesh snapshot is real work, so charging a
+        // reload against the mesh budget throttled join fill-in badly: every section
+        // needed two passes to appear and only four could be touched per frame.
+        int meshBudget = MeshSchedulesPerFrame;
+        int loadBudget = MeshLoadRequestsPerFrame;
+        while (meshBudget > 0 && loadBudget > 0 && world.RenderDirty.Count > 0)
         {
             long best = 0;
             double bestDist = double.MaxValue;
@@ -390,7 +398,11 @@ public class LodTerrainRenderer : IRenderer
             // this frame on a decompress.
             if (!world.TryGetForRender(best, out LodSection section))
             {
-                if (!world.LoadsInFlight.Contains(best))
+                if (world.LoadsInFlight.Contains(best))
+                {
+                    loadBudget--; // a reload is now under way; the walk re-requests it
+                }
+                else
                 {
                     if (sectionMeshes.Remove(best, out MeshRef? gone)) gone.Dispose();
                     if (waterMeshes.Remove(best, out MeshRef? goneWater)) goneWater.Dispose();
@@ -412,6 +424,7 @@ public class LodTerrainRenderer : IRenderer
                 if (world.Sections.TryGetValue(nk, out LodSection? nb)) neighbors[d] = SectionSnapshot.Of(nb);
             }
 
+            meshBudget--;
             meshJobInFlight.Add(best);
             worker.EnqueueMesh(new MeshJob
             {
