@@ -154,7 +154,11 @@ public class LodWorld
         if (Sections.ContainsKey(key)) return;
 
         Sections[key] = section;
-        RenderDirty.Add(key); // it was demanded for meshing; let the scheduler pick it up
+
+        // Deliberately not marked render-dirty: reloads are requested by the render
+        // path AND by mip propagation, and the selection walk re-requests a mesh by
+        // itself on the next frame if it still wants one here. Marking every arrival
+        // would mesh sections that only propagation asked for.
     }
 
     /// <summary>
@@ -265,13 +269,27 @@ public class LodWorld
 
         foreach (long childKey in batch)
         {
+            if (KeyLevel(childKey) >= MaxLevel)
+            {
+                // Nothing above to absorb it; just clear the pending flag.
+                MipDirty.Remove(childKey);
+                SaveDirty.Add(childKey);
+                continue;
+            }
+
+            // Both sides must be in RAM before the flag may be cleared. Clearing it
+            // while a section is still on disk would drop the propagation on the
+            // floor, so a section awaiting a reload simply stays pending and is
+            // retried on a later tick.
+            long parentKey = ParentKey(childKey);
+            if (!EnsureResident(childKey)) continue;
+            if (!EnsureResident(parentKey)) continue;
+
             MipDirty.Remove(childKey);
             SaveDirty.Add(childKey); // persist the cleared ApplyToParent flag
 
-            if (KeyLevel(childKey) >= MaxLevel) continue;
-            if (!TryGetOrLoad(childKey, out LodSection child) || child.CapturedColumns == 0) continue;
+            if (!Sections.TryGetValue(childKey, out LodSection? child) || child.CapturedColumns == 0) continue;
 
-            long parentKey = ParentKey(childKey);
             LodSection parent = GetOrCreateSection(parentKey);
 
             if (LodMip.DownsampleIntoParent(child, parent, KeySx(childKey) & 1, KeySz(childKey) & 1))
@@ -279,6 +297,33 @@ public class LodWorld
                 MarkChanged(parentKey);
             }
         }
+    }
+
+    /// <summary>
+    /// True when the section is in RAM, or when there is nothing to load for it so the
+    /// caller may proceed. False means a background reload was started and the caller
+    /// must leave its pending work alone and retry later.
+    ///
+    /// This is how the two integrity-critical paths (capture merge and mip
+    /// propagation) avoid blocking the frame on a decompress without ever creating an
+    /// empty section that would shadow — and then overwrite — a stored row.
+    /// </summary>
+    public bool EnsureResident(long key)
+    {
+        if (Sections.ContainsKey(key)) return true;
+
+        // No stored row (or a read that already came back empty): proceed, and let the
+        // normal empty-section handling deal with it.
+        if (!HasDataSet.Contains(key) || LoadFailed.Contains(key)) return true;
+
+        if (RequestAsyncLoad == null)
+        {
+            TryGetOrLoad(key, out _); // no storage thread this session; inline is all we have
+            return true;
+        }
+
+        if (LoadsInFlight.Add(key)) RequestAsyncLoad(key);
+        return false;
     }
 
     public string DescribeLevels()
