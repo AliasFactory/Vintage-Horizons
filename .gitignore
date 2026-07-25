@@ -14,3 +14,4 @@ obj/
 # Isolated game data dir for automated test instances
 .testdata/
 dist/
+bench/mods/

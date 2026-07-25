@@ -1,0 +1,16 @@
+# Benchmark route. One line per vantage point:
+#
+#   name   x  y  z  yawDeg  pitchDeg
+#
+# Yaw 0 faces north and increases counter-clockwise; negative pitch looks down.
+# Pick spots that stress different things and keep them FIXED once results exist --
+# moving a waypoint invalidates comparison with every run recorded before it.
+#
+# Coordinates below are in the .testdata sandbox world (spawn is near 512000,512000).
+# Elevated viewpoints looking slightly down are what a distance mod is judged on.
+
+spawn-horizon      512020  190  512010    0   -8
+spawn-look-south   512020  190  512010  180   -8
+ridge-east         512900  200  512010   90  -12
+valley-north       512020  175  512900    0  -10
+high-overlook      512450  260  512450   45  -20

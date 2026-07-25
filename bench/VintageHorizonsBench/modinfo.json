@@ -1,0 +1,12 @@
+{
+  "type": "code",
+  "modid": "vintagehorizonsbench",
+  "name": "Vintage Horizons Bench",
+  "version": "0.1.0",
+  "side": "Client",
+  "description": "Development harness: flies a fixed route, records frame timings, and captures screenshots from identical vantage points so LOD mods can be compared like for like. Not for players.",
+  "authors": [ "AliasFactory" ],
+  "dependencies": {
+    "game": "1.22.0"
+  }
+}

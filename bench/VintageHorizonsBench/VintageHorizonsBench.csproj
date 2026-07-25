@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Measurement harness, deliberately a SEPARATE mod from VintageHorizons: it has to
+       run unchanged while a competing LOD mod (Farseer, ChunkLOD) is the one under
+       test, so it cannot live inside our own mod. Never shipped in the release zip. -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>VintageHorizonsBench</AssemblyName>
+    <RootNamespace>VintageHorizonsBench</RootNamespace>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <GamePath>$(VINTAGE_STORY)</GamePath>
+    <GamePath Condition="'$(GamePath)' == '' or !Exists('$(GamePath)')">$(HOME)/Games/vintagestory1.22.3</GamePath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="VintagestoryAPI">
+      <HintPath>$(GamePath)/VintagestoryAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="VintagestoryLib">
+      <HintPath>$(GamePath)/VintagestoryLib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="PackageModFolder" AfterTargets="Build">
+    <PropertyGroup>
+      <ModFolder>$(OutputPath)Mods/vintagehorizonsbench/</ModFolder>
+    </PropertyGroup>
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ModFolder)" />
+    <Copy SourceFiles="modinfo.json" DestinationFolder="$(ModFolder)" />
+  </Target>
+
+</Project>

@@ -81,12 +81,16 @@ vh_launch() {
 # reporter can keep a doomed process alive well past vh_launch's liveness check, so
 # process liveness alone is not proof of a successful start).
 # Returns 0 on success, 1 on timeout or death.
+# An empty marker means "wait for the file itself to appear", which is how the bench
+# harness signals completion.
 vh_wait_for() {
     local log="$1" marker="$2" timeoutSec="$3" pidfile="$4"
     local waited=0
 
     while [ "$waited" -lt "$timeoutSec" ]; do
-        if grep -qF -- "$marker" "$log" 2>/dev/null; then
+        if [[ -z "$marker" ]]; then
+            [[ -s "$log" ]] && return 0
+        elif grep -qF -- "$marker" "$log" 2>/dev/null; then
             return 0
         fi
         if [[ -n "$pidfile" && -f "$pidfile" ]]; then
