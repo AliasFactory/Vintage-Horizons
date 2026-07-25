@@ -121,6 +121,23 @@ public class BenchModSystem : ModSystem, IRenderer
             waypointIndex + 1, route.Waypoints.Count, wp.Name, settleSec);
     }
 
+    /// <summary>
+    /// Dismiss any open dialog. An unattended run has no window focus, so the client
+    /// puts up its "Game is still running" menu and sits there — the first benchmark
+    /// measured frame times with that overlay covering the view, which is not the
+    /// gameplay it was supposed to measure.
+    /// </summary>
+    void CloseBlockingDialogs()
+    {
+        List<GuiDialog> open = capi.Gui.OpenedGuis;
+        for (int i = open.Count - 1; i >= 0; i--)
+        {
+            GuiDialog dlg = open[i];
+            if (dlg.DialogType == EnumDialogType.HUD) continue; // hotbar, health: harmless
+            dlg.TryClose();
+        }
+    }
+
     /// <summary>Camera is re-pinned every frame: mouse input and physics both fight it.</summary>
     void PinCamera(BenchWaypoint wp)
     {
@@ -138,6 +155,8 @@ public class BenchModSystem : ModSystem, IRenderer
 
         nowSec += deltaTime;
         if (phase == Phase.WaitingForJoin) return;
+
+        CloseBlockingDialogs();
 
         BenchWaypoint wp = route.Waypoints[waypointIndex];
         PinCamera(wp);
