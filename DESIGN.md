@@ -188,10 +188,10 @@ occlusion. Never required; the 3.3 path remains complete.
 
 ## 9. Licensing
 
-VintageHorizons is **MIT**. DH (LGPL) and Voxy (ARR) inform concepts only — no code is
-copied from either; `reference/` clones are gitignored and never redistributed. Farseer
-(MIT) code may be adapted with attribution (will be credited in README and source
-headers where used).
+VintageHorizons is **MIT**. DH (LGPL), Voxy (ARR) and Algernon's Terrain Sampler (no
+LICENSE shipped, so ARR) inform concepts only — no code is copied from any of them;
+`reference/` clones are gitignored and never redistributed. Farseer (MIT) code may be
+adapted with attribution (will be credited in README and source headers where used).
 
 ## 10. Optional server assist (M7)
 
@@ -330,6 +330,45 @@ being wrong.
 3. Section transfer for already-generated chunks, rate limited, radius capped.
 4. Admin config and defaults.
 
-Worldgen-on-demand is explicitly not in scope for a first version, and may never be:
-it is the expensive half of what the server-side mods do, and doing without it is what
-keeps the assist cheap enough for an admin to leave on.
+Running real worldgen on demand is explicitly not in scope: it is the expensive half of
+what the server-side mods do, and doing without it is what keeps the assist cheap enough
+for an admin to leave on. §10.10 covers a cheaper way to reach the same terrain.
+
+### 10.10 Predicted terrain (Algernon's Terrain Sampler)
+
+`algernonsterrainsampler` reimplements GenTerra's noise pipeline so a caller can ask
+"what is the surface height, climate, rainfall and forest density at (x, z)" for a chunk
+that has never been generated or loaded. It is what Farseer's fast path uses, via
+reflection on `TerrainSamplerMod.GetBlockColumnHeight` / `SampleColumn`.
+
+This narrows the gap in §10.9: the ruled-out cost was *generating chunks*, and sampling
+noise is not that. A server that also has the sampler could answer for land nobody has
+been to, which is the last thing the competitors do that we would not.
+
+It stays optional, and below capture, for reasons that are not incidental:
+
+- **A sample is not a capture.** It yields height plus climate, so a column has to be
+  *synthesised* — the surface block inferred from temperature and rainfall — instead of
+  replaying blocks that are actually there. No structures, no player edits, no accurate
+  block choice. That is precisely the look we currently beat. It belongs in a third tier
+  below server capture, which is already below local capture (§10.5), and must be
+  overwritten the moment real data for the same key arrives.
+- **It forces a client download.** Its `modinfo.json` declares `RequiredOnClient: true`
+  even though `ShouldLoad` restricts it to the server, so a server that installs it
+  makes *every* player fetch it — including players not running VintageHorizons. An
+  admin add-on that taxes uninvolved players is a real cost to state plainly in the
+  docs, not a footnote.
+- **It is only as right as the worldgen it models.** Accuracy degrades with terrain-gen
+  mods; it delegates to Watersheds when present but otherwise predicts the pre-river
+  landscape. Wrong-but-confident terrain is worse than absent terrain, so the off switch
+  in §10.6 covers this too.
+
+Licensing: the repository ships no LICENSE, so it is all rights reserved. Integration is
+reflection-only — the documented path, needing no assembly reference and no copied code.
+Same rule as Voxy (§9): read for understanding, copy nothing.
+
+Client-side prediction is a dead end, recorded so it is not re-derived. `IWorldAccessor.Seed`
+is documented "Accessible on the server and the client", which makes it look feasible —
+but `AssetCategory.worldgen` is `EnumAppSide.Server`, so a client never loads the landform
+or geologic-province definitions the noise is shaped by, and a modded server's worldgen is
+not knowable from the client at all.
