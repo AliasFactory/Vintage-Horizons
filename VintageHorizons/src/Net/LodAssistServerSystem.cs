@@ -36,6 +36,21 @@ public class LodAssistServerSystem : ModSystem
         // with no token bucket to get subtly wrong.
         api.Event.RegisterGameTickListener(_ => ServePending(), 1000);
 
+        api.ChatCommands.Create("vhserver")
+            .WithDescription("VintageHorizons server assist status")
+            .RequiresPrivilege(Privilege.controlserver)
+            .HandleWith(_ =>
+            {
+                LodServerCaptureSystem? capture = api.ModLoader.GetModSystem<LodServerCaptureSystem>();
+                LodServerConfig config = capture?.Config ?? new LodServerConfig();
+                return TextCommandResult.Success(
+                    $"[VintageHorizons] {config.Describe()}. Cache: {capture?.SectionCount ?? 0} sections, "
+                    + $"{capture?.ColumnsCaptured ?? 0} columns captured. Served {sectionsServed} sections "
+                    + $"({bytesServed / 1e6:0.0} MB, {(sectionsServed > 0 ? blobReadMs / sectionsServed : 0):0.00}ms avg read), "
+                    + $"{sectionsOutsideRadius} refused as out of radius, {pendingByPlayer.Count} players waiting. "
+                    + "Settings live in ModConfig/vintagehorizons-server.json (restart to apply).");
+            });
+
         Mod.Logger.Notification(
             "VintageHorizons {0} server assist listening. Players without the mod are "
             + "unaffected and do not need to install anything.",
@@ -63,7 +78,9 @@ public class LodAssistServerSystem : ModSystem
     void Answer(IServerPlayer player)
     {
         LodServerCaptureSystem? capture = sapi.ModLoader.GetModSystem<LodServerCaptureSystem>();
-        long[] keys = capture?.Capturing == true ? capture.SnapshotKeys() : Array.Empty<long>();
+        LodServerConfig config = capture?.Config ?? new LodServerConfig();
+        bool serving = capture?.Capturing == true && config.EnableServing;
+        long[] keys = serving ? capture!.SnapshotKeys() : Array.Empty<long>();
 
         channel.SendPacket(new AssistWelcome
         {
@@ -72,7 +89,10 @@ public class LodAssistServerSystem : ModSystem
             Enabled = keys.Length > 0,
             Status = keys.Length > 0
                 ? $"serving from {keys.Length} cached sections"
-                : "no LOD cache is being built on this server",
+                  + (config.ServeRadiusBlocks > 0 ? $" within {config.ServeRadiusBlocks} blocks" : "")
+                : capture?.Capturing != true
+                    ? "no LOD cache is being built on this server"
+                    : "this server has a LOD cache but is not sharing it",
             ManifestKeyCount = keys.Length,
         }, player);
 
@@ -120,11 +140,13 @@ public class LodAssistServerSystem : ModSystem
         if (pendingByPlayer.Count == 0) return;
 
         LodServerCaptureSystem? capture = sapi.ModLoader.GetModSystem<LodServerCaptureSystem>();
-        if (capture?.Capturing != true)
+        if (capture?.Capturing != true || !capture.Config.EnableServing)
         {
             pendingByPlayer.Clear();
             return;
         }
+
+        LodServerConfig config = capture.Config;
 
         // Round-robin from a rotating start, so the global budget below cannot be
         // monopolised by whichever player happens to sort first in the dictionary.
@@ -132,7 +154,7 @@ public class LodAssistServerSystem : ModSystem
         uids.Sort(StringComparer.Ordinal);
         int start = uids.Count == 0 ? 0 : (int)(serveRound++ % (uint)uids.Count);
 
-        int globalBudget = LodAssist.MaxSectionsPerSecondTotal;
+        int globalBudget = config.MaxSectionsPerSecondTotal;
         List<string>? emptied = null;
 
         for (int n = 0; n < uids.Count && globalBudget > 0; n++)
@@ -147,10 +169,22 @@ public class LodAssistServerSystem : ModSystem
                 continue;
             }
 
-            int budget = Math.Min(LodAssist.MaxSectionsPerSecondPerPlayer, globalBudget);
+            int budget = Math.Min(config.MaxSectionsPerSecondPerPlayer, globalBudget);
             while (budget-- > 0 && queue.Count > 0)
             {
                 long key = queue.Dequeue();
+
+                // Radius is checked here, against where the player is NOW, rather than when
+                // the request was queued: a request that waited in the queue must not be
+                // honoured for somewhere the player has since left.
+                if (!WithinServeRadius(key, player, config.ServeRadiusBlocks))
+                {
+                    channel.SendPacket(new AssistSection { Key = key }, player);
+                    sectionsOutsideRadius++;
+                    globalBudget--;
+                    continue;
+                }
+
                 serveClock.Restart();
                 byte[] blob = capture.LoadBlob(key) ?? Array.Empty<byte>();
                 blobReadMs += serveClock.Elapsed.TotalMilliseconds;
@@ -179,7 +213,28 @@ public class LodAssistServerSystem : ModSystem
         }
     }
 
+    /// <summary>
+    /// Nearest-edge distance from the player to the section, not centre-to-centre: an L6
+    /// section spans 4096 blocks, so centre distance would refuse sections the player is
+    /// standing inside.
+    /// </summary>
+    static bool WithinServeRadius(long key, IServerPlayer player, int radiusBlocks)
+    {
+        if (radiusBlocks <= 0) return true;
+
+        int footprint = LodWorld.KeyFootprintBlocks(key);
+        double minX = LodWorld.KeySx(key) * (double)footprint;
+        double minZ = LodWorld.KeySz(key) * (double)footprint;
+        var pos = player.Entity?.Pos;
+        if (pos == null) return false;
+
+        double dx = Math.Max(0, Math.Max(minX - pos.X, pos.X - (minX + footprint)));
+        double dz = Math.Max(0, Math.Max(minZ - pos.Z, pos.Z - (minZ + footprint)));
+        return dx * dx + dz * dz <= (double)radiusBlocks * radiusBlocks;
+    }
+
     readonly System.Diagnostics.Stopwatch serveClock = new();
+    long sectionsOutsideRadius;
     uint serveRound;
     long sectionsServed, lastReportedServed, bytesServed;
     double blobReadMs;

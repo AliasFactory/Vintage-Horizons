@@ -380,7 +380,29 @@ being wrong.
    pending set while still sitting in `LodWorld.LoadsInFlight`, where the render scheduler
    skips them — so they were stranded for the session and transfer moved *nothing*. Only
    the keys actually sent may be forgotten.
-5. Admin config and defaults.
+5. ~~Admin config and defaults~~ **done**. `ModConfig/vintagehorizons-server.json`, written
+   on first start so the options are discoverable without reading source:
+   `EnableCapture`, `EnableServing`, `ServeRadiusBlocks` (default 8192), and both rate
+   caps. Values are clamped on load, so a hand-edited file cannot wedge the server.
+   `/vhserver` reports the settings in force plus what has actually been served.
+
+   Serving defaults **on**, which is a deliberate departure from "conservative defaults":
+   installing the mod on a server *is* the opt-in, and a mod that silently does nothing
+   until a file is edited reads as broken. The conservatism lives in the radius instead —
+   an admin who wants no sharing sets `EnableServing` false, and one who wants some gets a
+   bounded amount rather than the whole world.
+
+   The radius is checked when a section is about to be sent, against where the player is
+   *then*, not when the request was queued — a request that waited must not be honoured for
+   somewhere the player has since left. Distance is nearest-edge, not centre-to-centre: an
+   L6 section spans 4096 blocks, so centre distance would refuse sections the player is
+   standing inside.
+
+   Measured, same world and empty client cache each time: default 8192 → 87 requested, 87
+   received, 87 installed, 0 declined. Radius 512 → 92 requested, 13 received, 79 declined
+   as out of radius, and the client remembered the refusals instead of re-asking.
+   `EnableServing: false` → client reports "this server has a LOD cache but is not sharing
+   it" and fetches nothing. 0 errors on either side throughout.
 
 Singleplayer is not a special case of this but it is the biggest early payoff:
 the integrated server loads the server side and the channel connects in-process

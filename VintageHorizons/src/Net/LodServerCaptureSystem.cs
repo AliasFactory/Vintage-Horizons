@@ -21,6 +21,8 @@ namespace VintageHorizons.Net;
 /// </summary>
 public class LodServerCaptureSystem : ModSystem
 {
+    const string ConfigFile = "vintagehorizons-server.json";
+
     ICoreServerAPI sapi = null!;
     LodPipeline? pipeline;
     long tickListenerId;
@@ -49,9 +51,34 @@ public class LodServerCaptureSystem : ModSystem
     /// </summary>
     public byte[]? LoadBlob(long key) => pipeline?.LoadBlob(key);
 
+    /// <summary>Admin settings, loaded once; both server systems read this copy.</summary>
+    public LodServerConfig Config { get; private set; } = new();
+
     public override void StartServerSide(ICoreServerAPI api)
     {
         sapi = api;
+
+        try
+        {
+            Config = api.LoadModConfig<LodServerConfig>(ConfigFile) ?? new LodServerConfig();
+        }
+        catch (Exception e)
+        {
+            Mod.Logger.Warning("Could not read {0}, using defaults: {1}", ConfigFile, e.Message);
+            Config = new LodServerConfig();
+        }
+        Config.Sanitize();
+        // Written back every start so a new option appears in the file rather than only in
+        // the source, and so a sanitised value is visible as the one actually in force.
+        api.StoreModConfig(Config, ConfigFile);
+
+        if (!Config.EnableCapture)
+        {
+            Mod.Logger.Notification(
+                "Server LOD capture disabled in {0}. Clients are unaffected and keep using "
+                + "their own captures, exactly as on a server without this mod.", ConfigFile);
+            return;
+        }
 
         // A server has no texture atlas, so it cannot compute a palette colour at all
         // (Block.GetColorWithoutTint takes ICoreClientAPI). Sections are written
@@ -75,9 +102,8 @@ public class LodServerCaptureSystem : ModSystem
 
         tickListenerId = sapi.Event.RegisterGameTickListener(_ => pipeline!.Tick(), 50);
 
-        Mod.Logger.Notification(
-            "Server LOD capture active ({0} sections from cache). Nothing is served to clients yet.",
-            pipeline.CachedSectionsLoaded);
+        Mod.Logger.Notification("Server LOD capture active ({0} sections from cache). {1}",
+            pipeline.CachedSectionsLoaded, Config.Describe());
     }
 
     void OnChunkColumnLoaded(Vec2i chunkCoord, IWorldChunk[] chunks)
