@@ -8,7 +8,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>VintageHorizons</AssemblyName>
     <RootNamespace>VintageHorizons</RootNamespace>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
   </PropertyGroup>
 
   <!-- Game install: set VINTAGE_STORY, falls back to the local install -->
