@@ -1,7 +1,14 @@
+using System.Collections.Concurrent;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 
 namespace VintageHorizons.Net;
+
+/// <summary>
+/// Adopts a section that arrived from the server. Returns false if it was not taken —
+/// the client already had local data for that key, or the blob would not parse.
+/// </summary>
+public delegate bool LodForeignSectionInstaller(long key, byte[] blob);
 
 /// <summary>
 /// Client half of the optional server assist (DESIGN.md §10). Stage 1 is handshake only:
@@ -46,8 +53,11 @@ public sealed class LodAssistClient
             .RegisterMessageType<AssistHello>()
             .RegisterMessageType<AssistWelcome>()
             .RegisterMessageType<AssistKeyManifest>()
+            .RegisterMessageType<AssistSectionRequest>()
+            .RegisterMessageType<AssistSection>()
             .SetMessageHandler<AssistWelcome>(OnWelcome)
-            .SetMessageHandler<AssistKeyManifest>(OnKeyManifest);
+            .SetMessageHandler<AssistKeyManifest>(OnKeyManifest)
+            .SetMessageHandler<AssistSection>(OnSection);
     }
 
     /// <summary>
@@ -118,37 +128,120 @@ public sealed class LodAssistClient
     }
 
     /// <summary>
-    /// Keys the server says it holds. Not yet wired into quadtree descent: the client
-    /// would try to load them from its own store and record a miss, so routing them to
-    /// the network belongs with transfer. Populated now so the manifest transport is
-    /// proven at real volume before anything depends on it.
+    /// Keys the server holds. Read and mutated only from the game tick, via <see cref="Pump"/>
+    /// — the handlers below run on whatever thread the engine delivers packets on, and a
+    /// plain HashSet shared across those two would be a race whether or not it shows up in
+    /// testing. Everything a handler learns goes into a concurrent queue and is applied on
+    /// the tick, which also puts installs in the one place allowed to touch LodWorld.
     /// </summary>
     public readonly HashSet<long> RemoteKeys = new();
 
-    /// <summary>True once the final manifest chunk has arrived.</summary>
+    readonly ConcurrentQueue<(long[] Keys, bool Last)> manifestChunks = new();
+
+    /// <summary>True once the final manifest chunk has been applied.</summary>
     public bool ManifestComplete { get; private set; }
 
     /// <summary>What the server said to expect, for comparison against what arrived.</summary>
     public int ManifestExpected { get; private set; }
 
-    void OnKeyManifest(AssistKeyManifest msg)
+    void OnKeyManifest(AssistKeyManifest msg) =>
+        manifestChunks.Enqueue((msg.Keys ?? Array.Empty<long>(), msg.Last));
+
+    // ---- Section transfer ----
+
+    /// <summary>Arrivals awaiting the tick. Empty blob = the server declined the key.</summary>
+    readonly ConcurrentQueue<(long Key, byte[] Blob)> Arrived = new();
+
+    readonly HashSet<long> inFlight = new();
+
+    /// <summary>Keys the server declined or no longer has; never asked for again.</summary>
+    readonly HashSet<long> refused = new();
+
+    public int InFlight => inFlight.Count;
+    public int SectionsReceived { get; private set; }
+    public int SectionsRefused => refused.Count;
+
+    /// <summary>
+    /// Ask for sections the server has and we do not, up to the in-flight cap. Called from
+    /// the game tick with keys the quadtree actually wants, so the fetch order follows what
+    /// the player can see rather than the manifest's arbitrary order.
+    /// </summary>
+    public long[] Request(IEnumerable<long> wanted)
     {
-        if (msg.Keys != null)
+        if (!Available || channel == null || !channel.Connected) return Array.Empty<long>();
+
+        List<long>? batch = null;
+        foreach (long key in wanted)
         {
-            foreach (long key in msg.Keys) RemoteKeys.Add(key);
+            if (inFlight.Count >= LodAssist.MaxSectionsInFlight) break;
+            if (!RemoteKeys.Contains(key) || refused.Contains(key) || !inFlight.Add(key)) continue;
+            (batch ??= new List<long>()).Add(key);
         }
 
-        if (!msg.Last) return;
+        if (batch == null) return Array.Empty<long>();
 
-        ManifestComplete = true;
-        // Announced count vs received count: a mismatch means keys were captured or
-        // evicted mid-send, which is expected on a live server and worth seeing rather
-        // than silently tolerating once transfer starts trusting this set.
-        logger.Notification(
-            "VintageHorizons: server key manifest complete — {0} keys received{1}",
-            RemoteKeys.Count,
-            ManifestExpected > 0 && ManifestExpected != RemoteKeys.Count
-                ? $" (server announced {ManifestExpected})" : "");
+        long[] sent = batch.ToArray();
+        try
+        {
+            channel.SendPacket(new AssistSectionRequest { Keys = sent });
+            SectionsRequested += sent.Length;
+            return sent;
+        }
+        catch (Exception e)
+        {
+            foreach (long key in batch) inFlight.Remove(key);
+            logger.Warning("VintageHorizons: section request failed: {0}", e);
+            return Array.Empty<long>();
+        }
+    }
+
+    public int SectionsRequested { get; private set; }
+
+    void OnSection(AssistSection msg) =>
+        Arrived.Enqueue((msg.Key, msg.Blob ?? Array.Empty<byte>()));
+
+    /// <summary>
+    /// Apply everything the handlers have queued, on the game tick. <paramref name="install"/>
+    /// is given each arrived section and returns whether it was adopted; a section the
+    /// client already has locally is declined there, since local capture wins (§10.5).
+    /// </summary>
+    public void Pump(LodForeignSectionInstaller install)
+    {
+        while (manifestChunks.TryDequeue(out (long[] Keys, bool Last) chunk))
+        {
+            foreach (long key in chunk.Keys)
+            {
+                if (!refused.Contains(key)) RemoteKeys.Add(key);
+            }
+
+            if (!chunk.Last) continue;
+
+            ManifestComplete = true;
+            // Announced vs applied: a mismatch means keys were captured or evicted
+            // mid-send, expected on a live server and worth seeing rather than silently
+            // tolerating once transfer starts trusting this set.
+            logger.Notification(
+                "VintageHorizons: server key manifest complete — {0} keys received{1}",
+                RemoteKeys.Count,
+                ManifestExpected > 0 && ManifestExpected != RemoteKeys.Count
+                    ? $" (server announced {ManifestExpected})" : "");
+        }
+
+        while (Arrived.TryDequeue(out (long Key, byte[] Blob) got))
+        {
+            inFlight.Remove(got.Key);
+
+            // Empty means declined or gone. Remembering that is what stops us asking
+            // every tick forever for something the server will never send.
+            if (got.Blob.Length == 0 || !install(got.Key, got.Blob))
+            {
+                refused.Add(got.Key);
+                RemoteKeys.Remove(got.Key);
+                continue;
+            }
+
+            SectionsReceived++;
+        }
     }
 
     /// <summary>Reset for the next world; the channel itself outlives the join.</summary>
@@ -159,5 +252,10 @@ public sealed class LodAssistClient
         RemoteKeys.Clear();
         ManifestComplete = false;
         ManifestExpected = 0;
+        inFlight.Clear();
+        refused.Clear();
+        SectionsReceived = 0;
+        SectionsRequested = 0;
+        while (Arrived.TryDequeue(out _)) { }
     }
 }

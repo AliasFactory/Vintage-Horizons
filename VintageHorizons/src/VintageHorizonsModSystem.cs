@@ -127,6 +127,7 @@ public class VintageHorizonsModSystem : ModSystem
         if (!pipeline.Active) return;
 
         ReportFillIn();
+        PumpServerAssist();
         pipeline.Tick();
 
         var pos = capi.World.Player.Entity.Pos;
@@ -136,6 +137,55 @@ public class VintageHorizonsModSystem : ModSystem
             Mod.Logger.Notification("Evict sweep at {0},{1}: checked {2}, pinned {3}, cold {4}, total evicted {5}",
                 (int)pos.X, (int)pos.Z, world.LastSweepChecked, world.LastSweepPinned,
                 world.LastSweepCold, world.EvictedSectionsTotal);
+        }
+    }
+
+    /// <summary>
+    /// Adopt whatever the server sent, then ask for what the render path now wants.
+    /// Both on the game tick, because both mutate the LodWorld.
+    /// </summary>
+    void PumpServerAssist()
+    {
+        if (assist == null || !assist.Available) return;
+
+        int before = pipeline.RemoteOnly.Count;
+        assist.Pump((key, blob) => pipeline.InstallForeignBlob(key, blob, RecolorForeignSection));
+
+        // Manifest keys become quadtree-visible here rather than in the packet handler:
+        // HasDataSet belongs to this thread.
+        if (assist.RemoteKeys.Count > 0) pipeline.AddRemoteKeys(assist.RemoteKeys);
+
+        pipeline.MarkRemoteRequested(assist.Request(pipeline.RemoteWanted()));
+
+        if (pipeline.RemoteOnly.Count != before && !loggedRemoteKeys)
+        {
+            loggedRemoteKeys = true;
+            Mod.Logger.Notification(
+                "Server assist: {0} sections offered that this client has never captured; "
+                + "fetching them as the view needs them.", pipeline.RemoteOnly.Count);
+        }
+    }
+
+    bool loggedRemoteKeys;
+
+    /// <summary>
+    /// Fill in palette colours for a section captured by a server, which had no texture
+    /// atlas and stored 0 for every one of them (DESIGN.md §10.4). Block ids are already
+    /// resolved from codes by the deserializer, so this only needs the atlas.
+    /// </summary>
+    void RecolorForeignSection(LodSection section)
+    {
+        for (int i = 0; i < section.Palette.Count; i++)
+        {
+            LodPaletteEntry entry = section.Palette[i];
+            if (entry.BlockId <= 0) continue;
+
+            Block block = capi.World.Blocks[entry.BlockId];
+            int subId = block.TextureSubIdForBlockColor;
+            entry.Color = IsUsableAtlasTexture(subId)
+                ? capi.BlockTextureAtlas.GetAverageColor(subId)
+                : ColorFromAnyTexture(block, ColorUtil.WhiteArgb);
+            section.Palette[i] = entry;
         }
     }
 
@@ -365,6 +415,16 @@ public class VintageHorizonsModSystem : ModSystem
             storageThread?.Backlog ?? 0, storageThread?.SectionsWritten ?? 0, storageThread?.SaveErrors ?? 0,
             world.LoadsInFlight.Count, storageThread?.LoadErrors ?? 0, storageThread?.SectionsRead ?? 0);
 
+        if (assist != null && assist.RemoteKeys.Count > 0)
+        {
+            Mod.Logger.Notification(
+                "  server assist: {0} offered, {1} remote-only, {2} wanted by view, {3} requested, " +
+                "{4} received, {5} installed, {6} in flight, {7} declined",
+                assist.RemoteKeys.Count, pipeline.RemoteOnly.Count, pipeline.RemoteWanted().Length,
+                assist.SectionsRequested, assist.SectionsReceived, pipeline.ForeignSectionsInstalled,
+                assist.InFlight, assist.SectionsRefused);
+        }
+
         if (storageThread?.FirstSaveError != null && !loggedFirstSaveError)
         {
             loggedFirstSaveError = true;
@@ -400,7 +460,10 @@ public class VintageHorizonsModSystem : ModSystem
                 $"detail distance: {(int)LodWorld.DetailDistance} (.vhdetail to change), " +
                 $"server assist: {assist?.Status ?? "off"}" +
                 (assist != null && assist.RemoteKeys.Count > 0
-                    ? $", server offers {assist.RemoteKeys.Count} sections{(assist.ManifestComplete ? "" : " (manifest still arriving)")}"
+                    ? $", server offers {assist.RemoteKeys.Count} sections " +
+                      $"({pipeline.RemoteOnly.Count} not held locally, {pipeline.ForeignSectionsInstalled} fetched, " +
+                      $"{assist.InFlight} in flight, {assist.SectionsRefused} declined)" +
+                      (assist.ManifestComplete ? "" : " (manifest still arriving)")
                     : "")));
 
         // The remaining commands drive the renderer, which does not exist when we are

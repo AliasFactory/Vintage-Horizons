@@ -150,7 +150,15 @@ public class LodPipeline
         // thread; results are installed on the world thread in Tick.
         storageThread.SetLoader(key => newStore.LoadSection(
             LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key), api.World, resolveBlockIds: false));
-        World.RequestAsyncLoad = key => storageThread?.RequestLoad(key);
+        // Routing, not just loading: a key the server offered and local disk has never
+        // held would come back empty from the store and land in LoadFailed, which is
+        // permanent. Those go to the network instead, and the quadtree's own
+        // LoadsInFlight bookkeeping covers both paths unchanged.
+        World.RequestAsyncLoad = key =>
+        {
+            if (RemoteOnly.Contains(key)) remoteWanted.Add(key);
+            else storageThread?.RequestLoad(key);
+        };
 
         World.LoadFromStore = key =>
         {
@@ -166,6 +174,90 @@ public class LodPipeline
         CachedSectionsLoaded = store.LoadAllKeys(World.InstallStoredKey);
         Active = true;
         logger.Notification("LOD cache: {0}", dbPath);
+    }
+
+    /// <summary>
+    /// The stored blob for a key, unparsed, for serving over the network. Null when the
+    /// key is not on disk — including when it is resident in RAM but not yet flushed,
+    /// which is why the caller treats a miss as "ask again later" rather than "gone".
+    /// </summary>
+    public byte[]? LoadBlob(long key) => store?.LoadBlob(
+        LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key));
+
+    /// <summary>
+    /// Adopt a section that arrived from somewhere other than local disk. Returns false if
+    /// the key already has local data, which wins: the client's own capture is what it
+    /// actually observed, including edits it witnessed (DESIGN.md §10.5).
+    /// </summary>
+    public bool InstallForeignBlob(long key, byte[] blob, Action<LodSection>? recolor)
+    {
+        if (store == null || blob.Length == 0) return false;
+        if (World.Sections.ContainsKey(key)) return false;
+
+        LodSection? section = store.DeserializeForeign(blob, api.World);
+        if (section == null) return false;
+
+        // The sender had no texture atlas, so every palette colour is 0. Fill them in
+        // before anything can draw the section.
+        recolor?.Invoke(section);
+        section.RemoveRunsWithFlag(LodPaletteEntry.FlagSkip);
+
+        World.InstallLoaded(key, section);
+        // Persist it: re-fetching a mean 45.9 KB a section every session is not an option,
+        // so a section from the network becomes part of the local cache like any other.
+        World.MarkChanged(key);
+        ForeignSectionsInstalled++;
+        return true;
+    }
+
+    public int ForeignSectionsInstalled { get; private set; }
+
+    /// <summary>
+    /// Keys only a remote source has. Kept separate from HasDataSet so the loader can tell
+    /// "evicted from RAM, still on disk" from "never been on this disk".
+    /// </summary>
+    public readonly HashSet<long> RemoteOnly = new();
+
+    readonly HashSet<long> remoteWanted = new();
+
+    /// <summary>
+    /// Register keys a remote source offers. Only those with no local data become
+    /// remote-only; anything already on disk stays a local read, because local wins.
+    /// </summary>
+    public int AddRemoteKeys(IEnumerable<long> keys)
+    {
+        int added = 0;
+        foreach (long key in keys)
+        {
+            if (World.HasDataSet.Contains(key)) continue;
+            if (!RemoteOnly.Add(key)) continue;
+
+            // Into the quadtree skeleton too, or descent will not even consider the key
+            // and nothing would ever ask for it. Same call the local key scan uses, minus
+            // the mip flag: the server's pyramid is already built, so nothing is pending.
+            World.InstallStoredKey(LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key),
+                applyToParent: false);
+            added++;
+        }
+        return added;
+    }
+
+    /// <summary>
+    /// Keys the render path asked for that only a remote source has. Fetch order therefore
+    /// follows what the player can actually see.
+    /// </summary>
+    public long[] RemoteWanted() =>
+        remoteWanted.Count == 0 ? Array.Empty<long>() : remoteWanted.ToArray();
+
+    /// <summary>
+    /// Drop the keys that were actually asked for. Only these, never the whole set: a key
+    /// held back by the in-flight cap is already in LodWorld.LoadsInFlight, where the
+    /// render scheduler skips it, and forgetting it here would strand it there for the rest
+    /// of the session.
+    /// </summary>
+    public void MarkRemoteRequested(IEnumerable<long> sent)
+    {
+        foreach (long key in sent) remoteWanted.Remove(key);
     }
 
     /// <summary>One step of the whole pipeline. Call once per game tick.</summary>

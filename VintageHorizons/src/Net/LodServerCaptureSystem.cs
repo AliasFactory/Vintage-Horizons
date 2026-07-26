@@ -43,6 +43,12 @@ public class LodServerCaptureSystem : ModSystem
     public long[] SnapshotKeys() =>
         pipeline == null ? Array.Empty<long>() : pipeline.World.HasDataSet.ToArray();
 
+    /// <summary>
+    /// The stored blob for a key, for serving over the network. Main thread only: it
+    /// shares the store connection with the capture that writes it.
+    /// </summary>
+    public byte[]? LoadBlob(long key) => pipeline?.LoadBlob(key);
+
     public override void StartServerSide(ICoreServerAPI api)
     {
         sapi = api;

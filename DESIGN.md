@@ -357,7 +357,29 @@ being wrong.
    0 errors. Welcome and manifest come from one main-thread snapshot, because answering
    from the message handler read a set the capture tick mutates and the announced count
    disagreed with what followed.
-4. Section transfer for already-generated chunks, rate limited, radius capped.
+4. ~~Section transfer~~ **done**. The client asks only for keys the manifest offered that
+   it has no local data for; the server answers with the stored blob verbatim, since the
+   wire format *is* the storage format. Arrivals are installed and **persisted into the
+   client's own cache**, so the server seeds the cache rather than streaming to it — at a
+   measured mean 45.9 KB a section, re-fetching every session was never an option, and a
+   player who leaves the server keeps what they pulled. Measured end to end: 96 requested,
+   96 received, 96 installed, 0 declined, 0 errors; 225 sections persisted locally
+   afterwards (129 captured here, 96 from the server) with a complete pyramid and no
+   unflushed mip flags.
+
+   Three limits, and the two that matter are server-side, because a modified client
+   ignores its own: `MaxSectionsInFlight` (16, client courtesy),
+   `MaxSectionsPerSecondPerPlayer` (8, ~370 KB/s at the measured mean) and
+   `MaxSectionsPerSecondTotal` (32). The last one is the one that protects the server:
+   per-player fairness does not bound the *sum*, and every section served is a main-thread
+   SQLite blob read, so twenty players at 8/s each would be 160 reads a second of tick
+   time. Serving is round-robin from a rotating start so the global budget cannot be
+   monopolised, and a 256-key queue per player drops the excess rather than growing.
+
+   One bug worth remembering: keys held back by the in-flight cap were dropped from the
+   pending set while still sitting in `LodWorld.LoadsInFlight`, where the render scheduler
+   skips them — so they were stranded for the session and transfer moved *nothing*. Only
+   the keys actually sent may be forgotten.
 5. Admin config and defaults.
 
 Singleplayer is not a special case of this but it is the biggest early payoff:

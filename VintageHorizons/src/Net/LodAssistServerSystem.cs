@@ -27,11 +27,18 @@ public class LodAssistServerSystem : ModSystem
             .RegisterMessageType<AssistHello>()
             .RegisterMessageType<AssistWelcome>()
             .RegisterMessageType<AssistKeyManifest>()
-            .SetMessageHandler<AssistHello>(OnHello);
+            .RegisterMessageType<AssistSectionRequest>()
+            .RegisterMessageType<AssistSection>()
+            .SetMessageHandler<AssistHello>(OnHello)
+            .SetMessageHandler<AssistSectionRequest>(OnSectionRequest);
+
+        // Once a second, not every tick: the per-second serve cap then IS the batch size,
+        // with no token bucket to get subtly wrong.
+        api.Event.RegisterGameTickListener(_ => ServePending(), 1000);
 
         Mod.Logger.Notification(
-            "VintageHorizons {0} server assist listening (stage 1: handshake only, no terrain served). "
-            + "Players without the mod are unaffected and do not need to install anything.",
+            "VintageHorizons {0} server assist listening. Players without the mod are "
+            + "unaffected and do not need to install anything.",
             Mod.Info.Version);
     }
 
@@ -62,15 +69,120 @@ public class LodAssistServerSystem : ModSystem
         {
             Protocol = LodAssist.Protocol,
             ModVersion = Mod.Info.Version,
-            Enabled = false,
+            Enabled = keys.Length > 0,
             Status = keys.Length > 0
-                ? $"holds {keys.Length} sections; transfer is not implemented yet"
+                ? $"serving from {keys.Length} cached sections"
                 : "no LOD cache is being built on this server",
             ManifestKeyCount = keys.Length,
         }, player);
 
         if (keys.Length > 0) SendManifest(player, keys);
     }
+
+    /// <summary>
+    /// Pending section requests, per player, oldest first. Held here rather than answered
+    /// inline so the per-second cap has something to meter, and so a player who asks for a
+    /// hundred sections gets them steadily instead of in one spike.
+    /// </summary>
+    readonly Dictionary<string, Queue<long>> pendingByPlayer = new();
+
+    void OnSectionRequest(IServerPlayer fromPlayer, AssistSectionRequest msg)
+    {
+        if (msg.Keys == null || msg.Keys.Length == 0) return;
+
+        // Onto the main thread for the same reason as the manifest: this touches shared
+        // state, and the blob read has to be ordered against the capture that writes it.
+        long[] keys = msg.Keys;
+        string uid = fromPlayer.PlayerUID;
+        sapi.Event.EnqueueMainThreadTask(() =>
+        {
+            if (!pendingByPlayer.TryGetValue(uid, out Queue<long>? queue))
+            {
+                pendingByPlayer[uid] = queue = new Queue<long>();
+            }
+
+            // Bounded: the client is supposed to limit itself, but a server must not
+            // depend on a client behaving. Past the cap the newest asks are dropped and
+            // the client re-asks later.
+            int room = Math.Max(0, MaxQueuedPerPlayer - queue.Count);
+            foreach (long key in keys.Take(room)) queue.Enqueue(key);
+        }, "vintagehorizons-request");
+    }
+
+    const int MaxQueuedPerPlayer = 256;
+
+    /// <summary>
+    /// Serve at most the per-second cap to each waiting player. Called once a second, so
+    /// the cap is simply the batch size — no token bucket to get wrong.
+    /// </summary>
+    void ServePending()
+    {
+        if (pendingByPlayer.Count == 0) return;
+
+        LodServerCaptureSystem? capture = sapi.ModLoader.GetModSystem<LodServerCaptureSystem>();
+        if (capture?.Capturing != true)
+        {
+            pendingByPlayer.Clear();
+            return;
+        }
+
+        // Round-robin from a rotating start, so the global budget below cannot be
+        // monopolised by whichever player happens to sort first in the dictionary.
+        List<string> uids = pendingByPlayer.Keys.ToList();
+        uids.Sort(StringComparer.Ordinal);
+        int start = uids.Count == 0 ? 0 : (int)(serveRound++ % (uint)uids.Count);
+
+        int globalBudget = LodAssist.MaxSectionsPerSecondTotal;
+        List<string>? emptied = null;
+
+        for (int n = 0; n < uids.Count && globalBudget > 0; n++)
+        {
+            string uid = uids[(start + n) % uids.Count];
+            Queue<long> queue = pendingByPlayer[uid];
+
+            if (sapi.World.PlayerByUid(uid) is not IServerPlayer player
+                || player.ConnectionState != EnumClientState.Playing)
+            {
+                (emptied ??= new List<string>()).Add(uid);
+                continue;
+            }
+
+            int budget = Math.Min(LodAssist.MaxSectionsPerSecondPerPlayer, globalBudget);
+            while (budget-- > 0 && queue.Count > 0)
+            {
+                long key = queue.Dequeue();
+                serveClock.Restart();
+                byte[] blob = capture.LoadBlob(key) ?? Array.Empty<byte>();
+                blobReadMs += serveClock.Elapsed.TotalMilliseconds;
+
+                // Empty blob rather than silence for a miss: the client needs to know to
+                // stop asking, and cannot tell "declined" from "lost" otherwise.
+                channel.SendPacket(new AssistSection { Key = key, Blob = blob }, player);
+                sectionsServed++;
+                bytesServed += blob.Length;
+                globalBudget--;
+            }
+
+            if (queue.Count == 0) (emptied ??= new List<string>()).Add(uid);
+        }
+
+        if (emptied != null) foreach (string uid in emptied) pendingByPlayer.Remove(uid);
+
+        // Report what serving actually costs the tick, so the caps above can be judged
+        // against a measurement instead of an estimate.
+        if (sectionsServed - lastReportedServed >= 200)
+        {
+            lastReportedServed = sectionsServed;
+            Mod.Logger.Notification(
+                "Assist served {0} sections ({1:0.0} MB), blob reads {2:0.00}ms total, {3:0.00}ms avg",
+                sectionsServed, bytesServed / 1e6, blobReadMs, blobReadMs / sectionsServed);
+        }
+    }
+
+    readonly System.Diagnostics.Stopwatch serveClock = new();
+    uint serveRound;
+    long sectionsServed, lastReportedServed, bytesServed;
+    double blobReadMs;
 
     /// <summary>Keys the server holds, in chunks. Main thread only.</summary>
     void SendManifest(IServerPlayer player, long[] keys)

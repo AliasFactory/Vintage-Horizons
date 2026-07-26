@@ -159,6 +159,42 @@ public class LodStore : SQLiteDBConnection
     }
 
     /// <summary>
+    /// The stored blob, unparsed. The wire format is the storage format, so serving a
+    /// section over the network is a blob read and nothing else — no deserialize and
+    /// re-serialize round trip on the server, which never needs to look inside.
+    /// </summary>
+    public byte[]? LoadBlob(int level, int sx, int sz)
+    {
+        lock (transactionLock)
+        {
+            if (loadBlobCmd == null)
+            {
+                loadBlobCmd = sqliteConn.CreateCommand();
+                loadBlobCmd.CommandText = "SELECT Data FROM Section WHERE Detail=@detail AND SX=@sx AND SZ=@sz";
+                loadBlobCmd.Parameters.Add("@detail", SqliteType.Integer);
+                loadBlobCmd.Parameters.Add("@sx", SqliteType.Integer);
+                loadBlobCmd.Parameters.Add("@sz", SqliteType.Integer);
+                loadBlobCmd.Prepare();
+            }
+
+            loadBlobCmd.Parameters["@detail"].Value = level;
+            loadBlobCmd.Parameters["@sx"].Value = sx;
+            loadBlobCmd.Parameters["@sz"].Value = sz;
+
+            return loadBlobCmd.ExecuteScalar() as byte[];
+        }
+    }
+
+    SqliteCommand? loadBlobCmd;
+
+    /// <summary>
+    /// Parse a blob that did not come from this database — i.e. one off the network.
+    /// Same reader as the disk path, so a section that survives the wire is
+    /// indistinguishable from one that was stored locally.
+    /// </summary>
+    public LodSection? DeserializeForeign(byte[] blob, IWorldAccessor? world) => Deserialize(blob, world);
+
+    /// <summary>
     /// Finish a section that was deserialized off-thread by resolving its palette
     /// block ids. MUST run on the main thread — it reads the block registry.
     /// </summary>

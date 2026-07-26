@@ -32,6 +32,32 @@ public static class LodAssist
     /// three messages rather than dozens.
     /// </summary>
     public const int ManifestKeysPerMessage = 2048;
+
+    /// <summary>
+    /// Most sections a client may have outstanding. At a mean 45.9 KB a section, 16 in
+    /// flight is roughly 730 KB — enough to keep a join filling in, small enough that a
+    /// player who sprints across unexplored land cannot ask for a whole world at once.
+    /// </summary>
+    public const int MaxSectionsInFlight = 16;
+
+    /// <summary>
+    /// Sections a server will serve one player per second. The cap exists so an admin can
+    /// reason about the cost: 8/s is ~370 KB/s per player at the measured mean.
+    ///
+    /// Enforced server-side rather than trusted to <see cref="MaxSectionsInFlight"/>: a
+    /// modified client ignores its own limit, so the client's is a courtesy and this is
+    /// the actual bound.
+    /// </summary>
+    public const int MaxSectionsPerSecondPerPlayer = 8;
+
+    /// <summary>
+    /// Sections a server will serve per second in total, across every player. The
+    /// per-player cap alone does not bound what the server pays: each section served is a
+    /// main-thread SQLite blob read, so twenty players at 8/s each would be 160 reads a
+    /// second of tick time. This is the number that protects the server, and the
+    /// per-player cap only decides how it is shared.
+    /// </summary>
+    public const int MaxSectionsPerSecondTotal = 32;
 }
 
 /// <summary>Client -> server, once per join, only when the channel is Connected.</summary>
@@ -83,4 +109,37 @@ public class AssistKeyManifest
     [ProtoMember(2)] public bool Last;
 
     [ProtoMember(3)] public long[] Keys = Array.Empty<long>();
+}
+
+/// <summary>
+/// Client -> server: send me these sections. Batched, and the client asks only for keys
+/// the manifest offered that it has no local data for, so a request is never a duplicate
+/// of something on disk.
+///
+/// The server is not obliged to answer all of them, or any: it decides what it is willing
+/// to send, and an unanswered key is retried later rather than treated as an error.
+/// </summary>
+[ProtoContract]
+public class AssistSectionRequest
+{
+    [ProtoMember(1)] public long[] Keys = Array.Empty<long>();
+}
+
+/// <summary>
+/// Server -> client: one section, as the stored blob verbatim.
+///
+/// Not chunked. Sections measure a mean 45.9 KB and a max 154.5 KB on a real world, and
+/// the reliable channel has no size cap (the 508-byte warning is UDP-only, §10.7), so one
+/// message per section is the simpler thing that works. If large messages turn out to
+/// stall a join, chunking goes here — with the sequence/last pattern the manifest already
+/// uses — rather than anywhere else.
+///
+/// <see cref="Blob"/> empty means "I am not sending this one": either it is gone or the
+/// server declined. The client marks the key so it stops asking every few seconds.
+/// </summary>
+[ProtoContract]
+public class AssistSection
+{
+    [ProtoMember(1)] public long Key;
+    [ProtoMember(2)] public byte[] Blob = Array.Empty<byte>();
 }
