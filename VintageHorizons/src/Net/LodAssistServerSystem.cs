@@ -48,6 +48,7 @@ public class LodAssistServerSystem : ModSystem
                     + $"{capture?.ColumnsCaptured ?? 0} columns captured. Served {sectionsServed} sections "
                     + $"({bytesServed / 1e6:0.0} MB, {(sectionsServed > 0 ? blobReadMs / sectionsServed : 0):0.00}ms avg read), "
                     + $"{sectionsOutsideRadius} refused as out of radius, {pendingByPlayer.Count} players waiting. "
+                    + (capture?.PregenStatus is string pg ? pg + ". " : "")
                     + "Settings live in ModConfig/vintagehorizons-server.json (restart to apply).");
             });
 

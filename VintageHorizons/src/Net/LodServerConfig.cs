@@ -42,12 +42,36 @@ public class LodServerConfig
     /// </summary>
     public int MaxSectionsPerSecondTotal = LodAssist.MaxSectionsPerSecondTotal;
 
+    /// <summary>
+    /// Pre-build the cache by generating a square of chunk columns around spawn, in chunks
+    /// of radius. 0 (default) means never; the cache then fills only as players travel.
+    ///
+    /// This is the one setting that makes the mod generate terrain nobody has visited, so
+    /// it is off unless an admin asks for it. Worth asking for: it is the difference
+    /// between a horizon on the first join and one that appears over weeks of play. Cost is
+    /// worldgen time and disk — at the measured mean 45.9 KB a section, radius 64 (a 4096
+    /// block square) is on the order of a few hundred MB.
+    /// </summary>
+    public int PregenRadiusChunks;
+
+    /// <summary>Chunk columns requested per second while pre-generating. Keep it modest.</summary>
+    public int PregenColumnsPerSecond = 8;
+
     /// <summary>Clamp to values that cannot wedge the server, whatever the file says.</summary>
     public void Sanitize()
     {
         if (ServeRadiusBlocks < 0) ServeRadiusBlocks = 0;
-        MaxSectionsPerSecondPerPlayer = Math.Clamp(MaxSectionsPerSecondPerPlayer, 1, 256);
-        MaxSectionsPerSecondTotal = Math.Clamp(MaxSectionsPerSecondTotal, 1, 1024);
+        // 256 chunks is a 4096-block radius. Past that the disk cost stops being something
+        // an admin can absorb by accident.
+        PregenRadiusChunks = Math.Clamp(PregenRadiusChunks, 0, 256);
+        PregenColumnsPerSecond = Math.Clamp(PregenColumnsPerSecond, 1, 64);
+        // Ceilings derived from measurement, not taste: a served section costs ~0.9ms of
+        // main-thread SQLite blob read (415 sections, 348ms, on a warm cache). So 128/s is
+        // ~115ms per second, around 11% of a core, which is the most an admin should be
+        // able to hand to this by editing a file. The original 1024 would have been ~920ms
+        // per second — a server wedged by its own config.
+        MaxSectionsPerSecondPerPlayer = Math.Clamp(MaxSectionsPerSecondPerPlayer, 1, 64);
+        MaxSectionsPerSecondTotal = Math.Clamp(MaxSectionsPerSecondTotal, 1, 128);
     }
 
     public string Describe() =>

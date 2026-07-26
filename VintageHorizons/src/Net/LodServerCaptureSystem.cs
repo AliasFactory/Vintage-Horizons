@@ -24,6 +24,7 @@ public class LodServerCaptureSystem : ModSystem
 
     ICoreServerAPI sapi = null!;
     LodPipeline? pipeline;
+    LodServerPregen? pregen;
     long tickListenerId;
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Server;
@@ -39,6 +40,11 @@ public class LodServerCaptureSystem : ModSystem
     public int SectionCount => pipeline?.World.HasDataSet.Count ?? 0;
 
     public int ColumnsCaptured => pipeline?.ColumnsCaptured ?? 0;
+
+    /// <summary>Progress line for /vhserver, or null when no pre-generation is running.</summary>
+    public string? PregenStatus => pregen == null ? null
+        : pregen.Done ? $"pre-generation complete ({pregen.Total} columns)"
+        : $"pre-generating {pregen.Requested}/{pregen.Total} columns";
 
     /// <summary>Main thread only — the capture pipeline mutates this set every tick.</summary>
     public long[] SnapshotKeys() =>
@@ -122,6 +128,13 @@ public class LodServerCaptureSystem : ModSystem
 
         Mod.Logger.Notification("Server LOD capture active ({0} sections from cache). {1}",
             pipeline.CachedSectionsLoaded, Config.Describe());
+
+        if (Config.PregenRadiusChunks > 0)
+        {
+            pregen = new LodServerPregen(sapi, Mod.Logger,
+                Config.PregenRadiusChunks, Config.PregenColumnsPerSecond);
+            pregen.Start();
+        }
     }
 
     void OnChunkColumnLoaded(Vec2i chunkCoord, IWorldChunk[] chunks)
