@@ -376,10 +376,27 @@ being wrong.
    time. Serving is round-robin from a rotating start so the global budget cannot be
    monopolised, and a 256-key queue per player drops the excess rather than growing.
 
-   One bug worth remembering: keys held back by the in-flight cap were dropped from the
-   pending set while still sitting in `LodWorld.LoadsInFlight`, where the render scheduler
-   skips them — so they were stranded for the session and transfer moved *nothing*. Only
-   the keys actually sent may be forgotten.
+   Three bugs worth remembering, all of them the same shape: a key parked in a state
+   nothing ever clears, so terrain froze rather than degraded.
+
+   - Keys held back by the in-flight cap were dropped from the pending set while still in
+     `LodWorld.LoadsInFlight`, where the render scheduler skips them — stranded for the
+     session, and transfer moved *nothing*. Only keys actually sent may be forgotten.
+   - A declined key was cleared from the client's own in-flight set but not from
+     `LoadsInFlight`, pinning its parent coarse forever.
+   - **`HasDataSet` cannot answer "can local disk supply this?"** `RegisterInTree` walks
+     *upward*, so registering any L0 key marks its L1–L6 ancestors as having data. Testing
+     manifest keys against it therefore skipped coarse keys the server really held —
+     whichever of a node or its descendants was enumerated first decided the other's fate.
+     Those keys stayed out of `RemoteOnly`, routed to a store with no such row, returned
+     null, and landed in `LoadFailed`, which is permanent. It showed as hard-edged regions
+     drawn at L5 at any distance with the pipeline idle. The store's own key set is now
+     tracked separately (`localKeys`) and that is what the manifest is tested against.
+
+   Diagnosing the third took three wrong answers read off counters. What settled it in one
+   shot was `.vhwhy`, which prints each coarse-drawn node's four children with their actual
+   state (`no-data` / `not-resident` / `loading` / `load-failed` / `empty` / `meshing` /
+   `no-mesh!` / `ok`). Instrument the decision, do not infer it.
 5. ~~Admin config and defaults~~ **done**. `ModConfig/vintagehorizons-server.json`, written
    on first start so the options are discoverable without reading source:
    `EnableCapture`, `EnableServing`, `ServeRadiusBlocks` (default 8192), and both rate

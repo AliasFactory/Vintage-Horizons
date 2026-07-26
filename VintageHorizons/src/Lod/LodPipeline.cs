@@ -178,7 +178,11 @@ public class LodPipeline
             if (ms > LoadMsMax) LoadMsMax = ms;
             return loaded;
         };
-        CachedSectionsLoaded = store.LoadAllKeys(World.InstallStoredKey);
+        CachedSectionsLoaded = store.LoadAllKeys((level, sx, sz, applyToParent) =>
+        {
+            localKeys.Add(LodWorld.SectionKey(level, sx, sz));
+            World.InstallStoredKey(level, sx, sz, applyToParent);
+        });
         Active = true;
         logger.Notification("LOD cache: {0}", dbPath);
     }
@@ -220,10 +224,40 @@ public class LodPipeline
     public int ForeignSectionsInstalled { get; private set; }
 
     /// <summary>
+    /// The remote source will not supply this key — declined, gone, or unparseable. Clears
+    /// the render path's wait on it: LodWorld.LoadsInFlight is set by TryGetForRender and
+    /// otherwise only cleared by InstallLoaded, so without this a declined key stays
+    /// "in flight" for the session, the mesh scheduler skips it, and its parent is pinned
+    /// coarse forever.
+    /// </summary>
+    public void MarkRemoteUnavailable(long key)
+    {
+        RemoteOnly.Remove(key);
+        remoteWanted.Remove(key);
+
+        // Already resident (a local capture won the race): just stop waiting. Recording a
+        // load failure would block reloading it after a future RAM eviction.
+        if (World.Sections.ContainsKey(key))
+        {
+            World.LoadsInFlight.Remove(key);
+            return;
+        }
+
+        World.InstallLoaded(key, null);
+    }
+
+    /// <summary>
     /// Keys only a remote source has. Kept separate from HasDataSet so the loader can tell
     /// "evicted from RAM, still on disk" from "never been on this disk".
     /// </summary>
     public readonly HashSet<long> RemoteOnly = new();
+
+    /// <summary>
+    /// Keys this store actually holds a row for, as reported by LoadAllKeys. Distinct from
+    /// LodWorld.HasDataSet, which also holds ancestors synthesised for quadtree descent and
+    /// so cannot answer "can local disk supply this?".
+    /// </summary>
+    readonly HashSet<long> localKeys = new();
 
     readonly HashSet<long> remoteWanted = new();
 
@@ -236,8 +270,21 @@ public class LodPipeline
         int added = 0;
         foreach (long key in keys)
         {
-            if (World.HasDataSet.Contains(key)) continue;
+            // Against localKeys, NOT HasDataSet. HasDataSet also contains every ancestor
+            // that RegisterInTree synthesised while registering a finer key, so testing it
+            // skipped coarse keys the server really could serve — whichever of a node and
+            // its descendants happened to be processed first decided the other's fate.
+            // Those keys stayed out of RemoteOnly, routed to a local store with no such
+            // row, came back null, and were recorded in LoadFailed, which is permanent.
+            // Observed as nodes drawn at L5 with two children "load-failed" and the
+            // pipeline idle: terrain that could never resolve, at any distance.
+            if (localKeys.Contains(key)) continue;
             if (!RemoteOnly.Add(key)) continue;
+
+            // A key poisoned by that bug, or by an earlier miss before the manifest
+            // arrived, has to be given back its chance now that a source exists.
+            World.LoadFailed.Remove(key);
+            World.LoadsInFlight.Remove(key);
 
             // Into the quadtree skeleton too, or descent will not even consider the key
             // and nothing would ever ask for it. Same call the local key scan uses, minus
@@ -460,6 +507,9 @@ public class LodPipeline
 
         queuedColumns.Clear();
         pendingColumns.Clear();
+        localKeys.Clear();
+        RemoteOnly.Clear();
+        remoteWanted.Clear();
         // Results for the world we are leaving must not be applied to the next one.
         while (Worker.CaptureResults.TryDequeue(out _)) { }
         World.Clear();

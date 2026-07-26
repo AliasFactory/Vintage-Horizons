@@ -149,13 +149,32 @@ public class VintageHorizonsModSystem : ModSystem
         if (assist == null || !assist.Available) return;
 
         int before = pipeline.RemoteOnly.Count;
-        assist.Pump((key, blob) => pipeline.InstallForeignBlob(key, blob, RecolorForeignSection));
+        assist.Pump((key, blob) =>
+        {
+            if (blob.Length > 0 && pipeline.InstallForeignBlob(key, blob, RecolorForeignSection)) return true;
+            pipeline.MarkRemoteUnavailable(key);
+            return false;
+        });
 
         // Manifest keys become quadtree-visible here rather than in the packet handler:
         // HasDataSet belongs to this thread.
         if (assist.RemoteKeys.Count > 0) pipeline.AddRemoteKeys(assist.RemoteKeys);
 
-        pipeline.MarkRemoteRequested(assist.Request(pipeline.RemoteWanted()));
+        // Nearest first. The render path asks for exactly the sections it wants, but far
+        // more than the in-flight cap allows at once, and an unordered set hands the
+        // network whatever hashes first — so distant terrain arrived while ground in front
+        // of the player stayed at its coarse parent, which is what the no-holes rule draws
+        // until all four children land. Sorting here rather than in the pipeline keeps the
+        // pipeline free of any notion of where the viewer is.
+        long[] wanted = pipeline.RemoteWanted();
+        if (wanted.Length > 1)
+        {
+            var at = capi.World.Player.Entity.Pos;
+            double px = at.X, pz = at.Z;
+            Array.Sort(wanted, (a, b) =>
+                LodWorld.NearestDistanceSqTo(a, px, pz).CompareTo(LodWorld.NearestDistanceSqTo(b, px, pz)));
+        }
+        pipeline.MarkRemoteRequested(assist.Request(wanted));
 
         if (pipeline.RemoteOnly.Count != before && !loggedRemoteKeys)
         {
@@ -338,10 +357,13 @@ public class VintageHorizonsModSystem : ModSystem
 
         capi.Event.RegisterCallback(_ => LogStats("Stats after 30s"), 30000);
 
-        // Dev mode: continuous telemetry for unattended runs.
-        if (renderer.AutoUnpause)
+        // Continuous telemetry. Was tied to AutoUnpause, which meant an *attended* session
+        // — the only kind where someone can say "this looks wrong" — was the one case with
+        // no ongoing numbers to explain it. Its own switch now, so watching and driving are
+        // independent.
+        if (renderer.AutoUnpause || Environment.GetEnvironmentVariable("VINTAGEHORIZONS_STATS") == "1")
         {
-            capi.Event.RegisterGameTickListener(_ => LogStats("Stats"), 60000);
+            capi.Event.RegisterGameTickListener(_ => LogStats("Stats"), 15000);
         }
 
         autoExplore = Environment.GetEnvironmentVariable("VINTAGEHORIZONS_AUTOEXPLORE") == "1";
@@ -451,7 +473,8 @@ public class VintageHorizonsModSystem : ModSystem
                     + "distant terrain. Remove it to use VintageHorizons instead.")
                 : TextCommandResult.Success(
                 $"[VintageHorizons] sections: {pipeline.World.Sections.Count} [{pipeline.World.DescribeLevels()}] " +
-                $"({pipeline.CachedSectionsLoaded} from cache), meshes: {renderer.MeshCount}, drawn: {renderer.LastDrawCount}, " +
+                $"({pipeline.CachedSectionsLoaded} from cache), meshes: {renderer.MeshCount}, " +
+                $"drawn: {renderer.LastDrawCount} [{renderer.DescribeDrawnLevels()}], " +
                 $"columns captured: {pipeline.ColumnsCaptured}, pending: {pipeline.PendingColumns}, " +
                 $"worker: {pipeline.Worker.PendingCaptures}c/{pipeline.Worker.PendingMeshes}m, awaiting mip: {pipeline.World.MipDirty.Count}, " +
                 $"unsaved: {pipeline.World.SaveDirty.Count}, persistence: {(pipeline.Persisting ? "on" : "off")}, " +
@@ -469,6 +492,15 @@ public class VintageHorizonsModSystem : ModSystem
         // The remaining commands drive the renderer, which does not exist when we are
         // deferring to another LOD mod.
         if (deferringTo != null) return;
+
+        capi.ChatCommands.Create("vhwhy")
+            .WithDescription("Explain why nearby LOD terrain is drawn coarser than it should be")
+            .HandleWith(_ =>
+            {
+                var at = capi.World.Player.Entity.Pos;
+                return TextCommandResult.Success(
+                    "[VintageHorizons] coarse draws:" + renderer.ExplainCoarseDraws(at.X, at.Z));
+            });
 
         capi.ChatCommands.Create("vhfar")
             .WithDescription("Cap VintageHorizons render distance in blocks (0 = unlimited)")

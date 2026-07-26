@@ -231,16 +231,20 @@ public sealed class LodAssistClient
         {
             inFlight.Remove(got.Key);
 
-            // Empty means declined or gone. Remembering that is what stops us asking
-            // every tick forever for something the server will never send.
-            if (got.Blob.Length == 0 || !install(got.Key, got.Blob))
+            // install is called even for an empty blob, so the one place that knows a key
+            // is unavailable can also release the render path's wait on it. Short-circuiting
+            // here instead left declined keys stuck in LodWorld.LoadsInFlight for the
+            // session, which pinned their parent coarse.
+            if (install(got.Key, got.Blob))
             {
-                refused.Add(got.Key);
-                RemoteKeys.Remove(got.Key);
+                SectionsReceived++;
                 continue;
             }
 
-            SectionsReceived++;
+            // Declined, gone, or already held locally. Remembering that is what stops us
+            // asking every tick forever for something that will never arrive.
+            refused.Add(got.Key);
+            RemoteKeys.Remove(got.Key);
         }
     }
 

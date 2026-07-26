@@ -74,6 +74,52 @@ public class LodTerrainRenderer : IRenderer
     int worldHeight = 1024;
 
 
+    /// <summary>
+    /// Why each coarse node in the current draw list is not descending. Written for one
+    /// specific failure: a node drawn far below its wanted level, with the pipeline idle, so
+    /// no amount of waiting changes it. Reports each child's actual state rather than an
+    /// inference — which is what three wrong diagnoses in a row cost.
+    /// </summary>
+    public string ExplainCoarseDraws(double px, double pz, int maxNodes = 6)
+    {
+        var sb = new System.Text.StringBuilder();
+        int shown = 0;
+
+        foreach (long key in drawList)
+        {
+            int level = LodWorld.KeyLevel(key);
+            int wanted = WantedLevel(NearestDistanceTo(key));
+            if (level <= wanted || shown >= maxNodes) continue;
+
+            shown++;
+            double dist = Math.Sqrt(LodWorld.NearestDistanceSqTo(key, px, pz));
+            sb.Append($"\n  L{level} at {LodWorld.KeySx(key) * LodWorld.KeyFootprintBlocks(key)},")
+              .Append($"{LodWorld.KeySz(key) * LodWorld.KeyFootprintBlocks(key)} dist {(int)dist} wants L{wanted}:");
+
+            for (int qz = 0; qz < 2; qz++)
+            {
+                for (int qx = 0; qx < 2; qx++)
+                {
+                    long ck = LodWorld.ChildKey(key, qx, qz);
+                    string state;
+                    if (!world.HasDataSet.Contains(ck)) state = "no-data";
+                    else if (!world.Sections.TryGetValue(ck, out LodSection? cs))
+                    {
+                        state = world.LoadsInFlight.Contains(ck) ? "loading"
+                            : world.LoadFailed.Contains(ck) ? "load-failed"
+                            : "not-resident";
+                    }
+                    else if (cs.CapturedColumns == 0) state = "empty";
+                    else if (!HasAnyMesh(ck)) state = world.RenderDirty.Contains(ck) ? "meshing" : "no-mesh!";
+                    else state = "ok";
+                    sb.Append(' ').Append(state);
+                }
+            }
+        }
+
+        return shown == 0 ? "no coarse draws: every drawn node is at or below its wanted level" : sb.ToString();
+    }
+
     public string DescribeDrawnLevels()
     {
         var counts = new int[LodWorld.MaxLevel + 1];
@@ -178,6 +224,17 @@ public class LodTerrainRenderer : IRenderer
             {
                 long ck = LodWorld.ChildKey(key, qx, qz);
                 if (!world.HasDataSet.Contains(ck)) continue;
+
+                // A resident section with nothing captured will never get a mesh --
+                // RequestMesh refuses it, by design. Counting it as uncovered pins the
+                // parent at its own level permanently, which is not the transient
+                // wait-for-mesh this gate exists for: it showed up as hard-edged coarse
+                // plates over ground whose finer data was already loaded, with the whole
+                // pipeline idle. Treat it like an absent child instead.
+                if (world.Sections.TryGetValue(ck, out LodSection? child) && child.CapturedColumns == 0)
+                {
+                    continue;
+                }
 
                 if (HasAnyMesh(ck))
                 {

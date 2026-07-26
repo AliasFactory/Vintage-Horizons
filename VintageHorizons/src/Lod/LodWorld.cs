@@ -68,6 +68,21 @@ public class LodWorld
     /// <summary>Section footprint in blocks at this key's level.</summary>
     public static int KeyFootprintBlocks(long key) => LodSection.SectionBlocks << KeyLevel(key);
 
+    /// <summary>
+    /// Distance from a point to the nearest edge of a section's footprint, squared.
+    /// Nearest-edge rather than centre: an L6 section spans 4096 blocks, so centre distance
+    /// would rank a section the viewer is standing inside as far away.
+    /// </summary>
+    public static double NearestDistanceSqTo(long key, double x, double z)
+    {
+        int footprint = KeyFootprintBlocks(key);
+        double minX = KeySx(key) * (double)footprint;
+        double minZ = KeySz(key) * (double)footprint;
+        double dx = Math.Max(0, Math.Max(minX - x, x - (minX + footprint)));
+        double dz = Math.Max(0, Math.Max(minZ - z, z - (minZ + footprint)));
+        return dx * dx + dz * dz;
+    }
+
     public static int ColumnStepBlocks(int level) => LodSection.ColumnStepBlocks << level;
 
     public LodSection GetOrCreateSection(long key)
