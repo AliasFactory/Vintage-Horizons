@@ -59,9 +59,36 @@ public class VintageHorizonsModSystem : ModSystem
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Client;
 
+    /// <summary>
+    /// Other LOD mods, by mod id. Farseer and ChunkLOD are Universal with
+    /// requiredOnClient, so a server running one forces every client to load it too --
+    /// the player cannot opt out of theirs, only out of ours.
+    /// </summary>
+    static readonly string[] CompetingLodMods = { "farseer", "chunklod", "vistasbeyond" };
+
+    /// <summary>Set when another LOD mod is present; we then stay out of its way.</summary>
+    string? deferringTo;
+
     public override void StartClientSide(ICoreClientAPI api)
     {
         capi = api;
+
+        foreach (string modid in CompetingLodMods)
+        {
+            if (!capi.ModLoader.IsModEnabled(modid)) continue;
+
+            // Two LOD mods both extend the camera's far plane and both draw terrain out
+            // there: they would reset the projection matrix against each other every
+            // frame and z-fight over the same ground. Defer rather than fight, because
+            // a server-side mod is mandatory for anyone on that server while we are not.
+            deferringTo = modid;
+            Mod.Logger.Notification(
+                "'{0}' is loaded, so VintageHorizons is staying idle to avoid drawing over it "
+                + "and fighting it for the camera far plane. Remove '{0}' to use VintageHorizons instead.",
+                modid);
+            RegisterCommands();
+            return;
+        }
 
         VintageHorizonsConfig config;
         try
@@ -558,7 +585,11 @@ public class VintageHorizonsModSystem : ModSystem
     {
         capi.ChatCommands.Create("vhinfo")
             .WithDescription("VintageHorizons status")
-            .HandleWith(_ => TextCommandResult.Success(
+            .HandleWith(_ => deferringTo != null
+                ? TextCommandResult.Success(
+                    $"[VintageHorizons] idle: '{deferringTo}' is also installed and is drawing the "
+                    + "distant terrain. Remove it to use VintageHorizons instead.")
+                : TextCommandResult.Success(
                 $"[VintageHorizons] sections: {world.Sections.Count} [{world.DescribeLevels()}] " +
                 $"({cachedSectionsLoaded} from cache), meshes: {renderer.MeshCount}, drawn: {renderer.LastDrawCount}, " +
                 $"columns captured: {columnsCaptured}, pending: {pendingColumns.Count}, " +
@@ -567,6 +598,10 @@ public class VintageHorizonsModSystem : ModSystem
                 $"render distance: {(renderer.FarViewDistanceCap > 0 ? renderer.FarViewDistanceCap + " (capped)" : "unlimited")}, " +
                 $"current far edge: {(int)renderer.EffectiveFarDistance}, " +
                 $"detail distance: {(int)LodWorld.DetailDistance} (.vhdetail to change)"));
+
+        // The remaining commands drive the renderer, which does not exist when we are
+        // deferring to another LOD mod.
+        if (deferringTo != null) return;
 
         capi.ChatCommands.Create("vhfar")
             .WithDescription("Cap VintageHorizons render distance in blocks (0 = unlimited)")
