@@ -60,11 +60,11 @@ public class VintageHorizonsModSystem : ModSystem
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Client;
 
     /// <summary>
-    /// Other LOD mods, by mod id. Farseer and ChunkLOD are Universal with
-    /// requiredOnClient, so a server running one forces every client to load it too --
-    /// the player cannot opt out of theirs, only out of ours.
+    /// Other LOD mods, by mod id. Farseer, ChunkLOD and TopoHorizon are all Universal
+    /// with requiredOnClient, so a server running one forces every client to load it
+    /// too -- the player cannot opt out of theirs, only out of ours.
     /// </summary>
-    static readonly string[] CompetingLodMods = { "farseer", "chunklod", "vistasbeyond" };
+    static readonly string[] CompetingLodMods = { "farseer", "chunklod", "vistasbeyond", "topohorizon" };
 
     /// <summary>Set when another LOD mod is present; we then stay out of its way.</summary>
     string? deferringTo;
