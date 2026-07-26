@@ -262,12 +262,23 @@ locally is asked for over the network instead of returning empty.
 
 ### 10.4 What the framing hides
 
-Two parts are real work, and neither is transport:
+Three parts are real work, and none of them is transport:
 
 **The server has no LOD database to serve.** It has to build one — running the same
 capture over chunks it holds and keeping it current as the world changes.
-`LodWorker.Capture` reads `IWorldChunk`, which is server-side native, so the capture
-code ports as-is; the scheduling around it does not.
+`LodWorker.Capture` reads `IWorldChunk` and `LodStore` needs only an `ILogger`, so both
+port as-is; the coordinator around them is the client `ModSystem` and does not.
+
+**The server cannot colour a palette.** `RegisterPaletteEntry` calls
+`Block.GetColorWithoutTint(ICoreClientAPI, BlockPos)`, which bottoms out in
+`capi.BlockTextureAtlas.GetAverageColor` — a dedicated server has no texture atlas at
+all, so the one field it physically cannot fill is the one every palette entry needs.
+Sections must therefore travel **colour-unresolved**, with the client filling colour in
+on receipt. That is less invasive than it sounds: `ResolvePendingPalette` already runs
+client-side on every section that comes off disk, already re-resolves block ids from
+codes, and already has the block in hand — it gains a colour lookup for entries carrying
+the sentinel. Server-written rows are not readable as-is by an older client, so this is
+a store schema bump, not an additive change.
 
 **The client cannot ask for what it does not know exists.** Quadtree descent is driven
 by `HasDataSet`, populated at join by `LoadAllKeys` scanning the local DB. Against a
@@ -325,9 +336,18 @@ being wrong.
 
 1. ~~Handshake only~~ **done**: channel connects, versions exchanged, `.vhinfo` reports
    whether an assisting server was found. See §10.11 for what it proved.
-2. Key manifest, so the client knows what exists remotely.
-3. Section transfer for already-generated chunks, rate limited, radius capped.
-4. Admin config and defaults.
+2. **Server-side capture.** Reordered ahead of the manifest: a manifest lists what the
+   server has, and until it captures, it has nothing. Needs the coordinator extracted
+   from the client `ModSystem` into a side-agnostic pipeline rather than copied, and the
+   colour-unresolved palette above.
+3. Key manifest, so the client knows what exists remotely.
+4. Section transfer for already-generated chunks, rate limited, radius capped.
+5. Admin config and defaults.
+
+Singleplayer is not a special case of this but it is the biggest early payoff:
+the integrated server loads the server side and the channel connects in-process
+(measured, §10.11), so once stage 2 lands a solo world gets every chunk it has ever
+generated without any networking involved.
 
 Running real worldgen on demand is explicitly not in scope: it is the expensive half of
 what the server-side mods do, and doing without it is what keeps the assist cheap enough
@@ -381,6 +401,7 @@ Three installs, on the sandbox client and dedicated server (`scripts/test-*.sh`)
 | no mod | mod | joins normally, no missing-mods rejection |
 | mod | mod | hello/welcome round trip, 0 errors |
 | mod | no mod | 0 errors, capture and rendering unchanged |
+| singleplayer (both sides in one process) | | `LodAssistServerSystem` starts, handshake completes in-process, 0 errors |
 
 The middle row is the cheap one. The first is the constraint in §10.2 and the third is
 where the design was wrong.
