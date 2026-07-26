@@ -4,6 +4,7 @@ using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
+using VintageHorizons.Net;
 
 namespace VintageHorizons;
 
@@ -69,6 +70,9 @@ public class VintageHorizonsModSystem : ModSystem
     /// <summary>Set when another LOD mod is present; we then stay out of its way.</summary>
     string? deferringTo;
 
+    /// <summary>Optional server assist (DESIGN.md §10); null while deferring.</summary>
+    LodAssistClient? assist;
+
     public override void StartClientSide(ICoreClientAPI api)
     {
         capi = api;
@@ -110,6 +114,12 @@ public class VintageHorizonsModSystem : ModSystem
             AutoUnpause = Environment.GetEnvironmentVariable("VINTAGEHORIZONS_AUTOUNPAUSE") == "1",
             FarViewDistanceCap = config.FarViewDistanceCap,
         };
+
+        // Registered here rather than on world join: channel registration has to be in
+        // place before the connection handshake runs, or the server never learns we
+        // speak it. Against a vanilla server this stays an unused registration.
+        assist = new LodAssistClient(capi, Mod.Logger, Mod.Info.Version);
+        assist.Register();
 
         capi.Event.ChunkDirty += OnChunkDirty;
         capi.Event.LevelFinalize += OnLevelFinalize;
@@ -415,6 +425,12 @@ public class VintageHorizonsModSystem : ModSystem
         joinClock.Restart();
         nextMilestone = 0;
 
+        // Last, and after the pipeline is live. An exception in a LevelFinalize handler
+        // skips everything the handler has left to do, so an optional extra must not sit
+        // upstream of the mod's actual job -- it did, and it broke exactly the
+        // vanilla-server case it exists to stay out of the way of.
+        assist?.Greet();
+
         Mod.Logger.Notification(
             "Level finalized. LOD capture active (render distance: unlimited, {0} sections from cache{1}).",
             cachedSectionsLoaded, renderer.AutoUnpause ? ", auto-unpause on" : "");
@@ -550,6 +566,7 @@ public class VintageHorizonsModSystem : ModSystem
     void OnLeaveWorld()
     {
         pipelineActive = false;
+        assist?.Reset();
         world.LoadFromStore = null;
         world.RequestAsyncLoad = null;
         if (store != null)
@@ -597,7 +614,8 @@ public class VintageHorizonsModSystem : ModSystem
                 $"unsaved: {world.SaveDirty.Count}, persistence: {(store != null ? "on" : "off")}, " +
                 $"render distance: {(renderer.FarViewDistanceCap > 0 ? renderer.FarViewDistanceCap + " (capped)" : "unlimited")}, " +
                 $"current far edge: {(int)renderer.EffectiveFarDistance}, " +
-                $"detail distance: {(int)LodWorld.DetailDistance} (.vhdetail to change)"));
+                $"detail distance: {(int)LodWorld.DetailDistance} (.vhdetail to change), " +
+                $"server assist: {assist?.Status ?? "off"}"));
 
         // The remaining commands drive the renderer, which does not exist when we are
         // deferring to another LOD mod.

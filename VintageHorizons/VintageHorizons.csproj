@@ -34,6 +34,10 @@
       <HintPath>$(GamePath)/Lib/Microsoft.Data.Sqlite.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="protobuf-net">
+      <HintPath>$(GamePath)/Lib/protobuf-net.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <!-- Assemble a loadable mod folder at bin/<Config>/Mods/vintagehorizons (loaded via the addModPath launch flag) -->

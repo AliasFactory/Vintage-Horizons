@@ -298,11 +298,11 @@ It must be admin-configurable, and the default must be conservative:
 
 ### 10.7 Transport
 
-- **Message size is an open question.** The docs warn against messages over 508 bytes,
-  but that warning appears on both `RegisterChannel` and `RegisterUdpChannel`, so
-  whether the reliable channel actually enforces it needs measuring rather than
-  assuming. Sections are tens to hundreds of KB, so design for chunked transfer with a
-  sequence number regardless of what the measurement says.
+- **The 508-byte limit does not apply here.** Measured against the source rather than
+  assumed: the warning sits only on the two `RegisterUdpChannel` overloads, never on
+  `RegisterChannel`, and it is about NAT fragmentation of datagrams. The reliable
+  channel has no such cap. Sections are still tens to hundreds of KB, so chunk them
+  anyway — for latency and peak memory, not because a limit forces it.
 - **Rate limit and bound requests.** A client must not be able to ask for unlimited
   area; the server decides what it is willing to send, not the client.
 - **Protocol version in the handshake.** 0.1.1 clients already exist; a client must
@@ -323,9 +323,8 @@ being wrong.
 
 ### 10.9 Staging
 
-1. Handshake only: channel connects, versions exchanged, `.vhinfo` reports whether an
-   assisting server was found. Proves graceful degradation against a vanilla server
-   before any data moves.
+1. ~~Handshake only~~ **done**: channel connects, versions exchanged, `.vhinfo` reports
+   whether an assisting server was found. See §10.11 for what it proved.
 2. Key manifest, so the client knows what exists remotely.
 3. Section transfer for already-generated chunks, rate limited, radius capped.
 4. Admin config and defaults.
@@ -372,3 +371,34 @@ is documented "Accessible on the server and the client", which makes it look fea
 but `AssetCategory.worldgen` is `EnumAppSide.Server`, so a client never loads the landform
 or geologic-province definitions the noise is shaped by, and a modded server's worldgen is
 not knowable from the client at all.
+
+### 10.11 What stage 1 measured
+
+Three installs, on the sandbox client and dedicated server (`scripts/test-*.sh`):
+
+| client | server | result |
+| --- | --- | --- |
+| no mod | mod | joins normally, no missing-mods rejection |
+| mod | mod | hello/welcome round trip, 0 errors |
+| mod | no mod | 0 errors, capture and rendering unchanged |
+
+The middle row is the cheap one. The first is the constraint in §10.2 and the third is
+where the design was wrong.
+
+**`GetChannelState` is not the test to use.** Against a vanilla server it returned
+`Connected` for a channel that was not, and `SendPacket` then threw *"Attempting to send
+data to a not connected channel"* — from inside a `LevelFinalize` handler, which the
+engine aborts on exception, so the optional extra took out the rest of the mod's own
+startup. Guard on `IClientNetworkChannel.Connected`, which is what the engine's error
+message names, and keep the handshake at the end of the handler behind a `try`. An
+optional feature must never sit upstream of the work it is optional to.
+
+**One cosmetic cost on vanilla servers.** The client logs
+*"Client registered 1 network channels (vintagehorizons) the server does not know about"*
+at startup. Unavoidable for an optional channel — registration has to precede the
+connection handshake, so there is no point at which we could know to skip it — and it is
+a log line, not a dialog.
+
+**Do not ship `side: Universal` before stage 3.** It changes how the mod is categorised
+(and filtered for) on ModDB while delivering nothing to a player yet. The switch belongs
+in the release that actually serves terrain.
