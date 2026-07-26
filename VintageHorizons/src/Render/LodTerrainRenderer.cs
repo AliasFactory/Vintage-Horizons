@@ -363,7 +363,15 @@ public class LodTerrainRenderer : IRenderer
         // needed two passes to appear and only four could be touched per frame.
         int meshBudget = MeshSchedulesPerFrame;
         int loadBudget = MeshLoadRequestsPerFrame;
-        while (meshBudget > 0 && loadBudget > 0 && world.RenderDirty.Count > 0)
+
+        // Hard cap on iterations, not just on the two budgets: the paths that drop a key
+        // without starting work (a section with no data, or one whose reload already came
+        // back empty) charge neither budget, so without this the loop runs until
+        // RenderDirty drains -- and each iteration rescans the whole set for the nearest
+        // key. A few hundred such keys turned one frame into a six-figure scan.
+        int steps = MeshSchedulesPerFrame + MeshLoadRequestsPerFrame;
+
+        while (steps-- > 0 && meshBudget > 0 && loadBudget > 0 && world.RenderDirty.Count > 0)
         {
             long best = 0;
             double bestDist = double.MaxValue;

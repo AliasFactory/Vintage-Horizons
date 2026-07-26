@@ -186,7 +186,7 @@ occlusion. Never required; the 3.3 path remains complete.
 
 ## 9. Licensing
 
-VintageHorizons is **MIT plus a conduct condition** (see LICENSE); it is deliberately not plain MIT and not OSI-approved. DH (LGPL) and Voxy (ARR) inform concepts only — no code is
+VintageHorizons is **MIT**. DH (LGPL) and Voxy (ARR) inform concepts only — no code is
 copied from either; `reference/` clones are gitignored and never redistributed. Farseer
 (MIT) code may be adapted with attribution (will be credited in README and source
 headers where used).

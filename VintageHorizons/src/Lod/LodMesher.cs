@@ -45,7 +45,7 @@ public static class LodMesher
     }
 
     /// <summary>One exposed horizontal face: column cell + plane y + palette.</summary>
-    readonly record struct HFace(short Cx, short Cz, short Y, short Pid, bool Bottom, bool Water, bool Thin);
+    readonly record struct HFace(short Cx, short Cz, short Y, short Pid, bool Bottom, bool Water, bool Thin, short YBottom);
 
     /// <summary>One exposed wall segment on a column edge.</summary>
     readonly record struct VFace(byte Dir, short Fixed, short Along, short YTop, short YBottom, short Pid, bool Water);
@@ -95,21 +95,23 @@ public static class LodMesher
                     // perfectly good colour.
                     if (isThin)
                     {
-                        hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, true, true));
+                        hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, true, true, (short)yBottom));
                         continue;
                     }
 
                     bool topCovered = r > 0
                         && LodSection.RunYBottom(runs[r - 1]) == yTop
+                        && !IsThinRun(self, runs[r - 1])
                         && IsTranslucentRun(self, runs[r - 1]) == isTranslucent;
-                    if (!topCovered) hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, isTranslucent, false));
+                    if (!topCovered) hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, isTranslucent, false, (short)yBottom));
 
                     bool bottomCovered = r < runs.Length - 1
                         && LodSection.RunYTop(runs[r + 1]) == yBottom
+                        && !IsThinRun(self, runs[r + 1])
                         && IsTranslucentRun(self, runs[r + 1]) == isTranslucent;
                     if (!bottomCovered && yBottom > 1 && !isTranslucent)
                     {
-                        hf.Add(new HFace((short)cx, (short)cz, (short)yBottom, (short)pid, true, false, false));
+                        hf.Add(new HFace((short)cx, (short)cz, (short)yBottom, (short)pid, true, false, false, (short)yBottom));
                     }
 
                     bool solidCoverOnly = !isTranslucent;
@@ -177,7 +179,8 @@ public static class LodMesher
                 && faces[end].Y == first.Y
                 && faces[end].Pid == first.Pid
                 && faces[end].Bottom == first.Bottom
-                && faces[end].Thin == first.Thin)
+                && faces[end].Thin == first.Thin
+                && faces[end].YBottom == first.YBottom)
             {
                 end++;
             }
@@ -226,11 +229,14 @@ public static class LodMesher
                 float x1 = (cx + wRect) * step;
                 float z0 = cz * step;
                 float z1 = (cz + hRect) * step;
-                // A one-block-tall plant becomes a mat a quarter of a block above the
-                // soil it stands on: clear of z-fighting, invisible as a step.
-                // Y is absolute blocks and is NOT scaled by step, so the drop must not
-                // be either: scaling it sank the mat six blocks at coarse levels.
-                float y = first.Thin ? first.Y - 0.75f : first.Y;
+                // Ground cover sits a quarter block above the soil it stands on: clear
+                // of z-fighting, invisible as a step. Measured UP from the run's bottom,
+                // never down from its top -- mip merging fuses adjacent thin runs, so at
+                // coarse levels one run spans several blocks and a fixed drop from the
+                // top left the mat floating in mid-air. Clamped so it can never rise
+                // above the run it represents.
+                // Y is absolute blocks and is NOT scaled by step, so neither is the offset.
+                float y = first.Thin ? Math.Min(first.YBottom + 0.25f, first.Y) : first.Y;
 
                 if (first.Bottom)
                 {
@@ -325,6 +331,15 @@ public static class LodMesher
     static bool IsTranslucentRun(SectionSnapshot s, ulong run) =>
         IsTranslucent(s.PaletteFlags[LodSection.RunPaletteId(run)]);
 
+    /// <summary>
+    /// Thin ground cover is drawn as a mat a quarter block tall, so it fills almost none
+    /// of its cell and must never occlude anything. Without this a fern on a shoreline
+    /// counted as cover for the water beside it and deleted the water's wall, letting you
+    /// see through the edge of the pond.
+    /// </summary>
+    static bool IsThinRun(SectionSnapshot s, ulong run) =>
+        (s.PaletteFlags[LodSection.RunPaletteId(run)] & LodPaletteEntry.FlagThin) != 0;
+
     static (SectionSnapshot? snap, int col) NeighborColumn(MeshJob job, int cx, int cz)
     {
         int gs = LodSection.GridSize;
@@ -359,6 +374,9 @@ public static class LodMesher
 
         for (int i = 0; i < neighborRuns.Length && cur > yBottom; i++)
         {
+            // A mat never covers anything; beyond that, solid faces are only culled by
+            // solid neighbours so terrain stays visible through water.
+            if (IsThinRun(nb!, neighborRuns[i])) continue;
             if (solidCoverOnly && IsTranslucentRun(nb!, neighborRuns[i])) continue;
 
             int nTop = LodSection.RunYTop(neighborRuns[i]);

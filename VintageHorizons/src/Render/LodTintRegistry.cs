@@ -131,10 +131,13 @@ public class LodTintRegistry
         // ApplyColorMapOnRgba flips red and blue by default, so red is the high byte —
         // which is exactly what ColorUtil.ToRGBAFloats unpacks, rather than restating
         // the engine's channel order here.
+        // ToRGBAFloats[0] is the HIGH byte, which is where ApplyColorMapOnRgba puts red
+        // (it flips red and blue by default). Wiring [2] to red swapped R and B and
+        // turned every grass tint teal.
         float[] rgbaf = Vintagestory.API.MathTools.ColorUtil.ToRGBAFloats(rgba);
-        into[slot * 4 + 0] = rgbaf[2];
+        into[slot * 4 + 0] = rgbaf[0];
         into[slot * 4 + 1] = rgbaf[1];
-        into[slot * 4 + 2] = rgbaf[0];
+        into[slot * 4 + 2] = rgbaf[2];
         into[slot * 4 + 3] = 1f;
     }
 }
