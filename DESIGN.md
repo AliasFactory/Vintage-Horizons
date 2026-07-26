@@ -183,6 +183,8 @@ occlusion. Never required; the 3.3 path remains complete.
   in-chat commands, ModDB release.
 - **M6 — fast path (optional)**: GL 4.3 vertex-pulling/MDI renderer behind a runtime
   capability gate.
+- **M7 — optional server assist**: same mod, installable server-side, feeding clients
+  terrain they have never visited. See §10.
 
 ## 9. Licensing
 
@@ -190,3 +192,144 @@ VintageHorizons is **MIT**. DH (LGPL) and Voxy (ARR) inform concepts only — no
 copied from either; `reference/` clones are gitignored and never redistributed. Farseer
 (MIT) code may be adapted with attribution (will be credited in README and source
 headers where used).
+
+## 10. Optional server assist (M7)
+
+### 10.1 The problem it solves
+
+The client-only design has exactly one weakness, and it is the one thing Farseer,
+ChunkLOD and TopoHorizon genuinely do better: we can only draw terrain the server has
+already sent us. A brand-new world shows nothing past the vanilla view distance until
+the player travels, and the flanks of a flight path stay empty.
+
+Those mods solve it by generating LOD server-side — and pay for it by being
+`requiredOnClient`, so a server running one forces the mod on everybody and a client
+running one cannot join a server without it. It is all-or-nothing in both directions.
+
+The assist closes our gap without taking on theirs: **works on every server, better on
+servers that opt in.**
+
+### 10.2 The constraint everything else is subordinate to
+
+The client must never require the server side. If installing this on a server starts
+forcing it on joining players, we have reimplemented Farseer and thrown away the only
+reason this project exists.
+
+Vintage Story supports exactly what is needed. From `ModInfo.RequiredOnClient`:
+
+> If set to false and the mod is universal, clients don't need the mod to join.
+
+So one mod, shipped once:
+
+```json
+"side": "Universal",
+"requiredOnClient": false,
+"requiredOnServer": false
+```
+
+Both flags matter, in opposite directions:
+
+| installed on | result |
+| --- | --- |
+| client only | today's behaviour, unchanged, on any vanilla server |
+| server only | server serves data; clients without the mod are unaffected and still join |
+| both | channel connects; unvisited terrain is filled in |
+| neither | n/a |
+
+`requiredOnServer: false` is what keeps a client with the mod able to join a vanilla
+server — dropping it inverts the problem instead of solving it.
+
+One mod rather than a companion download also removes a compatibility matrix that
+would rot: no pairing of client 0.1.1 against server 0.2.0 to reason about, one
+version number, one zip for both audiences.
+
+### 10.3 Architecture: a third implementation of an existing seam
+
+The section source is already pluggable, and the async path added in the storage work
+is the exact shape a network source needs — request by key, answer arrives later,
+install on the main thread:
+
+- `LodWorld.LoadFromStore` — `Func<long, LodSection?>`, synchronous, local disk
+- `LodWorld.RequestAsyncLoad` — `Action<long>`, results land via `InstallLoaded`
+- `LodStore.Serialize` / `Deserialize` — already a self-contained deflated `byte[]`
+
+That last point matters more than it looks: **the stored blob is the wire format.**
+There is no second serialisation to design, and a section that survives a round trip
+through the network is byte-identical to one loaded from disk.
+
+So the client change is small: when the channel is connected, a key that misses
+locally is asked for over the network instead of returning empty.
+
+### 10.4 What the framing hides
+
+Two parts are real work, and neither is transport:
+
+**The server has no LOD database to serve.** It has to build one — running the same
+capture over chunks it holds and keeping it current as the world changes.
+`LodWorker.Capture` reads `IWorldChunk`, which is server-side native, so the capture
+code ports as-is; the scheduling around it does not.
+
+**The client cannot ask for what it does not know exists.** Quadtree descent is driven
+by `HasDataSet`, populated at join by `LoadAllKeys` scanning the local DB. Against a
+remote source the client has no key set, so it can neither descend into remote areas
+nor tell that a request is worth making. The handshake therefore has to carry a **key
+manifest** — keys only, exactly what `LoadAllKeys` already yields, no blobs.
+
+### 10.5 Precedence
+
+When both sources hold a section, **local capture wins**; the server fills gaps only.
+The client's own capture is what it actually observed, including player edits it
+witnessed, whereas the server's copy may be an older snapshot. Letting the server
+overwrite would let stale terrain replace fresher ground the player is standing on.
+
+### 10.6 Revealing the map
+
+Sending terrain a player has never visited hands them a survey of the world:
+coastlines, structures, other players' bases. The competing mods have the same
+property, but that is not a reason to ship it thoughtlessly — some admins will
+consider it cheating, and they are not wrong to.
+
+It must be admin-configurable, and the default must be conservative:
+
+- a radius cap on how far from a player the assist will serve
+- already-generated chunks only by default; never trigger worldgen to satisfy a
+  request (this is also what makes the server-side mods expensive)
+- an outright off switch
+
+### 10.7 Transport
+
+- **Message size is an open question.** The docs warn against messages over 508 bytes,
+  but that warning appears on both `RegisterChannel` and `RegisterUdpChannel`, so
+  whether the reliable channel actually enforces it needs measuring rather than
+  assuming. Sections are tens to hundreds of KB, so design for chunked transfer with a
+  sequence number regardless of what the measurement says.
+- **Rate limit and bound requests.** A client must not be able to ask for unlimited
+  area; the server decides what it is willing to send, not the client.
+- **Protocol version in the handshake.** 0.1.1 clients already exist; a client must
+  ignore anything it does not understand rather than misparse it.
+
+### 10.8 Code layout
+
+Going Universal means the assembly loads on servers for the first time. Split by side
+rather than branching inside one system:
+
+- `VintageHorizonsModSystem` — `ShouldLoad(side) => side == Client` (unchanged)
+- a new server system — `ShouldLoad(side) => side == Server`
+
+The client system casts `capi.World` to `ClientMain`, compiles shaders and registers a
+renderer. None of that may execute server-side, and the robust guarantee is that the
+code never runs there at all, rather than a branch that is one refactor away from
+being wrong.
+
+### 10.9 Staging
+
+1. Handshake only: channel connects, versions exchanged, `.vhinfo` reports whether an
+   assisting server was found. Proves graceful degradation against a vanilla server
+   before any data moves.
+2. Key manifest, so the client knows what exists remotely.
+3. Section transfer for already-generated chunks, rate limited, radius capped.
+4. Admin config and defaults.
+
+Worldgen-on-demand is explicitly not in scope for a first version, and may never be:
+it is the expensive half of what the server-side mods do, and doing without it is what
+keeps the assist cheap enough for an admin to leave on.
