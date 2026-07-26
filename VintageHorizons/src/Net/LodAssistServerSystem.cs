@@ -15,12 +15,14 @@ namespace VintageHorizons.Net;
 /// </summary>
 public class LodAssistServerSystem : ModSystem
 {
+    ICoreServerAPI sapi = null!;
     IServerNetworkChannel channel = null!;
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Server;
 
     public override void StartServerSide(ICoreServerAPI api)
     {
+        sapi = api;
         channel = api.Network.RegisterChannel(LodAssist.ChannelName)
             .RegisterMessageType<AssistHello>()
             .RegisterMessageType<AssistWelcome>()
@@ -37,14 +39,21 @@ public class LodAssistServerSystem : ModSystem
         Mod.Logger.Debug("VintageHorizons: assist hello from {0} (client {1}, protocol {2})",
             fromPlayer.PlayerName, msg.ModVersion, msg.Protocol);
 
-        // Stage 1 has nothing to serve, and saying so is the honest answer. Reporting
-        // Enabled here would leave a client waiting for terrain that is not coming.
+        // Enabled stays false until sections can actually move: reporting true here would
+        // leave a client waiting for terrain that is not coming. The status line still
+        // says whether a cache is being built, which is the difference between "this
+        // server will be useful once transfer lands" and "capture is not running".
+        LodServerCaptureSystem? capture = sapi.ModLoader.GetModSystem<LodServerCaptureSystem>();
+        string status = capture?.Capturing == true
+            ? $"building its LOD cache ({capture.SectionCount} sections so far); transfer is not implemented yet"
+            : "no LOD cache is being built on this server";
+
         channel.SendPacket(new AssistWelcome
         {
             Protocol = LodAssist.Protocol,
             ModVersion = Mod.Info.Version,
             Enabled = false,
-            Status = "handshake only in this version; terrain sharing is not implemented yet",
+            Status = status,
         }, fromPlayer);
     }
 }

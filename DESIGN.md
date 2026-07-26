@@ -276,9 +276,15 @@ all, so the one field it physically cannot fill is the one every palette entry n
 Sections must therefore travel **colour-unresolved**, with the client filling colour in
 on receipt. That is less invasive than it sounds: `ResolvePendingPalette` already runs
 client-side on every section that comes off disk, already re-resolves block ids from
-codes, and already has the block in hand — it gains a colour lookup for entries carrying
-the sentinel. Server-written rows are not readable as-is by an older client, so this is
-a store schema bump, not an additive change.
+codes, and already has the block in hand — it gains a colour pass.
+
+**And it needs no schema change.** The first plan here was to persist an
+"unresolved" marker in the blob, which meant bumping `LodStore.SchemaVersion` — and that
+version is a cache-wipe: every existing player would lose the horizons they had explored,
+to enable something not yet switched on. Unnecessary, because the *transport* knows where
+a section came from. A section arriving over the channel gets the flag set in memory
+before install; a section off local disk never needs it. Server-side rows hold colour 0
+and only the server reads them, and it never renders.
 
 **The client cannot ask for what it does not know exists.** Quadtree descent is driven
 by `HasDataSet`, populated at join by `LoadAllKeys` scanning the local DB. Against a
@@ -336,10 +342,13 @@ being wrong.
 
 1. ~~Handshake only~~ **done**: channel connects, versions exchanged, `.vhinfo` reports
    whether an assisting server was found. See §10.11 for what it proved.
-2. **Server-side capture.** Reordered ahead of the manifest: a manifest lists what the
-   server has, and until it captures, it has nothing. Needs the coordinator extracted
-   from the client `ModSystem` into a side-agnostic pipeline rather than copied, and the
-   colour-unresolved palette above.
+2. ~~Server-side capture~~ **done**. Reordered ahead of the manifest: a manifest lists
+   what the server has, and until it captures, it has nothing. `LodPipeline` +
+   `LodBlockPolicy` are the extracted, side-agnostic coordinator; `LodServerCaptureSystem`
+   drives it from `ChunkColumnLoaded` plus block-edit events, since a live column never
+   fires `ChunkColumnLoaded` again. Measured: a dedicated server built 85 sections with a
+   complete pyramid (51/19/8/4/1/1/1 across detail 0–6), 0 unflushed mip flags after a
+   clean stop, 0 errors on either side.
 3. Key manifest, so the client knows what exists remotely.
 4. Section transfer for already-generated chunks, rate limited, radius capped.
 5. Admin config and defaults.
