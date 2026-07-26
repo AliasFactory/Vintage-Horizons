@@ -149,7 +149,86 @@ public class VintageHorizonsModSystem : ModSystem
     {
         Block block = capi.World.Blocks[blockId];
         paletteSamplePos.Set(cx * ChunkSize + ChunkSize / 2, sampleY, cz * ChunkSize + ChunkSize / 2);
-        return (block.GetColorWithoutTint(capi, paletteSamplePos), (byte)tints.SlotFor(block));
+        int color = block.GetColorWithoutTint(capi, paletteSamplePos);
+
+        if (!IsUsableAtlasTexture(block.TextureSubIdForBlockColor)
+            // Guarded on non-zero: if the atlas never populated AvgColor we would be
+            // comparing against 0 and "fixing" every legitimately black block.
+            || (unknownTextureColor != 0 && color == unknownTextureColor))
+        {
+            color = ColorFromAnyTexture(block, color);
+        }
+        return (color, (byte)tints.SlotFor(block));
+    }
+
+    /// <summary>Average colour of unknown.png (near-white, not magenta — measured).</summary>
+    int unknownTextureColor;
+
+    /// <summary>
+    /// Whether an atlas sub-id actually names a texture. `GetAverageColor` on an unassigned
+    /// or out-of-range sub-id reads whatever the atlas holds there, which is where a
+    /// nonsense LOD colour comes from — and unlike the unknown.png case, that does not
+    /// require knowing what the placeholder looks like to detect.
+    /// </summary>
+    bool IsUsableAtlasTexture(int subId)
+    {
+        if (subId < 0) return false;
+
+        TextureAtlasPosition[] positions = capi.BlockTextureAtlas.Positions;
+        return subId < positions.Length && positions[subId] != null;
+    }
+
+    readonly Dictionary<int, int> missingTextureColorFallback = new();
+    int missingTextureBlocks;
+    bool loggedMissingTexture;
+
+    /// <summary>
+    /// Salvage a colour for a block whose block-colour texture did not resolve, so it draws
+    /// as itself instead of as a placeholder or as whatever the atlas holds at a bogus id.
+    ///
+    /// Vanilla picks that texture in Block.LoadTextureSubIdForBlockColor: the
+    /// 'textureCodeForBlockColor' attribute, else "up", else `Textures.First()` — and that
+    /// last step ends in `?? 0`, so a block whose first texture in dictionary order has no
+    /// Baked entry silently resolves to atlas subid 0, which is unknown.png. The block's
+    /// other faces are baked fine, which is why it looks correct up close and magenta only
+    /// in LOD. Measured firing on vanilla 'fruitingbush-wild-blackberry-free', so this is
+    /// not a modded-content problem -- content-heavy block packs just hit it more often.
+    ///
+    /// So: use any of the block's own baked textures instead of the first one. Cached per
+    /// block id — the answer cannot change within a session, and a palette entry is
+    /// registered once per section, which is thousands of times per world.
+    /// </summary>
+    int ColorFromAnyTexture(Block block, int fallback)
+    {
+        if (missingTextureColorFallback.TryGetValue(block.BlockId, out int cached)) return cached;
+
+        int found = fallback;
+        if (block.Textures != null)
+        {
+            foreach (CompositeTexture tex in block.Textures.Values)
+            {
+                int subId = tex?.Baked?.TextureSubId ?? -1;
+                if (!IsUsableAtlasTexture(subId)) continue;
+
+                int candidate = capi.BlockTextureAtlas.GetAverageColor(subId);
+                if (unknownTextureColor != 0 && candidate == unknownTextureColor) continue;
+
+                found = candidate;
+                break;
+            }
+        }
+
+        missingTextureColorFallback[block.BlockId] = found;
+        missingTextureBlocks++;
+        if (!loggedMissingTexture)
+        {
+            loggedMissingTexture = true;
+            Mod.Logger.Notification(
+                "Block '{0}' has no usable block-colour texture (vanilla resolved it to unknown.png); "
+                + "using another of its own textures instead so it does not render wrong at distance.",
+                block.Code);
+        }
+        return found;
     }
 
     /// <summary>
@@ -187,6 +266,11 @@ public class VintageHorizonsModSystem : ModSystem
     void OnLevelFinalize()
     {
         ResolvePlantTintFallback();
+        // Read once here rather than per palette entry: the atlas exists by now, and a
+        // reload would change the position object but not what magenta looks like.
+        unknownTextureColor = capi.BlockTextureAtlas.UnknownTexturePosition.AvgColor;
+        Mod.Logger.Debug("Missing-texture colour is {0:X8}{1}", unknownTextureColor,
+            unknownTextureColor == 0 ? " (zero: magenta-block salvage disabled)" : "");
         renderer.ApplyZFar();
         pipeline.Open("ModData/vintagehorizons");
         joinClock.Restart();
