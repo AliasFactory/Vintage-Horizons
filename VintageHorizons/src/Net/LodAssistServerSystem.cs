@@ -26,6 +26,7 @@ public class LodAssistServerSystem : ModSystem
         channel = api.Network.RegisterChannel(LodAssist.ChannelName)
             .RegisterMessageType<AssistHello>()
             .RegisterMessageType<AssistWelcome>()
+            .RegisterMessageType<AssistKeyManifest>()
             .SetMessageHandler<AssistHello>(OnHello);
 
         Mod.Logger.Notification(
@@ -39,21 +40,58 @@ public class LodAssistServerSystem : ModSystem
         Mod.Logger.Debug("VintageHorizons: assist hello from {0} (client {1}, protocol {2})",
             fromPlayer.PlayerName, msg.ModVersion, msg.Protocol);
 
-        // Enabled stays false until sections can actually move: reporting true here would
-        // leave a client waiting for terrain that is not coming. The status line still
-        // says whether a cache is being built, which is the difference between "this
-        // server will be useful once transfer lands" and "capture is not running".
+        // Answered from the main thread, one tick later, rather than from here. Message
+        // handlers do not run on the main thread, and both the key set and its count come
+        // from a HashSet the capture pipeline mutates every tick — reading it here is a
+        // torn read, and the count would disagree with the manifest that follows it
+        // (observed: announced 5634, sent 5638, four sections captured in between).
+        sapi.Event.EnqueueMainThreadTask(() => Answer(fromPlayer), "vintagehorizons-hello");
+    }
+
+    /// <summary>
+    /// Welcome plus the key manifest, from one snapshot so the announced count is a fact
+    /// rather than an estimate. Enabled stays false until sections can actually move:
+    /// reporting true would leave a client waiting for terrain that is not coming.
+    /// </summary>
+    void Answer(IServerPlayer player)
+    {
         LodServerCaptureSystem? capture = sapi.ModLoader.GetModSystem<LodServerCaptureSystem>();
-        string status = capture?.Capturing == true
-            ? $"building its LOD cache ({capture.SectionCount} sections so far); transfer is not implemented yet"
-            : "no LOD cache is being built on this server";
+        long[] keys = capture?.Capturing == true ? capture.SnapshotKeys() : Array.Empty<long>();
 
         channel.SendPacket(new AssistWelcome
         {
             Protocol = LodAssist.Protocol,
             ModVersion = Mod.Info.Version,
             Enabled = false,
-            Status = status,
-        }, fromPlayer);
+            Status = keys.Length > 0
+                ? $"holds {keys.Length} sections; transfer is not implemented yet"
+                : "no LOD cache is being built on this server",
+            ManifestKeyCount = keys.Length,
+        }, player);
+
+        if (keys.Length > 0) SendManifest(player, keys);
+    }
+
+    /// <summary>Keys the server holds, in chunks. Main thread only.</summary>
+    void SendManifest(IServerPlayer player, long[] keys)
+    {
+        int sent = 0, sequence = 0;
+        while (sent < keys.Length)
+        {
+            int take = Math.Min(LodAssist.ManifestKeysPerMessage, keys.Length - sent);
+            var chunk = new long[take];
+            Array.Copy(keys, sent, chunk, 0, take);
+            sent += take;
+
+            channel.SendPacket(new AssistKeyManifest
+            {
+                Sequence = sequence++,
+                Last = sent >= keys.Length,
+                Keys = chunk,
+            }, player);
+        }
+
+        Mod.Logger.Debug("VintageHorizons: sent {0} keys to {1} in {2} chunks",
+            keys.Length, player.PlayerName, sequence);
     }
 }

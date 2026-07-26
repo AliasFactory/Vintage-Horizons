@@ -30,8 +30,18 @@ public class LodServerCaptureSystem : ModSystem
     /// <summary>Set once the cache is open; the assist handshake reports it.</summary>
     public bool Capturing => pipeline?.Active == true;
 
-    public int SectionCount => pipeline?.World.Sections.Count ?? 0;
+    /// <summary>
+    /// Keys the server can offer. HasDataSet, not Sections: a section evicted from RAM is
+    /// still on disk and still servable, and the count a client is told has to match what
+    /// the manifest will actually contain.
+    /// </summary>
+    public int SectionCount => pipeline?.World.HasDataSet.Count ?? 0;
+
     public int ColumnsCaptured => pipeline?.ColumnsCaptured ?? 0;
+
+    /// <summary>Main thread only — the capture pipeline mutates this set every tick.</summary>
+    public long[] SnapshotKeys() =>
+        pipeline == null ? Array.Empty<long>() : pipeline.World.HasDataSet.ToArray();
 
     public override void StartServerSide(ICoreServerAPI api)
     {

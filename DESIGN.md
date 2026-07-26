@@ -349,7 +349,14 @@ being wrong.
    fires `ChunkColumnLoaded` again. Measured: a dedicated server built 85 sections with a
    complete pyramid (51/19/8/4/1/1/1 across detail 0–6), 0 unflushed mip flags after a
    clean stop, 0 errors on either side.
-3. Key manifest, so the client knows what exists remotely.
+3. ~~Key manifest~~ **done**. Sent in full at handshake, not by spatial query: a real
+   5581-section world is 44 KB at 8 bytes a key, so the manifest is not the expensive
+   part — the sections are, at a mean 45.9 KB each (median 44.2, p95 86.4, max 154.5).
+   That is what stage 4 has to budget for: "send what the client lacks" for that world
+   would be 262 MB. Measured at volume: 5665 keys in 3 chunks, announced count exact,
+   0 errors. Welcome and manifest come from one main-thread snapshot, because answering
+   from the message handler read a set the capture tick mutates and the announced count
+   disagreed with what followed.
 4. Section transfer for already-generated chunks, rate limited, radius capped.
 5. Admin config and defaults.
 

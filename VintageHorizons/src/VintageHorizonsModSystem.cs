@@ -314,7 +314,10 @@ public class VintageHorizonsModSystem : ModSystem
                 $"render distance: {(renderer.FarViewDistanceCap > 0 ? renderer.FarViewDistanceCap + " (capped)" : "unlimited")}, " +
                 $"current far edge: {(int)renderer.EffectiveFarDistance}, " +
                 $"detail distance: {(int)LodWorld.DetailDistance} (.vhdetail to change), " +
-                $"server assist: {assist?.Status ?? "off"}"));
+                $"server assist: {assist?.Status ?? "off"}" +
+                (assist != null && assist.RemoteKeys.Count > 0
+                    ? $", server offers {assist.RemoteKeys.Count} sections{(assist.ManifestComplete ? "" : " (manifest still arriving)")}"
+                    : "")));
 
         // The remaining commands drive the renderer, which does not exist when we are
         // deferring to another LOD mod.

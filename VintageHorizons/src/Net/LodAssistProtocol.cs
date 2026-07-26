@@ -25,6 +25,13 @@ public static class LodAssist
     /// working with the 0.1.1-era clients that are already in the wild.
     /// </summary>
     public const int Protocol = 1;
+
+    /// <summary>
+    /// Keys per manifest chunk. 2048 keys is ~16 KB, small enough not to stall a join
+    /// that is already loading a world and large enough that a 5581-key world takes
+    /// three messages rather than dozens.
+    /// </summary>
+    public const int ManifestKeysPerMessage = 2048;
 }
 
 /// <summary>Client -> server, once per join, only when the channel is Connected.</summary>
@@ -50,4 +57,30 @@ public class AssistWelcome
 
     /// <summary>Human-readable reason, surfaced verbatim by .vhinfo. Not parsed.</summary>
     [ProtoMember(4)] public string Status = "";
+
+    /// <summary>
+    /// How many section keys the server is about to send, so a client can report
+    /// progress and size its set once instead of rehashing as chunks arrive. Zero when
+    /// no manifest follows.
+    /// </summary>
+    [ProtoMember(5)] public int ManifestKeyCount;
+}
+
+/// <summary>
+/// Server -> client: which sections the server holds, as packed keys and nothing else.
+/// Measured at 8 bytes a key and 5581 keys for a well-travelled world, so ~44 KB total —
+/// cheap enough to send in full at join, which is why there is no spatial query here.
+///
+/// Chunked because one 44 KB message is a needless latency spike on a join that is
+/// already busy, not because the reliable channel has a size limit (§10.7).
+/// </summary>
+[ProtoContract]
+public class AssistKeyManifest
+{
+    [ProtoMember(1)] public int Sequence;
+
+    /// <summary>Set on the final chunk, so the client knows the set is complete.</summary>
+    [ProtoMember(2)] public bool Last;
+
+    [ProtoMember(3)] public long[] Keys = Array.Empty<long>();
 }

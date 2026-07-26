@@ -45,7 +45,9 @@ public sealed class LodAssistClient
         channel = capi.Network.RegisterChannel(LodAssist.ChannelName)
             .RegisterMessageType<AssistHello>()
             .RegisterMessageType<AssistWelcome>()
-            .SetMessageHandler<AssistWelcome>(OnWelcome);
+            .RegisterMessageType<AssistKeyManifest>()
+            .SetMessageHandler<AssistWelcome>(OnWelcome)
+            .SetMessageHandler<AssistKeyManifest>(OnKeyManifest);
     }
 
     /// <summary>
@@ -88,6 +90,7 @@ public sealed class LodAssistClient
         // Deserialized, so every reference field is whatever the wire produced.
         string reason = msg.Status ?? "";
         string version = msg.ModVersion ?? "unknown";
+        ManifestExpected = msg.ManifestKeyCount;
 
         if (!msg.Enabled)
         {
@@ -114,10 +117,47 @@ public sealed class LodAssistClient
         logger.Notification("VintageHorizons: server assist {0}", Status);
     }
 
+    /// <summary>
+    /// Keys the server says it holds. Not yet wired into quadtree descent: the client
+    /// would try to load them from its own store and record a miss, so routing them to
+    /// the network belongs with transfer. Populated now so the manifest transport is
+    /// proven at real volume before anything depends on it.
+    /// </summary>
+    public readonly HashSet<long> RemoteKeys = new();
+
+    /// <summary>True once the final manifest chunk has arrived.</summary>
+    public bool ManifestComplete { get; private set; }
+
+    /// <summary>What the server said to expect, for comparison against what arrived.</summary>
+    public int ManifestExpected { get; private set; }
+
+    void OnKeyManifest(AssistKeyManifest msg)
+    {
+        if (msg.Keys != null)
+        {
+            foreach (long key in msg.Keys) RemoteKeys.Add(key);
+        }
+
+        if (!msg.Last) return;
+
+        ManifestComplete = true;
+        // Announced count vs received count: a mismatch means keys were captured or
+        // evicted mid-send, which is expected on a live server and worth seeing rather
+        // than silently tolerating once transfer starts trusting this set.
+        logger.Notification(
+            "VintageHorizons: server key manifest complete — {0} keys received{1}",
+            RemoteKeys.Count,
+            ManifestExpected > 0 && ManifestExpected != RemoteKeys.Count
+                ? $" (server announced {ManifestExpected})" : "");
+    }
+
     /// <summary>Reset for the next world; the channel itself outlives the join.</summary>
     public void Reset()
     {
         NegotiatedProtocol = 0;
         Status = "not connected yet";
+        RemoteKeys.Clear();
+        ManifestComplete = false;
+        ManifestExpected = 0;
     }
 }
