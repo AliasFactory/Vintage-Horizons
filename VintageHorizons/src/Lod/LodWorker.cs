@@ -94,9 +94,30 @@ public class LodWorker : IDisposable
     public readonly ConcurrentQueue<CaptureResult> CaptureResults = new();
     public readonly ConcurrentQueue<MeshResult> MeshResults = new();
 
-    readonly AutoResetEvent signal = new(false);
-    readonly Thread thread;
+    /// <summary>Wakes the capture thread. One job, one thread, so auto-reset is right.</summary>
+    readonly AutoResetEvent captureSignal = new(false);
+
+    /// <summary>
+    /// One permit per queued mesh job, so N waiting threads wake for N jobs. An
+    /// AutoResetEvent would wake exactly one however many were queued.
+    /// </summary>
+    readonly SemaphoreSlim meshSignal = new(0);
+
+    readonly Thread captureThread;
+    readonly Thread[] meshThreads;
     volatile bool running = true;
+
+    /// <summary>
+    /// Mesh builders. Meshing reads only immutable SectionSnapshots — the reason the
+    /// snapshot discipline exists — so it parallelises with no locking. Capture does not
+    /// get the same treatment: it reads live IWorldChunk objects the engine owns, and
+    /// multiplying that by a thread count multiplies the risk for no comparable gain.
+    ///
+    /// Leaves two cores for the game's own render and simulation threads.
+    /// </summary>
+    static int MeshThreadCount => Math.Clamp(Environment.ProcessorCount - 2, 1, 4);
+
+    public int MeshThreads => meshThreads.Length;
 
     public int PendingCaptures => captureJobs.Count;
     public int PendingMeshes => meshJobs.Count;
@@ -110,65 +131,86 @@ public class LodWorker : IDisposable
 
     public LodWorker()
     {
-        thread = new Thread(Loop)
+        captureThread = new Thread(CaptureLoop)
         {
-            Name = "vintagehorizons-worker",
+            Name = "vintagehorizons-capture",
             IsBackground = true,
             Priority = ThreadPriority.BelowNormal,
         };
-        thread.Start();
+        captureThread.Start();
+
+        meshThreads = new Thread[MeshThreadCount];
+        for (int i = 0; i < meshThreads.Length; i++)
+        {
+            meshThreads[i] = new Thread(MeshLoop)
+            {
+                Name = "vintagehorizons-mesh-" + i,
+                IsBackground = true,
+                Priority = ThreadPriority.BelowNormal,
+            };
+            meshThreads[i].Start();
+        }
     }
 
     public void EnqueueCapture(CaptureJob job)
     {
         captureJobs.Enqueue(job);
-        signal.Set();
+        captureSignal.Set();
     }
 
     public void EnqueueMesh(MeshJob job)
     {
         meshJobs.Enqueue(job);
-        signal.Set();
+        meshSignal.Release();
     }
 
-    void Loop()
+    // Separate loops, not one. The old shared loop drained EVERY queued capture before
+    // taking a single mesh job, so exploring — which is exactly when new terrain most needs
+    // drawing — starved meshing and left coarse parents on screen for minutes.
+
+    void CaptureLoop()
     {
         while (running)
         {
             bool didWork = false;
-
-            while (captureJobs.TryDequeue(out CaptureJob? cjob))
+            while (captureJobs.TryDequeue(out CaptureJob? job))
             {
                 didWork = true;
                 try
                 {
-                    CaptureResult? result = Capture(cjob);
+                    CaptureResult? result = Capture(job);
                     if (result != null) CaptureResults.Enqueue(result);
                 }
                 catch (Exception e)
                 {
                     // Chunk disposed mid-read or similar; the column re-enqueues on its next ChunkDirty.
                     Interlocked.Increment(ref CaptureErrors);
-                    FirstCaptureError ??= e.ToString();
+                    Interlocked.CompareExchange(ref FirstCaptureError, e.ToString(), null);
                 }
             }
 
-            if (meshJobs.TryDequeue(out MeshJob? mjob))
+            if (!didWork) captureSignal.WaitOne(250);
+        }
+    }
+
+    void MeshLoop()
+    {
+        while (running)
+        {
+            // Timed wait rather than indefinite, so shutdown never depends on a permit.
+            if (!meshSignal.Wait(250)) continue;
+            if (!meshJobs.TryDequeue(out MeshJob? job)) continue;
+
+            try
             {
-                didWork = true;
-                try
-                {
-                    MeshResults.Enqueue(LodMesher.BuildMesh(mjob));
-                }
-                catch (Exception e)
-                {
-                    // Snapshot inconsistency; section will re-mesh on its next change.
-                    Interlocked.Increment(ref MeshErrors);
-                    FirstMeshError ??= e.ToString();
-                }
+                MeshResults.Enqueue(LodMesher.BuildMesh(job));
             }
-
-            if (!didWork) signal.WaitOne(250);
+            catch (Exception e)
+            {
+                // Snapshot inconsistency; section will re-mesh on its next change.
+                Interlocked.Increment(ref MeshErrors);
+                Interlocked.CompareExchange(ref FirstMeshError, e.ToString(), null);
+            }
         }
     }
 
@@ -251,8 +293,13 @@ public class LodWorker : IDisposable
     public void Dispose()
     {
         running = false;
-        signal.Set();
-        thread.Join(2000);
-        signal.Dispose();
+        captureSignal.Set();
+        meshSignal.Release(meshThreads.Length);
+
+        captureThread.Join(2000);
+        foreach (Thread t in meshThreads) t.Join(2000);
+
+        captureSignal.Dispose();
+        meshSignal.Dispose();
     }
 }

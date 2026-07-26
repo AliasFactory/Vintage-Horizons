@@ -23,7 +23,14 @@ public class LodTerrainRenderer : IRenderer
 
     const int MeshSchedulesPerFrame = 4;
     const int MeshUploadsPerFrame = 4;
-    const int MaxWorkerMeshBacklog = 12;
+    /// <summary>
+    /// Queue depth allowed at the mesh workers. Per thread, not absolute: a fixed 12 was
+    /// sized for one builder and would leave a four-thread pool idling three quarters of
+    /// the time. Deep enough that a thread finishing a job always has another waiting,
+    /// shallow enough that the queue does not outlive the view that asked for it.
+    /// </summary>
+    const int MeshBacklogPerThread = 4;
+    int maxWorkerMeshBacklog;
 
     /// <summary>Reload requests per frame; only enqueues a key, so it can far exceed the mesh budget.</summary>
     const int MeshLoadRequestsPerFrame = 32;
@@ -136,6 +143,7 @@ public class LodTerrainRenderer : IRenderer
         this.world = world;
         this.worker = worker;
         this.tints = tints;
+        maxWorkerMeshBacklog = worker.MeshThreads * MeshBacklogPerThread;
 
         capi.Event.ReloadShader += LoadShader;
         LoadShader();
@@ -412,7 +420,7 @@ public class LodTerrainRenderer : IRenderer
 
     void ScheduleMeshJobs()
     {
-        if (world.RenderDirty.Count == 0 || worker.PendingMeshes >= MaxWorkerMeshBacklog) return;
+        if (world.RenderDirty.Count == 0 || worker.PendingMeshes >= maxWorkerMeshBacklog) return;
 
         // Two budgets. Starting a background reload costs this thread almost nothing
         // (enqueue a key), whereas building a mesh snapshot is real work, so charging a
