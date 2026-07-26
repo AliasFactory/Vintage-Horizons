@@ -404,10 +404,18 @@ being wrong.
    `EnableServing: false` → client reports "this server has a LOD cache but is not sharing
    it" and fetches nothing. 0 errors on either side throughout.
 
-Singleplayer is not a special case of this but it is the biggest early payoff:
-the integrated server loads the server side and the channel connects in-process
-(measured, §10.11), so once stage 2 lands a solo world gets every chunk it has ever
-generated without any networking involved.
+Singleplayer is **excluded**, and the earlier claim that it was the biggest early payoff
+was wrong. The integrated server does load the server side and the channel does connect
+in-process (§10.11) — but capture is driven by chunks loading, and in one process the
+server loads exactly the chunks the client is already shown, so a second pipeline
+duplicates the cache file, the work and the memory for nothing. Found live: two
+"LOD cache:" lines naming one database and a manifest of 3851 keys the host already had.
+Server capture now requires `api.Server.IsDedicated`, and the server cache carries a
+`-server` filename suffix so the collision cannot recur silently.
+
+What would genuinely pay in singleplayer is sweeping the savegame for chunks generated in
+past sessions — terrain the client has no other way to see. That is unbuilt, and is the
+real form of the payoff this section originally over-claimed.
 
 Running real worldgen on demand is explicitly not in scope: it is the expensive half of
 what the server-side mods do, and doing without it is what keeps the assist cheap enough

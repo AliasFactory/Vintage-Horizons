@@ -120,14 +120,21 @@ public class LodPipeline
     /// Open (or create) the LOD cache for the current world and adopt its key set.
     /// Failing to open is not fatal: capture and rendering work without persistence.
     /// </summary>
-    public void Open(string subdir)
+    /// <param name="subdir">ModData-relative directory for the cache file.</param>
+    /// <param name="suffix">
+    /// Appended to the world key. Belt and braces after a real bug: client and server
+    /// resolve the same ModData path from the same savegame identifier, so in one process
+    /// they opened one file through two connections. Naming them apart means that class of
+    /// mistake cannot silently corrupt a cache even if the two ever coexist again.
+    /// </param>
+    public void Open(string subdir, string suffix = "")
     {
         string worldKey = api.World.SavegameIdentifier;
         if (string.IsNullOrEmpty(worldKey)) worldKey = "seed-" + api.World.Seed;
         worldKey = Regex.Replace(worldKey, "[^A-Za-z0-9_-]", "_");
 
         string dir = api.GetOrCreateDataPath(subdir);
-        string dbPath = Path.Combine(dir, worldKey + ".db");
+        string dbPath = Path.Combine(dir, worldKey + suffix + ".db");
 
         var newStore = new LodStore(logger);
         if (!newStore.Open(dbPath))

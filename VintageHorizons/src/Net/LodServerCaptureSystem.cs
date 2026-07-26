@@ -11,13 +11,12 @@ namespace VintageHorizons.Net;
 /// generates rather than by ones a player receives, so the cache accumulates terrain from
 /// everybody's travels instead of one player's.
 ///
-/// Nothing reads this yet — section transfer is a later stage. Landing it first means the
-/// database exists before there is a protocol to serve it over, which is the order the
-/// dependency actually runs in: a key manifest cannot list what has never been captured.
+/// Dedicated servers only. In singleplayer the client side of this same process already
+/// captures every chunk that loads, so a second pipeline would duplicate the cache file,
+/// the work and the memory for nothing — see StartServerSide.
 ///
-/// Deliberately not merged into <see cref="LodAssistServerSystem"/>: capture is useful on
-/// its own (a singleplayer world builds one with no networking involved at all), and the
-/// handshake has to keep answering even when capture is switched off.
+/// Deliberately not merged into <see cref="LodAssistServerSystem"/>: the handshake has to
+/// keep answering, and answer honestly, even when capture is off or skipped.
 /// </summary>
 public class LodServerCaptureSystem : ModSystem
 {
@@ -80,6 +79,25 @@ public class LodServerCaptureSystem : ModSystem
             return;
         }
 
+        // Singleplayer (and LAN-hosted) worlds run client and integrated server in one
+        // process, sharing one data path — so both pipelines would open the SAME cache
+        // file for the same savegame, double every capture, and hold two copies of the
+        // section pyramid in RAM. Observed live: two "LOD cache:" lines naming one file,
+        // and a manifest of 3851 keys the client already had, every one of them redundant.
+        //
+        // There is also nothing to gain. Capture is driven by chunks loading, and in one
+        // process the server loads exactly the chunks the client is shown. Serving the
+        // host its own data back is pure overhead. What WOULD pay here is sweeping the
+        // savegame for chunks generated in past sessions, which this does not yet do.
+        if (!api.Server.IsDedicated)
+        {
+            Mod.Logger.Notification(
+                "Singleplayer or LAN-hosted world: skipping server LOD capture. The client "
+                + "side already captures everything this process loads, and running both "
+                + "would duplicate the cache, the work and the memory for no gain.");
+            return;
+        }
+
         // A server has no texture atlas, so it cannot compute a palette colour at all
         // (Block.GetColorWithoutTint takes ICoreClientAPI). Sections are written
         // colour-unresolved and the receiving client fills colour in, which it can do
@@ -94,7 +112,7 @@ public class LodServerCaptureSystem : ModSystem
 
     void OnRunGame()
     {
-        pipeline!.Open("ModData/vintagehorizons");
+        pipeline!.Open("ModData/vintagehorizons", "-server");
 
         sapi.Event.ChunkColumnLoaded += OnChunkColumnLoaded;
         sapi.Event.DidBreakBlock += (_, _, blockSel) => QueueAt(blockSel?.Position);
