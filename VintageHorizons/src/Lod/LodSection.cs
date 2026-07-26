@@ -24,14 +24,11 @@ public struct LodPaletteEntry
     public byte TintSlot;
 
     public const byte FlagWater = 1;
-    public const byte FlagTintGrass = 2;   // legacy: superseded by TintSlot
-    public const byte FlagTintFoliage = 4; // legacy: superseded by TintSlot
+    // Bits 2 and 4 are free: they held tint classes, now superseded by TintSlot.
 
     /// <summary>
-    /// Decorative ground cover (flowers, tall grass, ferns). Vanilla draws these as thin
-    /// crossed quads; an LOD column would turn each into a solid 1-block cube coloured by
-    /// its texture average, which is mostly transparent pixels and comes out pale grey —
-    /// a field of flowers became a field of grey blocks. Dropped so the ground shows.
+    /// Not terrain at all (fire, meta markers): dropped at capture so it never becomes
+    /// geometry. Thin ground cover is NOT skipped — see FlagThin.
     /// </summary>
     public const byte FlagSkip = 8;
 
@@ -111,16 +108,15 @@ public class LodSection
     /// Drop every run whose palette entry carries <paramref name="flag"/>, rebuilding the
     /// run storage. Applied after a section is loaded so terrain already in the cache is
     /// corrected in place — no re-exploration, no cache wipe.
-    /// Returns true if anything was removed.
     /// </summary>
-    public bool RemoveRunsWithFlag(byte flag)
+    public void RemoveRunsWithFlag(byte flag)
     {
         bool anyFlagged = false;
         for (int i = 0; i < Palette.Count; i++)
         {
             if ((Palette[i].Flags & flag) != 0) { anyFlagged = true; break; }
         }
-        if (!anyFlagged) return false;
+        if (!anyFlagged) return;
 
         int total = GridSize * GridSize;
         var nextRuns = new ulong[Runs.Length];
@@ -142,7 +138,6 @@ public class LodSection
         Array.Resize(ref nextRuns, offset);
         Runs = nextRuns;
         ColumnStart = nextStart;
-        return true;
     }
 
     /// <summary>

@@ -147,8 +147,9 @@ public class VintageHorizonsModSystem : ModSystem
             if (result.Section != null && store != null)
             {
                 store.ResolvePendingPalette(result.Section, capi.World);
-                // Cached sections predate skipping decorative plants; drop those runs so
-                // old terrain loses its grey flower cubes without being re-explored.
+                // Reclassify has just refreshed flags from the live blocks, so this drops
+                // runs for anything that is no longer terrain (fire, meta) from sections
+                // captured under an older policy, without needing a re-explore.
                 result.Section.RemoveRunsWithFlag(LodPaletteEntry.FlagSkip);
             }
             world.InstallLoaded(result.Key, result.Section);
@@ -247,9 +248,8 @@ public class VintageHorizonsModSystem : ModSystem
     }
 
     /// <summary>
-    /// Translucency only. Which tint applies is a separate question answered by
-    /// LodTintRegistry: water, leaves and grass all carry colour maps, but water also
-    /// has to be drawn see-through.
+    /// How a block is drawn, or whether it is drawn at all. Which tint applies is a
+    /// separate question answered by LodTintRegistry.
     /// </summary>
     static byte FlagsFor(Block block)
     {
@@ -268,10 +268,7 @@ public class VintageHorizonsModSystem : ModSystem
             return LodPaletteEntry.FlagThin;
         }
 
-        // Only things that are not terrain at all. Plants are deliberately NOT skipped:
-        // dropping ground cover flattened the landscape into cartoonish blocks of solid
-        // colour, and the greyness that prompted it was really a missing tint — plants
-        // carry climatePlantTint, which the tint-slot table now applies.
+        // Not terrain at all, so it never becomes geometry.
         if (block.BlockMaterial is EnumBlockMaterial.Fire or EnumBlockMaterial.Meta)
         {
             return LodPaletteEntry.FlagSkip;
@@ -497,7 +494,7 @@ public class VintageHorizonsModSystem : ModSystem
         store = newStore;
         newStore.ClassifyBlock = blockId =>
         {
-            Block? block = blockId > 0 && blockId < capi.World.Blocks.Count ? capi.World.Blocks[blockId] : null;
+            Block? block = blockId > 0 ? capi.World.GetBlock(blockId) : null;
             return block == null ? ((byte)0, (byte)0) : (FlagsFor(block), (byte)tints.SlotFor(block));
         };
         storageThread = new LodStorageThread(newStore);

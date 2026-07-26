@@ -269,14 +269,6 @@ public class LodWorld
 
         foreach (long childKey in batch)
         {
-            if (KeyLevel(childKey) >= MaxLevel)
-            {
-                // Nothing above to absorb it; just clear the pending flag.
-                MipDirty.Remove(childKey);
-                SaveDirty.Add(childKey);
-                continue;
-            }
-
             // Both sides must be in RAM before the flag may be cleared. Clearing it
             // while a section is still on disk would drop the propagation on the
             // floor, so a section awaiting a reload simply stays pending and is
@@ -304,27 +296,13 @@ public class LodWorld
     /// caller may proceed. False means a background reload was started and the caller
     /// must leave its pending work alone and retry later.
     ///
-    /// This is how the two integrity-critical paths (capture merge and mip
-    /// propagation) avoid blocking the frame on a decompress without ever creating an
-    /// empty section that would shadow — and then overwrite — a stored row.
+    /// This is how mip propagation avoids blocking the frame on a decompress without
+    /// ever creating an empty section that would shadow -- and then overwrite -- a
+    /// stored row. It is TryGetForRender's policy with one difference: a key with
+    /// nothing to load is "proceed" here, rather than "no mesh".
     /// </summary>
-    public bool EnsureResident(long key)
-    {
-        if (Sections.ContainsKey(key)) return true;
-
-        // No stored row (or a read that already came back empty): proceed, and let the
-        // normal empty-section handling deal with it.
-        if (!HasDataSet.Contains(key) || LoadFailed.Contains(key)) return true;
-
-        if (RequestAsyncLoad == null)
-        {
-            TryGetOrLoad(key, out _); // no storage thread this session; inline is all we have
-            return true;
-        }
-
-        if (LoadsInFlight.Add(key)) RequestAsyncLoad(key);
-        return false;
-    }
+    public bool EnsureResident(long key) =>
+        TryGetForRender(key, out _) || !LoadsInFlight.Contains(key);
 
     public string DescribeLevels()
     {

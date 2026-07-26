@@ -25,6 +25,17 @@ uniform float farViewDistance;
 uniform vec4 openEdges;
 uniform float sectionSize;
 
+// Tint is resolved per VERTEX, not per fragment: the slot is constant across a quad
+// and the altitude blend is linear in height, so interpolating the result is
+// equivalent and saves two indexed uniform-array lookups per fragment.
+// Must equal LodTintRegistry.MaxSlots; LoadShader logs an error if it does not.
+const int TINT_SLOTS = 64;
+uniform vec4 tintsLow[TINT_SLOTS];
+uniform vec4 tintsHigh[TINT_SLOTS];
+uniform float tintYLow;
+uniform float tintYHigh;
+
+out vec3 tint;
 out vec4 worldPos;
 out vec4 vertexColor;
 out float yLevel;
@@ -44,12 +55,18 @@ void main()
     yLevel = vertexPositionIn.y;
     vertexColor = vertexColorIn;
 
+    int slotRaw = int(vertexColorIn.a * 255.0 + 0.5);
+    int slot = clamp(slotRaw - (slotRaw / TINT_SLOTS) * TINT_SLOTS, 0, TINT_SLOTS - 1);
+    float tintBlend = clamp((yLevel - tintYLow) / max(1.0, tintYHigh - tintYLow), 0.0, 1.0);
+    tint = mix(tintsLow[slot].rgb, tintsHigh[slot].rgb, tintBlend);
+
     worldPos = modelMatrix * vec4(vertexPositionIn, 1.0);
     worldPos = applyGlobalWarping(worldPos);
 
     // 0 at the start of the LOD band (inside vanilla terrain), 1 at the far edge
     float distStart = viewDistance * 0.785;
-    dist = (length(worldPos.xz) - distStart) / (farViewDistance - distStart - 512.0);
+    float radial = length(worldPos.xz);
+    dist = (radial - distStart) / (farViewDistance - distStart - 512.0);
 
     // Sink LOD terrain into the ground near the transition ring so the seam with real
     // chunks reads as terrain, not a floating shelf.
@@ -65,7 +82,7 @@ void main()
     // is not something the eye can catch.
     const float SINK_DEPTH = 5.0;
     const float SINK_FADE_BLOCKS = 110.0;
-    float intoBand = length(worldPos.xz) - distStart;
+    float intoBand = radial - distStart;
     worldPos.y -= SINK_DEPTH * (1.0 - smoothstep(0.0, SINK_FADE_BLOCKS, intoBand));
 
     // Distance into the section from each open side, as a 0..1 ramp over the outer

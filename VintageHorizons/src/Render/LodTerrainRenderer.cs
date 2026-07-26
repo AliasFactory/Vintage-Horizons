@@ -73,28 +73,6 @@ public class LodTerrainRenderer : IRenderer
     readonly LodFrustum frustum = new();
     int worldHeight = 1024;
 
-    // Per-phase render-thread cost. The benchmark showed worst-1% frames at 13.7ms
-    // against vanilla's 2.5ms, so the question is which phase spends it -- guessing
-    // has been wrong twice already.
-    readonly System.Diagnostics.Stopwatch phaseClock = new();
-    public double MsUploadMax { get; private set; }
-    public double MsEvictMax { get; private set; }
-    public double MsScheduleMax { get; private set; }
-    public double MsWalkMax { get; private set; }
-    public double MsDrawMax { get; private set; }
-    public double MsFrameMax { get; private set; }
-
-    public void ResetPhaseStats()
-    {
-        MsUploadMax = MsEvictMax = MsScheduleMax = MsWalkMax = MsDrawMax = MsFrameMax = 0;
-    }
-
-    double Lap()
-    {
-        double ms = phaseClock.Elapsed.TotalMilliseconds;
-        phaseClock.Restart();
-        return ms;
-    }
 
     public string DescribeDrawnLevels()
     {
@@ -104,6 +82,7 @@ public class LodTerrainRenderer : IRenderer
     }
 
     readonly LodTintRegistry tints;
+    int uploadedTintVersion = -1;
 
     public LodTerrainRenderer(ICoreClientAPI capi, LodWorld world, LodWorker worker, LodTintRegistry tints)
     {
@@ -122,11 +101,23 @@ public class LodTerrainRenderer : IRenderer
     {
         prog = capi.Shader.NewShaderProgram();
         prog.AssetDomain = "vintagehorizons";
+
         prog.VertexShader = capi.Shader.NewShader(EnumShaderType.VertexShader);
         prog.FragmentShader = capi.Shader.NewShader(EnumShaderType.FragmentShader);
 
         capi.Shader.RegisterFileShaderProgram("lodterrain", prog);
 
+        // The shaders carry their own `const int TINT_SLOTS`, because this game version
+        // exposes no way to inject a #define. A mismatch would decode water as opaque and
+        // thin plants as water with no compile error, so fail loudly instead of quietly.
+        if (LodTintRegistry.MaxSlots != LodTintRegistry.GlslTintSlots)
+        {
+            capi.Logger.Error("[VintageHorizons] MaxSlots ({0}) != TINT_SLOTS in lodterrain shaders ({1}); "
+                + "update both or terrain colours and transparency will be wrong",
+                LodTintRegistry.MaxSlots, LodTintRegistry.GlslTintSlots);
+        }
+
+        uploadedTintVersion = -1; // fresh program object: uniform state is gone
         shaderOk = prog.Compile();
         if (!shaderOk) capi.Logger.Error("[VintageHorizons] lodterrain shader failed to compile; LOD rendering disabled");
         return shaderOk;
@@ -242,10 +233,10 @@ public class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
-    /// Refresh the live seasonal tints and snow line (~every 4s). Tints come from
-    /// applying the game's climate/season color maps to pure white at the player's
-    /// position; the snow line extrapolates the local temperature lapse rate to the
-    /// altitude where it hits freezing.
+    /// Refresh the live tint table and snow line (~every 4s). Each tint slot is sampled
+    /// at two altitudes and interpolated per vertex, because the climate maps are keyed
+    /// by temperature and temperature falls with height; the snow line extrapolates the
+    /// same lapse rate to where it hits freezing.
     /// </summary>
     void RefreshSeasonalState()
     {
@@ -253,13 +244,12 @@ public class LodTerrainRenderer : IRenderer
         lastSeasonRefreshFrame = frameCounter;
 
         int px = (int)camPos.X;
-        int py = (int)camPos.Y;
         int pz = (int)camPos.Z;
 
         // Every registered colour-map pair at once: leaves are per species (oak turns
         // while pine stays green) and water has its own map, so one shared foliage tint
         // was never going to be right.
-        tints.Refresh(capi.World, px, py, pz);
+        tints.Refresh(capi.World, px, pz);
 
         try
         {
@@ -487,19 +477,10 @@ public class LodTerrainRenderer : IRenderer
         camPos = capi.World.Player.Entity.CameraPos;
         frameCounter++;
 
-        var frameClock = System.Diagnostics.Stopwatch.StartNew();
-        phaseClock.Restart();
-
         PruneRenderDirty();
         ScheduleMeshJobs();
-        if (Lap() is double msSched && msSched > MsScheduleMax) MsScheduleMax = msSched;
-
         UploadFinishedMeshes();
-        if (Lap() is double msUp && msUp > MsUploadMax) MsUploadMax = msUp;
-
         EvictStaleMeshes();
-        if (Lap() is double msEv && msEv > MsEvictMax) MsEvictMax = msEv;
-
         RefreshSeasonalState();
         if (sectionMeshes.Count == 0 && waterMeshes.Count == 0) return;
 
@@ -513,14 +494,11 @@ public class LodTerrainRenderer : IRenderer
         UpdateEffectiveFarDistance(viewDistance);
         ApplyZFar();
 
-        phaseClock.Restart();
         drawList.Clear();
         foreach (long top in world.TopLevelKeys) CollectDrawNodes(top);
         LastDrawCount = drawList.Count;
-        if (Lap() is double msWalk && msWalk > MsWalkMax) MsWalkMax = msWalk;
         if (drawList.Count == 0) return;
 
-        phaseClock.Restart();
         prog.Use();
         rapi.GlDisableCullFace();
 
@@ -544,10 +522,16 @@ public class LodTerrainRenderer : IRenderer
         prog.Uniform("viewDistance", viewDistance);
         prog.Uniform("farViewDistance", EffectiveFarDistance);
 
-        prog.Uniforms4("tintsLow", LodTintRegistry.MaxSlots, tints.TintsLow);
-        prog.Uniforms4("tintsHigh", LodTintRegistry.MaxSlots, tints.TintsHigh);
-        prog.Uniform("tintYLow", tints.SampleYLow);
-        prog.Uniform("tintYHigh", tints.SampleYHigh);
+        // Uniforms persist in the program between Use() calls, so re-upload only when
+        // the table actually changed (every ~240 frames) rather than every frame.
+        if (uploadedTintVersion != tints.Version)
+        {
+            uploadedTintVersion = tints.Version;
+            prog.Uniforms4("tintsLow", LodTintRegistry.MaxSlots, tints.TintsLow);
+            prog.Uniforms4("tintsHigh", LodTintRegistry.MaxSlots, tints.TintsHigh);
+            prog.Uniform("tintYLow", tints.SampleYLow);
+            prog.Uniform("tintYHigh", tints.SampleYHigh);
+        }
         prog.Uniform("snowLineY", snowLineY);
 
         float cullDistSq = float.MaxValue;
@@ -579,10 +563,6 @@ public class LodTerrainRenderer : IRenderer
 
         rapi.GlEnableCullFace();
         prog.Stop();
-
-        if (Lap() is double msDraw && msDraw > MsDrawMax) MsDrawMax = msDraw;
-        double msFrame = frameClock.Elapsed.TotalMilliseconds;
-        if (msFrame > MsFrameMax) MsFrameMax = msFrame;
     }
 
     bool SetupSectionTransform(long key, float cullDistSq)

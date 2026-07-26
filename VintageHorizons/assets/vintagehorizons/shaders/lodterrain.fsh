@@ -12,6 +12,7 @@ in vec4 rgbaFog;
 in float dist;
 in float fogAmount;
 in float edgeFade;
+in vec3 tint;
 
 uniform float fogDensityIn;
 uniform float fogMinIn;
@@ -30,11 +31,8 @@ uniform float dayLight;
 // Sampled at two heights and blended by vertex height: the climate maps are indexed
 // by temperature, which drops with altitude, so one sample at the player's feet gave
 // mountaintops the same lush green as the valley floor.
+// Must equal LodTintRegistry.MaxSlots; LoadShader logs an error if it does not.
 const int TINT_SLOTS = 64;
-uniform vec4 tintsLow[TINT_SLOTS];
-uniform vec4 tintsHigh[TINT_SLOTS];
-uniform float tintYLow;
-uniform float tintYHigh;
 uniform float snowLineY;
 
 // Blend factors per band, now that alpha carries the slot instead of an opacity.
@@ -75,14 +73,11 @@ void main()
     float shade = 0.55 + 0.45 * sunAngle;
 
     // Decode the tint slot, then snow line on up-facing terrain.
-    float aByte = vertexColor.a * 255.0;
-    int slotRaw = int(aByte + 0.5);
-    int band = slotRaw / TINT_SLOTS;          // 0 opaque, 1 water, 2 thin plant
+    // Only the blend band is needed here; the tint itself arrives interpolated.
+    int band = int(vertexColor.a * 255.0 + 0.5) / TINT_SLOTS;  // 0 opaque, 1 water, 2 thin
     bool translucent = band > 0;
-    int slot = clamp(slotRaw - band * TINT_SLOTS, 0, TINT_SLOTS - 1);
 
-    float tintBlend = clamp((yLevel - tintYLow) / max(1.0, tintYHigh - tintYLow), 0.0, 1.0);
-    vec3 albedo = vertexColor.rgb * mix(tintsLow[slot].rgb, tintsHigh[slot].rgb, tintBlend);
+    vec3 albedo = vertexColor.rgb * tint;
     float outAlpha = band == 2 ? THIN_ALPHA : (band == 1 ? WATER_ALPHA : 1.0);
 
     if (!translucent) {

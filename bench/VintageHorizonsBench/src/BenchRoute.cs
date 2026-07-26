@@ -56,5 +56,6 @@ public class BenchRoute
         return route;
     }
 
-    static float Deg(string s) => (float)(double.Parse(s, CultureInfo.InvariantCulture) * Math.PI / 180.0);
+    static float Deg(string s) =>
+        (float)double.Parse(s, CultureInfo.InvariantCulture) * Vintagestory.API.MathTools.GameMath.DEG2RAD;
 }

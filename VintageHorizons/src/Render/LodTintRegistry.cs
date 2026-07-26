@@ -32,6 +32,13 @@ public class LodTintRegistry
     /// </summary>
     public const int MaxSlots = 64;
 
+    /// <summary>
+    /// The value hardcoded as `const int TINT_SLOTS` in lodterrain.vsh/.fsh. This game
+    /// version offers no way to inject a #define, so the two are kept in step by hand
+    /// and LoadShader logs an error if they ever diverge.
+    /// </summary>
+    public const int GlslTintSlots = 64;
+
     readonly Dictionary<(string?, string?), int> slotByMaps = new();
     readonly List<Block?> representative = new();
 
@@ -44,7 +51,8 @@ public class LodTintRegistry
     readonly float[] tintsLow = new float[MaxSlots * 4];
     readonly float[] tintsHigh = new float[MaxSlots * 4];
 
-    public int SlotCount => representative.Count;
+    /// <summary>Bumped by Refresh; lets the renderer skip re-uploading unchanged tints.</summary>
+    public int Version { get; private set; }
     public float[] TintsLow => tintsLow;
     public float[] TintsHigh => tintsHigh;
 
@@ -96,10 +104,11 @@ public class LodTintRegistry
     /// Recompute every slot's colour for the current season and climate, by applying the
     /// game's own maps to white at the given position.
     /// </summary>
-    public void Refresh(IClientWorldAccessor world, int x, int y, int z)
+    public void Refresh(IClientWorldAccessor world, int x, int z)
     {
         // Span the height range terrain actually occupies around the viewer, so the
         // interpolation covers valley floor to peak rather than extrapolating.
+        Version++;
         SampleYLow = world.SeaLevel;
         SampleYHigh = world.SeaLevel + 320;
 
@@ -119,10 +128,13 @@ public class LodTintRegistry
             block.ClimateColorMapResolved, block.SeasonColorMapResolved,
             unchecked((int)0xFFFFFFFF), x, y, z);
 
-        // ApplyColorMapOnRgba flips red and blue by default, so red is the high byte.
-        into[slot * 4 + 0] = ((rgba >> 16) & 0xFF) / 255f;
-        into[slot * 4 + 1] = ((rgba >> 8) & 0xFF) / 255f;
-        into[slot * 4 + 2] = (rgba & 0xFF) / 255f;
+        // ApplyColorMapOnRgba flips red and blue by default, so red is the high byte —
+        // which is exactly what ColorUtil.ToRGBAFloats unpacks, rather than restating
+        // the engine's channel order here.
+        float[] rgbaf = Vintagestory.API.MathTools.ColorUtil.ToRGBAFloats(rgba);
+        into[slot * 4 + 0] = rgbaf[2];
+        into[slot * 4 + 1] = rgbaf[1];
+        into[slot * 4 + 2] = rgbaf[0];
         into[slot * 4 + 3] = 1f;
     }
 }

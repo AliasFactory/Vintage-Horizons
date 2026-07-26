@@ -105,10 +105,13 @@ fi
 # makes the window look stale or blank. Numbers from a watch run are NOT comparable
 # with measured runs, and are labelled to keep them out of the comparison.
 python3 - "$VH_SANDBOX/clientsettings.json" "$watch" <<'PY'
-import json, sys
+import json, os, sys
 path, watch = sys.argv[1], sys.argv[2] == "1"
-with open(path) as f:
-    cfg = json.load(f)
+# The file only exists once the client has run at least once in this sandbox.
+cfg = {}
+if os.path.exists(path):
+    with open(path) as f:
+        cfg = json.load(f)
 cfg.setdefault("intSettings", {})["vsyncMode"] = 1 if watch else 0
 cfg["intSettings"]["maxFps"] = 60 if watch else 0
 with open(path, "w") as f:
