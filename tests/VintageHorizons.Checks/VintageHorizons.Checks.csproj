@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>VintageHorizons.Checks</RootNamespace>
+    <AssemblyName>VintageHorizons.Checks</AssemblyName>
+    <!-- Never shipped. This project exists only to be run from scripts/check.sh. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <GamePath>$(VINTAGE_STORY)</GamePath>
+    <GamePath Condition="'$(GamePath)' == '' or !Exists('$(GamePath)')">$(HOME)/Games/vintagestory1.22.5</GamePath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../VintageHorizons/VintageHorizons.csproj" />
+  </ItemGroup>
+
+  <!--
+    The same game references as the mod, deliberately WITHOUT <Private>false</Private>.
+
+    The mod sets Private=false so game DLLs never land in the release zip, which also
+    keeps them out of its deps.json entirely. Nothing then puts them on the TPA list, so
+    a test host resolves nothing and throws FileNotFoundException at the first method
+    that touches a game type. References do not flow through ProjectReference either, so
+    restating them here is the minimum — copy-local puts them beside the test binary and
+    into this project's own deps.json.
+
+    Copy-local covers the direct references. It does NOT cover VintagestoryAPI's own
+    transitive dependencies (cairo-sharp, SkiaSharp, Newtonsoft.Json, OpenTK, ...), which
+    is what the resolver in Program.cs is for.
+  -->
+  <ItemGroup>
+    <Reference Include="VintagestoryAPI">
+      <HintPath>$(GamePath)/VintagestoryAPI.dll</HintPath>
+    </Reference>
+    <Reference Include="VintagestoryLib">
+      <HintPath>$(GamePath)/VintagestoryLib.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Data.Sqlite">
+      <HintPath>$(GamePath)/Lib/Microsoft.Data.Sqlite.dll</HintPath>
+    </Reference>
+    <Reference Include="protobuf-net">
+      <HintPath>$(GamePath)/Lib/protobuf-net.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

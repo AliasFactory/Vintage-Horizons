@@ -101,6 +101,7 @@ public class LodPipeline
         this.tintSlotFor = tintSlotFor ?? (_ => 0);
         World = new LodWorld();
         Worker = new LodWorker();
+        Remote = new LodRemoteKeySet(World);
     }
 
     public void ResetStorageStats()
@@ -163,8 +164,7 @@ public class LodPipeline
         // LoadsInFlight bookkeeping covers both paths unchanged.
         World.RequestAsyncLoad = key =>
         {
-            if (RemoteOnly.Contains(key)) remoteWanted.Add(key);
-            else storageThread?.RequestLoad(key);
+            if (!Remote.WantFromRemote(key)) storageThread?.RequestLoad(key);
         };
 
         World.LoadFromStore = key =>
@@ -180,7 +180,7 @@ public class LodPipeline
         };
         CachedSectionsLoaded = store.LoadAllKeys((level, sx, sz, applyToParent) =>
         {
-            localKeys.Add(LodWorld.SectionKey(level, sx, sz));
+            Remote.AddLocalKey(LodWorld.SectionKey(level, sx, sz));
             World.InstallStoredKey(level, sx, sz, applyToParent);
         });
         Active = true;
@@ -224,95 +224,28 @@ public class LodPipeline
     public int ForeignSectionsInstalled { get; private set; }
 
     /// <summary>
-    /// The remote source will not supply this key — declined, gone, or unparseable. Clears
-    /// the render path's wait on it: LodWorld.LoadsInFlight is set by TryGetForRender and
-    /// otherwise only cleared by InstallLoaded, so without this a declined key stays
-    /// "in flight" for the session, the mesh scheduler skips it, and its parent is pinned
-    /// coarse forever.
+    /// Which keys a remote source can supply and which the view is waiting on. Its own
+    /// class so the set logic can be tested without a game API — see LodRemoteKeySet.
+    /// Private, and reached only through the delegating members below: the pipeline is
+    /// the facade the mod system talks to, and two doors to the same state is how they
+    /// drift apart.
     /// </summary>
-    public void MarkRemoteUnavailable(long key)
-    {
-        RemoteOnly.Remove(key);
-        remoteWanted.Remove(key);
+    readonly LodRemoteKeySet Remote;
 
-        // Already resident (a local capture won the race): just stop waiting. Recording a
-        // load failure would block reloading it after a future RAM eviction.
-        if (World.Sections.ContainsKey(key))
-        {
-            World.LoadsInFlight.Remove(key);
-            return;
-        }
+    /// <inheritdoc cref="LodRemoteKeySet.RemoteOnly"/>
+    public HashSet<long> RemoteOnly => Remote.RemoteOnly;
 
-        World.InstallLoaded(key, null);
-    }
+    /// <inheritdoc cref="LodRemoteKeySet.MarkUnavailable"/>
+    public void MarkRemoteUnavailable(long key) => Remote.MarkUnavailable(key);
 
-    /// <summary>
-    /// Keys only a remote source has. Kept separate from HasDataSet so the loader can tell
-    /// "evicted from RAM, still on disk" from "never been on this disk".
-    /// </summary>
-    public readonly HashSet<long> RemoteOnly = new();
+    /// <inheritdoc cref="LodRemoteKeySet.AddRemoteKeys"/>
+    public int AddRemoteKeys(IEnumerable<long> keys) => Remote.AddRemoteKeys(keys);
 
-    /// <summary>
-    /// Keys this store actually holds a row for, as reported by LoadAllKeys. Distinct from
-    /// LodWorld.HasDataSet, which also holds ancestors synthesised for quadtree descent and
-    /// so cannot answer "can local disk supply this?".
-    /// </summary>
-    readonly HashSet<long> localKeys = new();
+    /// <inheritdoc cref="LodRemoteKeySet.Wanted"/>
+    public long[] RemoteWanted() => Remote.Wanted();
 
-    readonly HashSet<long> remoteWanted = new();
-
-    /// <summary>
-    /// Register keys a remote source offers. Only those with no local data become
-    /// remote-only; anything already on disk stays a local read, because local wins.
-    /// </summary>
-    public int AddRemoteKeys(IEnumerable<long> keys)
-    {
-        int added = 0;
-        foreach (long key in keys)
-        {
-            // Against localKeys, NOT HasDataSet. HasDataSet also contains every ancestor
-            // that RegisterInTree synthesised while registering a finer key, so testing it
-            // skipped coarse keys the server really could serve — whichever of a node and
-            // its descendants happened to be processed first decided the other's fate.
-            // Those keys stayed out of RemoteOnly, routed to a local store with no such
-            // row, came back null, and were recorded in LoadFailed, which is permanent.
-            // Observed as nodes drawn at L5 with two children "load-failed" and the
-            // pipeline idle: terrain that could never resolve, at any distance.
-            if (localKeys.Contains(key)) continue;
-            if (!RemoteOnly.Add(key)) continue;
-
-            // A key poisoned by that bug, or by an earlier miss before the manifest
-            // arrived, has to be given back its chance now that a source exists.
-            World.LoadFailed.Remove(key);
-            World.LoadsInFlight.Remove(key);
-
-            // Into the quadtree skeleton too, or descent will not even consider the key
-            // and nothing would ever ask for it. Same call the local key scan uses, minus
-            // the mip flag: the server's pyramid is already built, so nothing is pending.
-            World.InstallStoredKey(LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key),
-                applyToParent: false);
-            added++;
-        }
-        return added;
-    }
-
-    /// <summary>
-    /// Keys the render path asked for that only a remote source has. Fetch order therefore
-    /// follows what the player can actually see.
-    /// </summary>
-    public long[] RemoteWanted() =>
-        remoteWanted.Count == 0 ? Array.Empty<long>() : remoteWanted.ToArray();
-
-    /// <summary>
-    /// Drop the keys that were actually asked for. Only these, never the whole set: a key
-    /// held back by the in-flight cap is already in LodWorld.LoadsInFlight, where the
-    /// render scheduler skips it, and forgetting it here would strand it there for the rest
-    /// of the session.
-    /// </summary>
-    public void MarkRemoteRequested(IEnumerable<long> sent)
-    {
-        foreach (long key in sent) remoteWanted.Remove(key);
-    }
+    /// <inheritdoc cref="LodRemoteKeySet.MarkRequested"/>
+    public void MarkRemoteRequested(IEnumerable<long> sent) => Remote.MarkRequested(sent);
 
     /// <summary>One step of the whole pipeline. Call once per game tick.</summary>
     public void Tick()
@@ -507,9 +440,7 @@ public class LodPipeline
 
         queuedColumns.Clear();
         pendingColumns.Clear();
-        localKeys.Clear();
-        RemoteOnly.Clear();
-        remoteWanted.Clear();
+        Remote.Clear();
         // Results for the world we are leaving must not be applied to the next one.
         while (Worker.CaptureResults.TryDequeue(out _)) { }
         World.Clear();

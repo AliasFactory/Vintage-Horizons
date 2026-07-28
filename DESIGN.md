@@ -531,3 +531,163 @@ a log line, not a dialog.
 **Do not ship `side: Universal` before stage 3.** It changes how the mod is categorised
 (and filtered for) on ModDB while delivering nothing to a player yet. The switch belongs
 in the release that actually serves terrain.
+
+## 12. The test regimen
+
+Every correctness claim above was originally established by a hand-executed sandbox run,
+read off `.vhinfo` counters, and written into a commit message. Those runs were not
+repeatable without a human driving them, so nothing re-checked them. `scripts/check.sh` is
+the standing version: three tiers, cheapest first, stopping at the first failure.
+
+**There can be no CI.** Building requires the Vintage Story assemblies from a local game
+install and those are not redistributable, so no hosted runner can compile this repo. The
+regimen is local-only by necessity, not by preference.
+
+### 12.1 Tiers
+
+| tier | time | proves |
+| --- | --- | --- |
+| `fast` | ~1 s | pure logic and cross-file invariants, no game process |
+| `smoke` | ~5 min | the pipeline runs end to end, cold and then warm |
+| `matrix` | ~20 min | install combinations and every admin control |
+
+`fast` is a plain console assert harness in `tests/VintageHorizons.Checks`, run with
+`dotnet run`. No test framework: this repo has no NuGet dependencies at all and none
+cached locally, so a framework would mean the fast tier could not run without a network.
+It is also sequential, which is not a limitation to work around — `LodWorld.DetailDistance`
+is a mutable static that several checks set, so sequential is the only correct order.
+
+The one thing that could have sunk the tier is assembly loading. The mod references the
+game DLLs with `Private=false` so they never travel in the release zip, which also keeps
+them out of its `deps.json` entirely — nothing puts them on the TPA list, and references
+do not flow through `ProjectReference`. The test csproj restates them without that flag,
+and `GameAssemblies` installs an `AssemblyLoadContext.Default.Resolving` handler from a
+`[ModuleInitializer]` that probes the install directly. `ProbeChecks` runs first and does
+nothing but force the two loads that can genuinely fail: `Block`, whose ~200-method vtable
+reaches furthest, and `LodStore`, which pulls in `Microsoft.Data.Sqlite` merely by
+existing.
+
+### 12.2 What the fast tier found immediately
+
+**The shader constant guard could not catch what it existed to catch.** `LodTerrainRenderer`
+compared `LodTintRegistry.MaxSlots` against `LodTintRegistry.GlslTintSlots` — two C#
+constants in the same file. `GlslTintSlots` was a hand-maintained mirror of a number that
+actually lives in `lodterrain.vsh` and `.fsh`, so editing a shader and forgetting the
+mirror left the guard passing while water decoded as opaque and thin plants decoded as
+water, with no compile error. The compiler said so plainly: that comparison raised CS0162,
+unreachable code, because both sides were compile-time constants with the same value.
+
+Both the mirror and the dead guard are now gone, and three sources of truth are two. The
+static suite reads the shader files, which is the only thing that can close it, and it
+also catches the `.vsh` and `.fsh` disagreeing with each other — which nothing did before.
+
+While there, `MaxSlots * 3 <= 256`: the mesher packs three tint bands into a byte alpha,
+so raising `MaxSlots` past 85 wraps the thin band into the opaque band silently.
+
+**A fresh install announced that it was discarding data it never had.** `PurgeOutdatedData`
+compared the stored `FormatVersion` against the schema version, and a brand new database
+has no such row — so `null != "6"` and every first-ever run logged *"LOD cache semantics
+changed; discarding old cached data"*. Found by the smoke tier on its first execution,
+because the assertion "this line must not appear" is unconditional. Now conditional on a
+version actually having been present.
+
+### 12.3 Testability changes
+
+Four, kept as small as the job allowed. `LodServerPregen.SpiralAt` and
+`LodAssistServerSystem.WithinServeRadius` became public (the latter keeping a private
+overload that does the player deref, so the mid-join no-position case keeps its own
+answer); the three `LodAssistClient` packet handlers became `internal` with
+`InternalsVisibleTo`.
+
+The fourth is `LodRemoteKeySet`, extracted from `LodPipeline`. That set logic is pure —
+it needs only a `LodWorld`, which has no constructor and no API field — but it sat behind
+a constructor that takes an `ICoreAPI` and starts five threads, so it could not be reached.
+It holds the `localKeys`-versus-`HasDataSet` distinction, the most expensive bug in the
+project's history, and it now has a regression test that fails on reintroduction.
+
+### 12.4 A check that has never gone red is not a check
+
+Each new assertion was confirmed to fail by mutating the code it guards, then reverting:
+
+| mutation | caught by |
+| --- | --- |
+| `TINT_SLOTS` 64 → 32 in the `.vsh` | 1 assertion |
+| a non-ASCII byte in a shader | the ASCII scan |
+| `localKeys` → `HasDataSet` in `AddRemoteKeys` | 7 assertions |
+| thin-mat offset measured down from the top | 3 assertions |
+| mip majority 2 → 1 | 1 assertion |
+
+The `localKeys` mutation is the one that matters: its first three failures are exactly the
+symptom that took three wrong diagnoses to find the first time.
+
+### 12.5 The serve radius, finally verified
+
+The radius cap had been measured once and never watched. It is the map-revealing control —
+sections come from wherever players have collectively been, so without it a new player
+could pull a survey of the whole explored world without travelling — and it was the one
+admin-facing setting with no verification at all.
+
+The trap is that **a bare decline count proves nothing**. A section resident in RAM but not
+yet flushed to disk is also declined, and an uncapped run was measured producing 55 of them.
+Terrain missing at distance looks identical whether the server refused it or never had it.
+So the check serves the *same pre-generated cache twice*, with the cap as the only
+difference:
+
+| | offered | installed | declined |
+| --- | --- | --- | --- |
+| uncapped (radius 0) | 806 | 633 | 55 |
+| capped (radius 512) | 446 | 274 | 415 |
+
+Same 861-key manifest both times. The cap cut delivered sections by more than half and
+raised refusals by an order of magnitude, and because the control run had the identical
+data available, that difference can only be the radius. A second independent run
+reproduced it closely — 302 installed / 386 declined capped against 629 / 46 uncapped —
+so the effect is the control, not one lucky sample.
+
+**The visual half does not work, and the honest thing is to say so rather than dress it
+up.** The check captures a screenshot pair from one vantage, capped and uncapped, and the
+images are not reproducible run to run. Three attempts, same route, same configs:
+
+- y=420 put the camera inside the cloud layer — two frames of white fog.
+- y=260, 75s settle — the capped frame showed near terrain plus a patchwork of flat coarse
+  plates, the uncapped frame showed continuous terrain. Tempting to read as the cap, but
+  the capped client was screenshotted with 348 sections resident and only 20 meshed, so
+  most of what distinguished the two frames was meshing progress.
+- y=260, 180s settle — the capped frame came back **empty**, no terrain at all, while the
+  uncapped frame showed a full landscape. A capped run cannot legitimately render less at
+  180s than it did at 75s, so something other than the radius is driving the picture.
+
+The counters, over the same three runs, were tight: 274/302/302 installed capped against
+633/629/634 uncapped. So the cap is verified and the camera is not.
+
+Two things work against a usable image and neither is cheap to fix: the game's atmospheric
+fog swallows detail well before 512 blocks at any vantage that also clears the cloud layer,
+and what the client has *fetched* is not what it has *drawn* — meshing, eviction and the
+quadtree's own descent all sit in between. **The screenshot step is therefore informational
+only.** It asserts that two captures were produced, never what is in them, and nothing
+should be concluded from the pair without reading the counters beside it.
+
+### 12.6 What tier 3 got wrong first
+
+Every scenario failure on the first full run was the harness, not the mod — which is its
+own lesson, since each one would have read as a product bug to anyone trusting the output:
+
+- **`no-client-mod` waited for a log line that does not exist.** There is no "Loaded Game"
+  in a Vintage Story client log. The marker also has to prove the join *completed*:
+  "Connected to server" appears during the handshake and so would appear on a run about to
+  be rejected. Receiving the block registry only happens after acceptance.
+- **`deferral` could never have deferred.** Farseer is `requiredOnServer`, so against the
+  vanilla server the scenario used, the client disabled it and `IsModEnabled` returned
+  false — nothing to defer to. Installing it on both sides is also the real-world shape.
+- **`deferral` waited for "Level finalized"**, which the deferring path returns before ever
+  reaching.
+- **Scenarios were not standalone.** `no-client-mod` relied on a server an earlier scenario
+  had left running, so `--only no-client-mod` got "connection refused". Every scenario now
+  starts its own.
+- **The visual vantage point was inside the cloud layer.** y=420 rendered two identical
+  frames of white fog. 260 with a -20 pitch is the same vantage as the existing
+  `high-overlook` waypoint, which is known to render terrain well past the ring distance.
+- **The server restart budget could not outlast TIME_WAIT.** `test-server.sh` retried a
+  busy port four times at 10s, and Linux holds TIME_WAIT for about 60s. That was survivable
+  for as long as every restart had a long client run in front of it; adding the uncapped
+  control meant restarting twice in a row, and the bind failed for good. Now six at 15s.

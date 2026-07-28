@@ -9,8 +9,10 @@ Three changes, each measured rather than assumed:
   same projection*view matrices the LOD shader gets, and tested at DRAW time only
   — culling inside the selection walk would evict off-screen meshes and re-mesh
   them the instant you turned around. Cull share runs 12%->59% depending on how
-  much captured data surrounds the camera. Plane math has a standalone harness
-  (behind/left/right/above/beyond-far reject; in-view cases pass).
+  much captured data surrounds the camera. Plane math is covered by the frustum
+  suite in `scripts/check.sh fast` (behind/left/right/above/beyond-far reject;
+  in-view cases pass; matrices built with the game's own `Mat4f` so the extraction's
+  column-major assumption is tested rather than assumed).
 - **Writes off the render thread.** Save batches measured 10-22ms average and
   49ms peak on the main thread — a whole 50ms tick — because serializing deflates
   ~100-300KB inline. Sections are frozen on the main thread (copies: the live
@@ -138,8 +140,12 @@ Replaces the M3 heightmap data model with the real Distant Horizons-style pipeli
 ## How to run
 
 ```sh
+scripts/check.sh                          # the standing regimen, before committing
+scripts/check.sh fast                     # pure logic and static assets only (~30s)
 scripts/dev-run.sh                        # normal
 VINTAGEHORIZONS_AUTOUNPAUSE=1 scripts/dev-run.sh   # unattended testing
 ```
 
-`.vhinfo` in chat for live stats; stats also log every 60s in auto-unpause mode.
+`.vhinfo` in chat for live stats, `.vhwhy` to explain coarse terrain. Stats also log
+every 15s when either `VINTAGEHORIZONS_AUTOUNPAUSE=1` or `VINTAGEHORIZONS_STATS=1` is
+set, and once unconditionally 30s after level finalize.

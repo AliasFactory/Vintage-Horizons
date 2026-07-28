@@ -60,13 +60,25 @@ public class LodStore : SQLiteDBConnection
 
     void PurgeOutdatedData(SqliteConnection sqliteConn)
     {
+        string? existing;
         using (var check = sqliteConn.CreateCommand())
         {
             check.CommandText = "SELECT Value FROM Meta WHERE Key='FormatVersion'";
-            if (check.ExecuteScalar() as string == SchemaVersion) return;
+            existing = check.ExecuteScalar() as string;
         }
+        if (existing == SchemaVersion) return;
 
-        logger.Notification("[VintageHorizons] LOD cache semantics changed; discarding old cached data");
+        // Only say this when a cache really did hold an older format. A brand new
+        // database has no FormatVersion row at all, so the check below is unequal on a
+        // first-ever run too — and announcing that we are discarding someone's data
+        // before they have any is alarming and untrue. The write still happens either
+        // way; it is the claim that is conditional.
+        if (existing != null)
+        {
+            logger.Notification(
+                "[VintageHorizons] LOD cache format {0} is not ours ({1}); discarding old cached data",
+                existing, SchemaVersion);
+        }
         using var cmd = sqliteConn.CreateCommand();
         cmd.CommandText = "DELETE FROM Section; INSERT OR REPLACE INTO Meta (Key, Value) VALUES ('FormatVersion', '" + SchemaVersion + "');";
         cmd.ExecuteNonQuery();

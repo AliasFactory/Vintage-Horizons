@@ -1,0 +1,24 @@
+# Route for the serve-radius verification (scripts/check-matrix.sh).
+#
+# One elevated vantage point looking out over the horizon, used twice: once with the
+# server's ServeRadiusBlocks capped and once with it unlimited. The pair is the
+# artifact — a capped run should stop at a ring, an uncapped one should not.
+#
+# The second run is what makes the first one mean anything. Terrain missing at
+# distance looks identical whether the server refused to serve it or simply never
+# had it, so the uncapped run is the control that tells those two apart.
+#
+# Height and pitch are constrained from both sides, and getting it wrong wastes a
+# whole capture run. Too low and the terrain edge hides behind the near hills; too
+# high and the camera sits inside the cloud layer and the whole frame is white fog
+# (y=420 did exactly that on the first attempt). 260 with a -20 pitch is the same
+# vantage as vhsurvival.txt's high-overlook, which is known to render terrain well
+# past the ring distance before atmospheric fog takes over.
+#
+# The cap also has to sit outside the client's own chunk streaming, which fills in
+# the first few hundred blocks regardless of what the assist does.
+#
+# Same coordinates as bench/routes/vhsurvival.txt's world (spawn near 512000,512000).
+# Keep FIXED — moving this invalidates comparison with every capture taken before.
+
+ring-overlook   512000  260  512000    0   -20

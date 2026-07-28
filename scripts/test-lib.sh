@@ -77,6 +77,36 @@ vh_launch() {
     return 0
 }
 
+# Wait for an instance to actually be gone after test-stop.sh asked it to stop.
+#
+# test-stop.sh sends SIGTERM, polls for 10s, and then deliberately gives up rather than
+# escalating to SIGKILL — the right call, because a client mid-shutdown is flushing its
+# LOD cache and killing it there is how a half-written database happens. But a client
+# with a few thousand sections to write regularly takes longer than 10s, and a caller
+# that starts the next instance immediately trips vh_guard_not_running on a pidfile that
+# is still perfectly valid.
+#
+# So: wait it out. Returns 0 once the process is gone, 1 on timeout.
+vh_wait_stopped() {
+    local pidfile="$1" timeoutSec="${2:-90}"
+    local waited=0
+
+    while [ "$waited" -lt "$timeoutSec" ]; do
+        [[ -f "$pidfile" ]] || return 0
+
+        local pid
+        pid="$(cat "$pidfile" 2>/dev/null || true)"
+        if ! vh_is_ours "$pid"; then
+            rm -f "$pidfile"
+            return 0
+        fi
+
+        sleep 2
+        waited=$((waited + 2))
+    done
+    return 1
+}
+
 # Wait for a marker to appear in a log, giving up if the process dies first (a crash
 # reporter can keep a doomed process alive well past vh_launch's liveness check, so
 # process liveness alone is not proof of a successful start).

@@ -91,7 +91,7 @@ public class LodServerPregen
     /// Index -> offset on a square spiral centred on 0,0. Walks ring by ring, so any
     /// prefix of the sequence is a filled square around spawn.
     /// </summary>
-    static (int X, int Z) SpiralAt(int i)
+    public static (int X, int Z) SpiralAt(int i)
     {
         if (i == 0) return (0, 0);
 

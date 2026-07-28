@@ -162,14 +162,12 @@ public class LodTerrainRenderer : IRenderer
         capi.Shader.RegisterFileShaderProgram("lodterrain", prog);
 
         // The shaders carry their own `const int TINT_SLOTS`, because this game version
-        // exposes no way to inject a #define. A mismatch would decode water as opaque and
-        // thin plants as water with no compile error, so fail loudly instead of quietly.
-        if (LodTintRegistry.MaxSlots != LodTintRegistry.GlslTintSlots)
-        {
-            capi.Logger.Error("[VintageHorizons] MaxSlots ({0}) != TINT_SLOTS in lodterrain shaders ({1}); "
-                + "update both or terrain colours and transparency will be wrong",
-                LodTintRegistry.MaxSlots, LodTintRegistry.GlslTintSlots);
-        }
+        // exposes no way to inject a #define, and a mismatch decodes water as opaque and
+        // thin plants as water with no compile error. That used to be guarded here by
+        // comparing MaxSlots against a hand-maintained C# mirror of the shader's value —
+        // which is two constants in one file, and so could never notice a shader being
+        // edited. The compiler agreed: the branch raised CS0162, unreachable code.
+        // The check that works reads the shader files, in the fast tier of check.sh.
 
         uploadedTintVersion = -1; // fresh program object: uniform state is gone
         shaderOk = prog.Compile();

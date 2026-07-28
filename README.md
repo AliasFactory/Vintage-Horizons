@@ -60,6 +60,32 @@ scripts/dev-run.sh              # opens/creates the "vhsurvival" test world
 scripts/dev-run.sh myworld      # a different world
 ```
 
+### Running the checks
+
+```sh
+scripts/check.sh              # all three tiers, in order (~25 min)
+scripts/check.sh fast         # pure logic and static assets, no game (~30 s)
+scripts/check.sh smoke        # one end-to-end sandbox run (~5 min)
+scripts/check.sh matrix       # install combinations and admin controls (~20 min)
+```
+
+Run `fast` constantly; it needs no game process and finishes in under a second once
+built. Run the whole thing before committing.
+
+The tiers answer different questions. `fast` covers the pure logic — key packing, the RLE
+column store, mip downsampling, the mesher's greedy merge and coverage rules, the blob
+format, frustum planes, config clamps — plus the invariants that span files and so have no
+compiler to catch them, like the shader's `TINT_SLOTS` matching `LodTintRegistry.MaxSlots`.
+`smoke` boots a vanilla dedicated server and a sandboxed client and asserts on what the run
+logged, including a second pass against the warm cache, which is the only way to know that
+what was written can be read back. `matrix` covers the configurations other people put the
+mod in: a vanilla server, a modded one, a client without the mod at all, each admin switch,
+and deferral to a competing LOD mod.
+
+**There is no CI, and there cannot be.** Building this repo requires the Vintage Story
+assemblies from a local game install, and those are not redistributable, so no hosted
+runner can compile it. `scripts/check.sh` is the entire safety net.
+
 ### Testing without touching your own game
 
 Test instances run in a `.testdata` sandbox and must be started and stopped only through

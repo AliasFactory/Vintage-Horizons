@@ -219,18 +219,31 @@ public class LodAssistServerSystem : ModSystem
     /// section spans 4096 blocks, so centre distance would refuse sections the player is
     /// standing inside.
     /// </summary>
+    /// <summary>
+    /// Radius check for a player. Separate from the math below so the deref of a player
+    /// who has no entity yet (mid-join) keeps its own answer: with an unlimited radius
+    /// there is nothing to compare against, so the absent position does not matter.
+    /// </summary>
     static bool WithinServeRadius(long key, IServerPlayer player, int radiusBlocks)
+    {
+        if (radiusBlocks <= 0) return true;
+
+        var pos = player.Entity?.Pos;
+        if (pos == null) return false;
+
+        return WithinServeRadius(key, pos.X, pos.Z, radiusBlocks);
+    }
+
+    public static bool WithinServeRadius(long key, double x, double z, int radiusBlocks)
     {
         if (radiusBlocks <= 0) return true;
 
         int footprint = LodWorld.KeyFootprintBlocks(key);
         double minX = LodWorld.KeySx(key) * (double)footprint;
         double minZ = LodWorld.KeySz(key) * (double)footprint;
-        var pos = player.Entity?.Pos;
-        if (pos == null) return false;
 
-        double dx = Math.Max(0, Math.Max(minX - pos.X, pos.X - (minX + footprint)));
-        double dz = Math.Max(0, Math.Max(minZ - pos.Z, pos.Z - (minZ + footprint)));
+        double dx = Math.Max(0, Math.Max(minX - x, x - (minX + footprint)));
+        double dz = Math.Max(0, Math.Max(minZ - z, z - (minZ + footprint)));
         return dx * dx + dz * dz <= (double)radiusBlocks * radiusBlocks;
     }
 

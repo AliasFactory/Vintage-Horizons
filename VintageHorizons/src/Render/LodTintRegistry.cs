@@ -32,12 +32,12 @@ public class LodTintRegistry
     /// </summary>
     public const int MaxSlots = 64;
 
-    /// <summary>
-    /// The value hardcoded as `const int TINT_SLOTS` in lodterrain.vsh/.fsh. This game
-    /// version offers no way to inject a #define, so the two are kept in step by hand
-    /// and LoadShader logs an error if they ever diverge.
-    /// </summary>
-    public const int GlslTintSlots = 64;
+    // MaxSlots is also hardcoded as `const int TINT_SLOTS` in lodterrain.vsh/.fsh, because
+    // this game version offers no way to inject a #define. There used to be a second C#
+    // constant mirroring that number by hand, compared against MaxSlots at shader load —
+    // but comparing two constants in the same file cannot detect a shader being edited,
+    // and the compiler said so, flagging the branch as unreachable. The real check reads
+    // the shader files: see StaticAssetChecks in the fast tier of scripts/check.sh.
 
     readonly Dictionary<(string?, string?), int> slotByMaps = new();
     readonly List<Block?> representative = new();

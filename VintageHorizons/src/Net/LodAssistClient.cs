@@ -95,7 +95,7 @@ public sealed class LodAssistClient
         }
     }
 
-    void OnWelcome(AssistWelcome msg)
+    internal void OnWelcome(AssistWelcome msg)
     {
         // Deserialized, so every reference field is whatever the wire produced.
         string reason = msg.Status ?? "";
@@ -144,7 +144,7 @@ public sealed class LodAssistClient
     /// <summary>What the server said to expect, for comparison against what arrived.</summary>
     public int ManifestExpected { get; private set; }
 
-    void OnKeyManifest(AssistKeyManifest msg) =>
+    internal void OnKeyManifest(AssistKeyManifest msg) =>
         manifestChunks.Enqueue((msg.Keys ?? Array.Empty<long>(), msg.Last));
 
     // ---- Section transfer ----
@@ -197,7 +197,7 @@ public sealed class LodAssistClient
 
     public int SectionsRequested { get; private set; }
 
-    void OnSection(AssistSection msg) =>
+    internal void OnSection(AssistSection msg) =>
         Arrived.Enqueue((msg.Key, msg.Blob ?? Array.Empty<byte>()));
 
     /// <summary>

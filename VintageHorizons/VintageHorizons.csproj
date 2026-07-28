@@ -17,6 +17,12 @@
     <GamePath Condition="'$(GamePath)' == '' or !Exists('$(GamePath)')">$(HOME)/Games/vintagestory1.22.5</GamePath>
   </PropertyGroup>
 
+  <!-- The fast check tier reaches a few network handlers that are otherwise private;
+       see tests/VintageHorizons.Checks. Nothing else has access. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="VintageHorizons.Checks" />
+  </ItemGroup>
+
   <ItemGroup>
     <Reference Include="VintagestoryAPI">
       <HintPath>$(GamePath)/VintagestoryAPI.dll</HintPath>

@@ -35,7 +35,12 @@ fi
 
 # Retry: stopping and immediately restarting leaves the port in TIME_WAIT, and the
 # bind failure is transient. Anything else fails loudly with the console tail.
-for attempt in 1 2 3 4; do
+#
+# Six attempts at 15s, not four at 10s: Linux holds TIME_WAIT for about 60s, so the old
+# 40s budget could not outlast it. That was survivable while every restart had a long
+# client run in front of it, and stopped being so once check-matrix.sh started restarting
+# the server twice in a row to compare one config against another.
+for attempt in 1 2 3 4 5 6; do
     ready=0
     if vh_launch "Test server" "$PIDFILE" "$DATA/console.log" \
         dotnet VintagestoryServer.dll --dataPath "$DATA" \
@@ -53,9 +58,9 @@ for attempt in 1 2 3 4; do
     fi
 
     rm -f "$PIDFILE"
-    if grep -q "Address already in use" "$DATA/console.log" 2>/dev/null && [ "$attempt" -lt 4 ]; then
-        echo "Test server: port $PORT still in use, retrying in 10s (attempt $attempt)" >&2
-        sleep 10
+    if grep -q "Address already in use" "$DATA/console.log" 2>/dev/null && [ "$attempt" -lt 6 ]; then
+        echo "Test server: port $PORT still in use, retrying in 15s (attempt $attempt)" >&2
+        sleep 15
         continue
     fi
 

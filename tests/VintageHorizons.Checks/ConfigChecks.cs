@@ -1,0 +1,121 @@
+using VintageHorizons.Net;
+
+namespace VintageHorizons.Checks;
+
+/// <summary>
+/// The server-side admin knobs. Sanitize is the boundary between a config file an admin
+/// typed and the values that reach the serve loop, and its ceilings come from measurement
+/// rather than taste — a served section costs about 0.9ms of main-thread blob read, so the
+/// total cap is what decides how much of a core an admin can hand over by editing a file.
+/// </summary>
+public static class ConfigChecks
+{
+    public static void Run(Check c)
+    {
+        Defaults(c);
+        Clamps(c);
+        Description(c);
+    }
+
+    static void Defaults(Check c)
+    {
+        var config = new LodServerConfig();
+
+        // Installing the mod on a server IS the opt-in; a mod that silently does nothing
+        // until a file is edited reads as broken.
+        c.True(config.EnableCapture, "capture is on by default");
+        c.True(config.EnableServing, "serving is on by default");
+
+        // But the radius is deliberately bounded rather than unlimited: sections come from
+        // wherever players have collectively been, so an uncapped default would let a new
+        // player pull a survey of the whole explored world without travelling.
+        c.Eq(8192, config.ServeRadiusBlocks, "the default radius is bounded, not unlimited");
+
+        // Generating terrain nobody has visited is opt-in.
+        c.Eq(0, config.PregenRadiusChunks, "pre-generation is off by default");
+
+        c.Eq(LodAssist.MaxSectionsPerSecondPerPlayer, config.MaxSectionsPerSecondPerPlayer,
+            "the per-player default tracks the protocol constant");
+        c.Eq(LodAssist.MaxSectionsPerSecondTotal, config.MaxSectionsPerSecondTotal,
+            "the total default tracks the protocol constant");
+
+        var untouched = new LodServerConfig();
+        untouched.Sanitize();
+        c.Eq(8192, untouched.ServeRadiusBlocks, "sanitizing the defaults changes nothing");
+        c.Eq(LodAssist.MaxSectionsPerSecondTotal, untouched.MaxSectionsPerSecondTotal,
+            "sanitizing leaves in-range values alone");
+    }
+
+    static void Clamps(Check c)
+    {
+        // The measured ceilings. 128/s is roughly 115ms per second of blob reads, about 11%
+        // of a core. An earlier 1024 would have been ~920ms per second: a server wedged by
+        // its own config file.
+        c.Eq(128, Sanitized(cfg => cfg.MaxSectionsPerSecondTotal = 100000).MaxSectionsPerSecondTotal,
+            "the total rate is capped at the measured ceiling");
+        c.Eq(64, Sanitized(cfg => cfg.MaxSectionsPerSecondPerPlayer = 100000).MaxSectionsPerSecondPerPlayer,
+            "the per-player rate is capped");
+
+        // Zero would stall the serve loop outright rather than slow it.
+        c.Eq(1, Sanitized(cfg => cfg.MaxSectionsPerSecondTotal = 0).MaxSectionsPerSecondTotal,
+            "a zero total rate becomes one, not a stall");
+        c.Eq(1, Sanitized(cfg => cfg.MaxSectionsPerSecondPerPlayer = -5).MaxSectionsPerSecondPerPlayer,
+            "a negative per-player rate becomes one");
+
+        c.Eq(256, Sanitized(cfg => cfg.PregenRadiusChunks = 99999).PregenRadiusChunks,
+            "pre-generation radius is capped at 256 chunks");
+        c.Eq(0, Sanitized(cfg => cfg.PregenRadiusChunks = -1).PregenRadiusChunks,
+            "a negative pre-generation radius means off");
+        c.Eq(64, Sanitized(cfg => cfg.PregenColumnsPerSecond = 1000).PregenColumnsPerSecond,
+            "pre-generation rate is capped");
+        c.Eq(1, Sanitized(cfg => cfg.PregenColumnsPerSecond = 0).PregenColumnsPerSecond,
+            "a zero pre-generation rate becomes one");
+
+        // The invariant that matters downstream: WithinServeRadius squares this value and
+        // compares it against a squared distance, so a negative would compare as positive
+        // and quietly serve a radius the admin never asked for.
+        c.True(Sanitized(cfg => cfg.ServeRadiusBlocks = -1).ServeRadiusBlocks >= 0,
+            "the serve radius is never left negative");
+        c.Eq(512, Sanitized(cfg => cfg.ServeRadiusBlocks = 512).ServeRadiusBlocks,
+            "an in-range serve radius is preserved exactly");
+        c.Eq(0, Sanitized(cfg => cfg.ServeRadiusBlocks = 0).ServeRadiusBlocks,
+            "zero is preserved, and means unlimited");
+
+        // Sanitize must be idempotent: it runs on load and the result is written back to
+        // disk, so a second run on its own output has to be a no-op or the file drifts
+        // every restart.
+        var once = Sanitized(cfg => { cfg.ServeRadiusBlocks = -7; cfg.MaxSectionsPerSecondTotal = 9999; });
+        var twice = Sanitized(cfg =>
+        {
+            cfg.ServeRadiusBlocks = once.ServeRadiusBlocks;
+            cfg.MaxSectionsPerSecondTotal = once.MaxSectionsPerSecondTotal;
+        });
+        c.Eq(once.ServeRadiusBlocks, twice.ServeRadiusBlocks, "sanitize is idempotent for the radius");
+        c.Eq(once.MaxSectionsPerSecondTotal, twice.MaxSectionsPerSecondTotal,
+            "sanitize is idempotent for the rate");
+    }
+
+    /// <summary>Describe() is what /vhserver prints, so admins read these words to check their config took.</summary>
+    static void Description(Check c)
+    {
+        string text = new LodServerConfig().Describe();
+        c.True(text.Contains("capture on"), "the description reports capture state");
+        c.True(text.Contains("serving on"), "the description reports serving state");
+        c.True(text.Contains("8192 blocks"), "the description reports the radius in blocks");
+
+        var unlimited = new LodServerConfig { ServeRadiusBlocks = 0 };
+        c.True(unlimited.Describe().Contains("unlimited"), "a zero radius is described as unlimited");
+
+        var off = new LodServerConfig { EnableCapture = false, EnableServing = false };
+        c.True(off.Describe().Contains("capture off"), "capture off is described");
+        c.True(off.Describe().Contains("serving off"), "serving off is described");
+    }
+
+    static LodServerConfig Sanitized(Action<LodServerConfig> setup)
+    {
+        var config = new LodServerConfig();
+        setup(config);
+        config.Sanitize();
+        return config;
+    }
+}
