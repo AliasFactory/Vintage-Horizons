@@ -28,7 +28,7 @@ public struct LodPaletteEntry
 
     /// <summary>
     /// Not terrain at all (fire, meta markers): dropped at capture so it never becomes
-    /// geometry. Thin ground cover is NOT skipped — see FlagThin.
+    /// geometry. Thin ground cover is NOT skipped - see FlagThin.
     /// </summary>
     public const byte FlagSkip = 8;
 
@@ -44,13 +44,13 @@ public struct LodPaletteEntry
 /// The M4 leaf data model: a section holds 64×64 vertical RLE columns over a local
 /// palette. At level L each column covers (ColumnStepBlocks &lt;&lt; L) blocks, so a
 /// section spans SectionBlocks &lt;&lt; L. Runs are packed ulongs, stored top-down,
-/// contiguous per column, addressed by a prefix-offset table — compact, fast to
+/// contiguous per column, addressed by a prefix-offset table - compact, fast to
 /// serialize, and cheap to mip (concepts per DESIGN.md §4, informed by DH/Voxy).
 /// </summary>
 public class LodSection
 {
     public const int GridSize = 64;                 // columns per section edge
-    public const int ColumnStepBlocks = 1;          // blocks per column at level 0 — full DH-parity resolution
+    public const int ColumnStepBlocks = 1;          // blocks per column at level 0 - full DH-parity resolution
     public const int SectionBlocks = GridSize * ColumnStepBlocks; // 64 at level 0
 
     /// <summary>Run packing: paletteId(16) | yTop(14) | yBottom(14). Run spans [yBottom, yTop).</summary>
@@ -107,7 +107,7 @@ public class LodSection
     /// <summary>
     /// Drop every run whose palette entry carries <paramref name="flag"/>, rebuilding the
     /// run storage. Applied after a section is loaded so terrain already in the cache is
-    /// corrected in place — no re-exploration, no cache wipe.
+    /// corrected in place - no re-exploration, no cache wipe.
     /// </summary>
     public void RemoveRunsWithFlag(byte flag)
     {
@@ -184,7 +184,7 @@ public class LodSection
     }
 
     /// <summary>
-    /// Replace many columns in one pass (one array rebuild total, not one per column) —
+    /// Replace many columns in one pass (one array rebuild total, not one per column) -
     /// the capture path applies a whole chunk column's worth of LOD columns at once.
     /// Entries in newRunsByCol may be null to leave that column untouched.
     /// Returns true if any column content changed.

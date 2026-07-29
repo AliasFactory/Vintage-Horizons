@@ -5,10 +5,10 @@ namespace VintageHorizons;
 /// faces are collected first, then greedy-merged before emission:
 ///
 /// - Horizontal faces (tops/bottoms) group into Y-planes per (y, palette, side) and
-///   merge into maximal rectangles with a standard 2D greedy sweep — ocean surfaces
+///   merge into maximal rectangles with a standard 2D greedy sweep - ocean surfaces
 ///   and plains collapse from thousands of quads to a handful.
 /// - Vertical faces (walls) merge along their strip axis where adjacent columns
-///   expose identical (span, palette) segments — cliffs and frontier walls collapse
+///   expose identical (span, palette) segments - cliffs and frontier walls collapse
 ///   into long ribbons.
 ///
 /// Coverage rules (unchanged from the non-greedy mesher): solid faces are only

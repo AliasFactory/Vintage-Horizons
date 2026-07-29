@@ -35,7 +35,7 @@ public static class LodAssist
 
     /// <summary>
     /// Most sections a client may have outstanding. At a mean 45.9 KB a section, 16 in
-    /// flight is roughly 730 KB — enough to keep a join filling in, small enough that a
+    /// flight is roughly 730 KB - enough to keep a join filling in, small enough that a
     /// player who sprints across unexplored land cannot ask for a whole world at once.
     /// </summary>
     public const int MaxSectionsInFlight = 16;
@@ -94,7 +94,7 @@ public class AssistWelcome
 
 /// <summary>
 /// Server -> client: which sections the server holds, as packed keys and nothing else.
-/// Measured at 8 bytes a key and 5581 keys for a well-travelled world, so ~44 KB total —
+/// Measured at 8 bytes a key and 5581 keys for a well-travelled world, so ~44 KB total -
 /// cheap enough to send in full at join, which is why there is no spatial query here.
 ///
 /// Chunked because one 44 KB message is a needless latency spike on a join that is
@@ -131,8 +131,8 @@ public class AssistSectionRequest
 /// Not chunked. Sections measure a mean 45.9 KB and a max 154.5 KB on a real world, and
 /// the reliable channel has no size cap (the 508-byte warning is UDP-only, §10.7), so one
 /// message per section is the simpler thing that works. If large messages turn out to
-/// stall a join, chunking goes here — with the sequence/last pattern the manifest already
-/// uses — rather than anywhere else.
+/// stall a join, chunking goes here - with the sequence/last pattern the manifest already
+/// uses - rather than anywhere else.
 ///
 /// <see cref="Blob"/> empty means "I am not sending this one": either it is gone or the
 /// server declined. The client marks the key so it stops asking every few seconds.

@@ -2,7 +2,7 @@ namespace VintageHorizons.Checks;
 
 /// <summary>
 /// Builders for the plain data the LOD types operate on. Everything here is constructible
-/// without a world, a chunk or an API — that property is what makes the fast tier possible,
+/// without a world, a chunk or an API - that property is what makes the fast tier possible,
 /// so these helpers deliberately never reach for a game object.
 /// </summary>
 public static class Fixtures

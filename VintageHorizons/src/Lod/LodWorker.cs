@@ -81,7 +81,7 @@ public class MeshResult
 
 /// <summary>
 /// The background thread: converts chunk block data into RLE columns (capture) and
-/// sections into vertex data (meshing). Capture jobs take priority — meshes are only
+/// sections into vertex data (meshing). Capture jobs take priority - meshes are only
 /// as good as the data beneath them. All game-state access is via refs the main
 /// thread handed over; chunk reads are guarded against concurrent disposal.
 /// </summary>
@@ -108,8 +108,8 @@ public class LodWorker : IDisposable
     volatile bool running = true;
 
     /// <summary>
-    /// Mesh builders. Meshing reads only immutable SectionSnapshots — the reason the
-    /// snapshot discipline exists — so it parallelises with no locking. Capture does not
+    /// Mesh builders. Meshing reads only immutable SectionSnapshots - the reason the
+    /// snapshot discipline exists - so it parallelises with no locking. Capture does not
     /// get the same treatment: it reads live IWorldChunk objects the engine owns, and
     /// multiplying that by a thread count multiplies the risk for no comparable gain.
     ///
@@ -165,8 +165,8 @@ public class LodWorker : IDisposable
     }
 
     // Separate loops, not one. The old shared loop drained EVERY queued capture before
-    // taking a single mesh job, so exploring — which is exactly when new terrain most needs
-    // drawing — starved meshing and left coarse parents on screen for minutes.
+    // taking a single mesh job, so exploring - which is exactly when new terrain most needs
+    // drawing - starved meshing and left coarse parents on screen for minutes.
 
     void CaptureLoop()
     {
@@ -233,7 +233,7 @@ public class LodWorker : IDisposable
         bool anyColumn = false;
 
         // Rain map values can sit at/above map height on freshly streamed columns
-        // (uninitialized sentinel) — clamp so the y walk stays inside the chunk stack.
+        // (uninitialized sentinel) - clamp so the y walk stays inside the chunk stack.
         int maxY = job.Chunks.Length * ChunkSize - 1;
 
         for (int cz = 0; cz < colsPerChunk; cz++)

@@ -1,6 +1,6 @@
 # Vintage Horizons
 
-Distant Horizons-style extended render distance for [Vintage Story](https://www.vintagestory.at/) —
+Distant Horizons-style extended render distance for [Vintage Story](https://www.vintagestory.at/) -
 **fully client-side**, works on any server.
 
 Unlike existing VS LOD mods (Farseer, ChunkLOD), Vintage Horizons requires nothing on the
@@ -8,14 +8,14 @@ server: it builds a persistent level-of-detail cache from chunk data your client
 receives while you play, and renders that cache far beyond the normal view distance.
 Coverage grows as you explore and persists across sessions.
 
-## What you get
+## What it does
 
 - **Unlimited render distance**, decoupled from the vanilla view-distance slider.
 - **Real 3D terrain**, not a heightmap: mountains, overhangs, cave mouths, forests, and
   anything you build all appear at distance, at 1-block resolution near the player.
 - **Translucent water**, drawn over the lake and sea floors beneath it.
 - **Live seasonal colour**: grass and foliage follow the game's own climate and season
-  maps, and a snow line is derived from the local temperature lapse rate — so the far
+  maps, and a snow line is derived from the local temperature lapse rate - so the far
   terrain changes with the seasons instead of being frozen at capture time.
 - **Persistent per-world cache** that keeps growing as you play, with join time and
   memory use independent of how much you have explored.
@@ -24,7 +24,7 @@ Coverage grows as you explore and persists across sessions.
 
 A client-side mod only knows the terrain the server has actually sent it. Land you have
 never been near has never been streamed to your client, so it is not in the cache and
-cannot be drawn — a brand new world shows nothing past the vanilla view distance until
+cannot be drawn - a brand new world shows nothing past the vanilla view distance until
 you travel. Server-side generators (Farseer, ChunkLOD) can ask the world generator
 directly and do not have this limitation; the trade is that they must be installed on
 the server. Here, the edges of explored area are faded into the horizon rather than left
@@ -60,6 +60,20 @@ scripts/dev-run.sh              # opens/creates the "vhsurvival" test world
 scripts/dev-run.sh myworld      # a different world
 ```
 
+### Savegame sweeping
+
+A world's savegame holds every chunk column anyone has ever generated, while the LOD cache
+only ever saw the fraction that streamed past a player running this mod. Sweeping loads
+those columns so they get captured - a horizon covering everywhere you have already been,
+without flying back over it.
+
+On by default (`SweepSavegame` in `ModConfig/vintagehorizons-server.json`, alongside
+`SweepRadiusChunks` and `SweepColumnsPerSecond`), including in singleplayer. It is safe to
+default on because it **generates nothing**: positions that were never visited are skipped,
+and so is a border around explored terrain, since loading a column whose surroundings are
+missing would make the engine generate them. That is the opposite trade from
+`PregenRadiusChunks`, which deliberately creates new terrain and stays off unless asked for.
+
 ### Running the checks
 
 ```sh
@@ -72,9 +86,9 @@ scripts/check.sh matrix       # install combinations and admin controls (~20 min
 Run `fast` constantly; it needs no game process and finishes in under a second once
 built. Run the whole thing before committing.
 
-The tiers answer different questions. `fast` covers the pure logic — key packing, the RLE
+The tiers answer different questions. `fast` covers the pure logic - key packing, the RLE
 column store, mip downsampling, the mesher's greedy merge and coverage rules, the blob
-format, frustum planes, config clamps — plus the invariants that span files and so have no
+format, frustum planes, config clamps - plus the invariants that span files and so have no
 compiler to catch them, like the shader's `TINT_SLOTS` matching `LodTintRegistry.MaxSlots`.
 `smoke` boots a vanilla dedicated server and a sandboxed client and asserts on what the run
 logged, including a second pass against the warm cache, which is the only way to know that
@@ -99,7 +113,7 @@ scripts/test-stop.sh [client|server|all]            # stop via pidfiles
 
 This matters more than it looks. The VS client is single-instance through a named pipe in
 `$TMPDIR`, and a launch with `-c` **forwards its connect request into whatever instance is
-already running** — including your own game — then exits silently. `--dataPath` does not
+already running** - including your own game - then exits silently. `--dataPath` does not
 protect you; a private `TMPDIR` does, which is what these scripts set up. They also record
 the child PID and verify `/proc/<pid>/cmdline` names the sandbox before signalling
 anything, because a stale pidfile plus PID reuse otherwise means killing an unrelated
@@ -115,9 +129,9 @@ window focus), `VINTAGEHORIZONS_AUTOEXPLORE=1` and `VINTAGEHORIZONS_EXPLORE_HOP=
   truncates the GL source by the difference between UTF-8 bytes and char count,
   which silently cuts the end off the shader.
 - Worlds created via `-o` default to the `creativebuilding` playstyle, which is
-  **superflat** — the dev script passes the `preset-surviveandbuild` lang code for real
+  **superflat** - the dev script passes the `preset-surviveandbuild` lang code for real
   terrain.
-- Singleplayer pauses while the game window is unfocused, which stops game ticks — and
+- Singleplayer pauses while the game window is unfocused, which stops game ticks - and
   with them LOD ingestion and cache saves.
 - The game's block registry must not be read off the main thread (`GetBlock(int)` lazily
   mutates a dictionary). Sections deserialized on the storage thread keep their palette
@@ -129,8 +143,8 @@ current status, measurements, and known gaps.
 ## Credits
 
 - [Distant Horizons](https://gitlab.com/distant-horizons-team/distant-horizons) and
-  Voxy (Minecraft) — architectural inspiration; no code is used from either.
-- [Farseer](https://github.com/ViciousBadger/VSMod-Farseer) (MIT, © Badgerson) —
+  Voxy (Minecraft) - architectural inspiration; no code is used from either.
+- [Farseer](https://github.com/ViciousBadger/VSMod-Farseer) (MIT, © Badgerson) -
   Vintage Story rendering techniques; adapted code is credited where used.
 
 ## License

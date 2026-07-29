@@ -5,7 +5,7 @@ namespace VintageHorizons;
 /// used to skip draw calls for sections outside the camera's view.
 ///
 /// The planes come from the SAME matrices handed to the LOD shader, so the test can
-/// never disagree with what is actually rendered — deriving them from the game's own
+/// never disagree with what is actually rendered - deriving them from the game's own
 /// culler would tie us to the vanilla view distance and to its per-frame update order,
 /// neither of which matches our extended ZFar.
 ///

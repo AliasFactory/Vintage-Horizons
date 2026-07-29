@@ -102,7 +102,7 @@ public static class MipChecks
     /// <summary>
     /// Slices are walked one boundary at a time, so a uniform column arrives as several
     /// abutting slices and must come back out as one run. Without the merge every parent
-    /// column would carry a run per distinct y in its children — the run arrays would grow
+    /// column would carry a run per distinct y in its children - the run arrays would grow
     /// with depth instead of shrinking, which is the entire point of the pyramid.
     /// </summary>
     static void RunMerging(Check c)

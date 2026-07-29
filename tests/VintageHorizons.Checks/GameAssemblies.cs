@@ -14,7 +14,7 @@ namespace VintageHorizons.Checks;
 /// names eight more in its own reference table (cairo-sharp, SkiaSharp, Newtonsoft.Json,
 /// OpenTK x2, protobuf-net, System.Drawing.Primitives, Microsoft.Data.Sqlite). Which of
 /// those actually load depends on which game types a check forces the CLR to build a vtable
-/// for — Block alone has around two hundred virtual methods, and resolving their signatures
+/// for - Block alone has around two hundred virtual methods, and resolving their signatures
 /// can reach almost anywhere.
 ///
 /// Probing the install directly is one rule instead of a per-DLL guess list, and it keeps

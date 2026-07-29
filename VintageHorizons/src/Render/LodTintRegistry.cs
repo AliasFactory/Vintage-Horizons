@@ -10,8 +10,8 @@ namespace VintageHorizons;
 /// species (seasonalOak, seasonalNeedles, seasonalBirch, seasonalMaple, ...) on top of
 /// one of several climate maps, and water has its own climateWaterTint. Collapsing all
 /// of that into a single "foliage" tint meant every leaf in the LOD took whichever
-/// block the registry scan happened to hit first — a conifer, so nothing ever turned
-/// for autumn — and water was left untinted grey.
+/// block the registry scan happened to hit first - a conifer, so nothing ever turned
+/// for autumn - and water was left untinted grey.
 ///
 /// A slot is one distinct (climate map, season map) pair. The captured colour stays
 /// untinted and the slot's colour is recomputed from the game's own colour maps every
@@ -34,7 +34,7 @@ public class LodTintRegistry
 
     // MaxSlots is also hardcoded as `const int TINT_SLOTS` in lodterrain.vsh/.fsh, because
     // this game version offers no way to inject a #define. There used to be a second C#
-    // constant mirroring that number by hand, compared against MaxSlots at shader load —
+    // constant mirroring that number by hand, compared against MaxSlots at shader load -
     // but comparing two constants in the same file cannot detect a shader being edited,
     // and the compiler said so, flagging the branch as unreachable. The real check reads
     // the shader files: see StaticAssetChecks in the fast tier of scripts/check.sh.
@@ -44,7 +44,7 @@ public class LodTintRegistry
 
     // vec4 per slot: the uniform upload path takes 4 components per element.
     // Two altitude samples per slot, because the climate maps are indexed by
-    // temperature and temperature falls with height — the same lapse rate the snow
+    // temperature and temperature falls with height - the same lapse rate the snow
     // line uses. Sampling once at the player's feet painted mountaintops with valley
     // green instead of the colder, redder grass that actually grows up there. The
     // shader interpolates between these by vertex height.
@@ -128,7 +128,7 @@ public class LodTintRegistry
             block.ClimateColorMapResolved, block.SeasonColorMapResolved,
             unchecked((int)0xFFFFFFFF), x, y, z);
 
-        // ApplyColorMapOnRgba flips red and blue by default, so red is the high byte —
+        // ApplyColorMapOnRgba flips red and blue by default, so red is the high byte -
         // which is exactly what ColorUtil.ToRGBAFloats unpacks, rather than restating
         // the engine's channel order here.
         // ToRGBAFloats[0] is the HIGH byte, which is where ApplyColorMapOnRgba puts red

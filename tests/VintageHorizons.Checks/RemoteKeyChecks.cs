@@ -4,7 +4,7 @@ namespace VintageHorizons.Checks;
 /// Which sections the client fetches from a server rather than from its own disk.
 ///
 /// This is where the most expensive bug in the project's history lived. It survived three
-/// diagnoses read off counters — fetch ordering, mesh throughput, uncoverable children —
+/// diagnoses read off counters - fetch ordering, mesh throughput, uncoverable children -
 /// before anyone printed the actual branch state and saw it in one shot. The lesson written
 /// into DESIGN.md was "instrument the decision, do not infer it"; these checks are the
 /// standing version of that.
@@ -24,13 +24,13 @@ public static class RemoteKeyChecks
     /// THE regression test.
     ///
     /// Registering a fine key walks UPWARD, adding every ancestor to HasDataSet so the
-    /// quadtree can descend to it. Those ancestors hold no data of their own — they are
+    /// quadtree can descend to it. Those ancestors hold no data of their own - they are
     /// scaffolding. Testing HasDataSet to answer "can local disk supply this?" therefore
     /// says yes for keys local disk has never held.
     ///
     /// The consequence was not a missing section, it was a permanent one: the coarse key
     /// stayed out of RemoteOnly, was routed to a local store with no such row, came back
-    /// null, and landed in LoadFailed — which nothing clears. Terrain that could never
+    /// null, and landed in LoadFailed - which nothing clears. Terrain that could never
     /// resolve, at any distance, showing as L5 nodes with two children stuck "load-failed"
     /// and an idle pipeline.
     /// </summary>

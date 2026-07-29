@@ -5,7 +5,7 @@ using Vintagestory.API.Common;
 namespace VintageHorizons.Net;
 
 /// <summary>
-/// Adopts a section that arrived from the server. Returns false if it was not taken —
+/// Adopts a section that arrived from the server. Returns false if it was not taken -
 /// the client already had local data for that key, or the blob would not parse.
 /// </summary>
 public delegate bool LodForeignSectionInstaller(long key, byte[] blob);
@@ -129,7 +129,7 @@ public sealed class LodAssistClient
 
     /// <summary>
     /// Keys the server holds. Read and mutated only from the game tick, via <see cref="Pump"/>
-    /// — the handlers below run on whatever thread the engine delivers packets on, and a
+    /// - the handlers below run on whatever thread the engine delivers packets on, and a
     /// plain HashSet shared across those two would be a race whether or not it shows up in
     /// testing. Everything a handler learns goes into a concurrent queue and is applied on
     /// the tick, which also puts installs in the one place allowed to touch LodWorld.
@@ -221,7 +221,7 @@ public sealed class LodAssistClient
             // mid-send, expected on a live server and worth seeing rather than silently
             // tolerating once transfer starts trusting this set.
             logger.Notification(
-                "VintageHorizons: server key manifest complete — {0} keys received{1}",
+                "VintageHorizons: server key manifest complete - {0} keys received{1}",
                 RemoteKeys.Count,
                 ManifestExpected > 0 && ManifestExpected != RemoteKeys.Count
                     ? $" (server announced {ManifestExpected})" : "");

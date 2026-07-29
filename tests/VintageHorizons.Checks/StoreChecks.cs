@@ -4,7 +4,7 @@ namespace VintageHorizons.Checks;
 /// The on-disk blob format, round-tripped with no database.
 ///
 /// LodStore extends the game's SQLite base class, but Serialize is static and the base
-/// constructor only stores its logger — so the format can be exercised without opening a
+/// constructor only stores its logger - so the format can be exercised without opening a
 /// file, and DeserializeForeign explicitly accepts a null world to defer block-id lookup
 /// to the main thread. That same door is what the network path uses for foreign sections.
 /// </summary>

@@ -4,12 +4,12 @@ set -euo pipefail
 # Tier 3: the install combinations and the admin-facing controls.
 #
 # Tier 2 proves the pipeline works. This proves it behaves correctly in the
-# configurations other people will actually put it in — including the ones where the
+# configurations other people will actually put it in - including the ones where the
 # right answer is "do nothing and stay out of the way".
 #
 # Usage: check-matrix.sh [--only <scenario>] [--skip-visual] [--settle <seconds>]
 #
-# Scenarios: client-only both no-client-mod serving-off capture-off pregen radius deferral
+# Scenarios: client-only both no-client-mod serving-off capture-off pregen sweep radius deferral
 
 source "$(dirname "${BASH_SOURCE[0]}")/test-lib.sh"
 
@@ -183,7 +183,7 @@ if wants no-client-mod; then
 JSON
     start_server
     # Without our mod none of our own log lines exist, so the marker has to be a vanilla
-    # one — and it has to prove the join COMPLETED. "Connected to server" appears during
+    # one - and it has to prove the join COMPLETED. "Connected to server" appears during
     # the handshake and so would also appear on a run that is about to be rejected;
     # receiving the block registry only happens once the server has accepted the client.
     if run_client "block types from server" 15; then
@@ -285,6 +285,66 @@ JSON
     fi
 fi
 
+# --- Scenario 6b: SWEEPING MUST NOT GENERATE. -------------------------------------
+# The single promise the feature makes, and the reason it is safe to default on where
+# pre-generation is not. Loading a column whose surroundings are absent makes the engine
+# generate them to finish worldgen across the seam, so this is not self-evident: an
+# earlier version of the sweep silently added 1,460 columns to the savegame.
+#
+# Asserted against the savegame's own row counts, which is the only place the truth is.
+
+if wants sweep; then
+    echo "  [sweep] indexing existing terrain must add none"
+    server_mod; wipe_server_cache
+    write_server_config <<'JSON'
+{
+  "EnableCapture": true,
+  "EnableServing": true,
+  "ServeRadiusBlocks": 0,
+  "MaxSectionsPerSecondPerPlayer": 8,
+  "MaxSectionsPerSecondTotal": 32,
+  "SweepSavegame": true,
+  "SweepRadiusChunks": 48,
+  "SweepColumnsPerSecond": 32,
+  "PregenRadiusChunks": 0,
+  "PregenColumnsPerSecond": 8
+}
+JSON
+    save="$VH_SANDBOX/server/Saves/default.vcdbs"
+    before="$(python3 -c "
+import sqlite3
+c = sqlite3.connect('file:$save?mode=ro', uri=True)
+print(c.execute('SELECT COUNT(*) FROM mapchunk').fetchone()[0],
+      c.execute('SELECT COUNT(*) FROM chunk').fetchone()[0])
+" 2>/dev/null)"
+
+    start_server
+    if vh_wait_for "$SERVER_LOG" "Savegame sweep finished" 900 "$VH_SANDBOX/server/server.pid"; then
+        grep -o "Savegame sweep finished:.*nothing generated" "$SERVER_LOG" | tail -1 | sed 's/^/      - /'
+
+        # Stop first: rows are not all flushed while the server is live.
+        "$VH_ROOT/scripts/test-stop.sh" server >/dev/null 2>&1 || true
+        vh_wait_stopped "$VH_SANDBOX/server/server.pid" 180 || true
+
+        after="$(python3 -c "
+import sqlite3
+c = sqlite3.connect('file:$save?mode=ro', uri=True)
+print(c.execute('SELECT COUNT(*) FROM mapchunk').fetchone()[0],
+      c.execute('SELECT COUNT(*) FROM chunk').fetchone()[0])
+" 2>/dev/null)"
+
+        echo "      - savegame before: $before   after: $after"
+        if [[ "$before" == "$after" && -n "$before" ]]; then
+            echo "  sweep: 1 ok (savegame unchanged - nothing was generated)"
+        else
+            echo "      x the savegame grew: sweeping generated terrain"
+            failures=$((failures + 1))
+        fi
+    else
+        fail "sweep"
+    fi
+fi
+
 # --- Scenario 7: THE SERVE RADIUS. ------------------------------------------------
 # Measured before but never watched. This is the map-revealing control: without it a
 # new player could pull a survey of the whole explored world without travelling, so
@@ -365,8 +425,8 @@ JSON
 
     # INFORMATIONAL ONLY. This captures two frames; it does not and cannot assert what is
     # in them. Across three attempts the same route and configs produced contradictory
-    # images — including a capped run that rendered nothing at a 180s settle after
-    # rendering terrain at 75s — because what the client has fetched is not what it has
+    # images - including a capped run that rendered nothing at a 180s settle after
+    # rendering terrain at 75s - because what the client has fetched is not what it has
     # drawn: meshing, eviction and quadtree descent all sit in between, and the game's fog
     # hides the ring distance anyway. The counters above are the verification. Read these
     # frames only alongside them, and never conclude anything from the pair alone.
@@ -443,7 +503,7 @@ if wants deferral; then
         # On the server too, and not as a convenience: Farseer is requiredOnServer, so
         # against a vanilla server the client disables it and IsModEnabled returns false.
         # There is then nothing to defer to and the scenario tests nothing. That is also
-        # the real-world shape — a server running one of these forces it on every client.
+        # the real-world shape - a server running one of these forces it on every client.
         cp -r "$VH_ROOT/bench/mods/farseer" "$VH_SANDBOX/Mods/"
         cp -r "$VH_ROOT/bench/mods/farseer" "$VH_SANDBOX/server/Mods/"
         start_server

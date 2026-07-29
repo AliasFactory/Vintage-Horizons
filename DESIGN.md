@@ -1,4 +1,4 @@
-# VintageHorizons — Design
+# VintageHorizons - Design
 
 A Distant Horizons-style extended-render-distance LOD mod for Vintage Story that is
 **fully client-side**: it works on any server, vanilla or modded, because it builds its
@@ -6,13 +6,13 @@ LODs exclusively from chunk data the client already receives.
 
 Supporting research (file-path-anchored deep dives) lives in `docs/research/`:
 
-- [`distant-horizons-architecture.md`](docs/research/distant-horizons-architecture.md) — the veteran design (LGPL-3.0; concepts only, clean reimplementation)
-- [`voxy-architecture.md`](docs/research/voxy-architecture.md) — the fast newcomer (all-rights-reserved; **ideas only, never copy code**)
-- [`vintage-story-api.md`](docs/research/vintage-story-api.md) — everything the VS 1.22.x client API gives us, with citations
+- [`distant-horizons-architecture.md`](docs/research/distant-horizons-architecture.md) - the veteran design (LGPL-3.0; concepts only, clean reimplementation)
+- [`voxy-architecture.md`](docs/research/voxy-architecture.md) - the fast newcomer (all-rights-reserved; **ideas only, never copy code**)
+- [`vintage-story-api.md`](docs/research/vintage-story-api.md) - everything the VS 1.22.x client API gives us, with citations
 
 ## 1. Why this is possible (and why nobody has done it in VS yet)
 
-- A `"side": "Client"` code mod can join unmodded servers — VS mod verification is
+- A `"side": "Client"` code mod can join unmodded servers - VS mod verification is
   one-directional (server→client requirements only).
 - The client receives, for every loaded chunk column: full block data (32³ chunks,
   palette-compressed in RAM), `RainHeightMap`, `WorldGenTerrainHeightMap`, and `YMax`.
@@ -20,7 +20,7 @@ Supporting research (file-path-anchored deep dives) lives in `docs/research/`:
 - Existing VS LOD mods (Farseer, ChunkLOD) generate LOD data **server-side** for instant
   full-map coverage. The cost is requiring server installation. We accept Distant
   Horizons' trade instead: coverage builds up as you explore, cached persistently
-  per-server on disk — and works everywhere.
+  per-server on disk - and works everywhere.
 - The community objection to a DH port ("VS terrain changes with seasons/snow, cached
   LODs go stale") is solved by **not baking appearance into geometry**: we store block
   identity and resolve color at render time, applying seasonal/snow tint in the shader
@@ -35,8 +35,8 @@ Supporting research (file-path-anchored deep dives) lives in `docs/research/`:
 | VS chunk = **32³**; world height configurable (256 default, up to 16k) | Section/column math uses 32 as the base unit; y fields sized for 16k |
 | Client `TopRockIdMap`/`SnowAccum`/`MapRegion` are null | Surface material must be read from actual block data (guided by heightmaps) |
 | No client chunk-unload event | Irrelevant: we snapshot on arrival; our cache outlives the chunk |
-| Voxy license = all-rights-reserved | Concepts only. DH is LGPL — also concepts only (user decision: clean room, permissive license) |
-| Farseer is **MIT** | Its client renderer/shader (camera-relative rendering, ZFar extension, fog-matched GLSL) is legally reusable with attribution — our rendering bootstrap |
+| Voxy license = all-rights-reserved | Concepts only. DH is LGPL - also concepts only (user decision: clean room, permissive license) |
+| Farseer is **MIT** | Its client renderer/shader (camera-relative rendering, ZFar extension, fog-matched GLSL) is legally reusable with attribution - our rendering bootstrap |
 
 ## 3. Architecture overview
 
@@ -71,7 +71,7 @@ columns). Detail level D means each column covers 2^D × 2^D blocks.
 through cache, DB, quadtree, and render map (Voxy's "one identifier everywhere").
 
 **Column data** = vertical RLE, top-down, gap-free (air runs stored explicitly, so light
-and downsampling stay correct — DH's rule). One run = one packed `ulong`:
+and downsampling stay correct - DH's rule). One run = one packed `ulong`:
 
 ```
 palette id (20 bits) | yTop (14 bits) | yBottom (14 bits) | skyLight (4) | blockLight (4) | flags (8)
@@ -81,12 +81,12 @@ palette id (20 bits) | yTop (14 bits) | yBottom (14 bits) | skyLight (4) | block
 water/lava markers. Air = palette id 0 (id-zero test, Voxy's trick).
 
 **Palette**: per-section id → VS block code (domain:path string), serialized with the
-section blob (DH-style self-contained sections — no global registry to corrupt; palettes
+section blob (DH-style self-contained sections - no global registry to corrupt; palettes
 are merged/remapped on section merge, compacted when they grow).
 
 **Chunk → leaf conversion**: walk each of the 32×32 columns top-down from
 `max(RainHeightMap[i], YMax)`; emit a new run on block-code change. Read via the raw
-palette/data arrays (`IChunkBlocks`), not per-block accessors — Voxy showed this is the
+palette/data arrays (`IChunkBlocks`), not per-block accessors - Voxy showed this is the
 difference between free ingestion and a frame-time problem.
 
 **Downsampling (mip rule)**: 2×2 columns → 1: collect y-boundaries, sweep slices, pick
@@ -97,14 +97,14 @@ if a level's merge produced no change, stop climbing (Voxy).
 
 - **SQLite**, WAL mode, one DB per (server, world). Path:
   `VintagestoryData/ModData/vintagehorizons/<serverAddress>/<worldId>.db`. `worldId`
-  derives from client-visible world identity (seed/dimension when available — Voxy's
-  hash trick — else server address + world name).
+  derives from client-visible world identity (seed/dimension when available - Voxy's
+  hash trick - else server address + world name).
 - Tables: `Sections(detail, x, z, blob, palette, applyToParent, timestamps)` with PK
   `(detail,x,z)`; `ChunkHash(cx, cy, cz, hash)`; `Meta` (format version).
 - Blob = palette-index plane + run list, ZSTD-1 or LZ4 compressed (decide by benchmark;
   both have good .NET libs).
 - **`applyToParent` dirty flags persisted in rows** (DH): the mip propagator polls
-  `WHERE applyToParent=1 ORDER BY dist(player) LIMIT n` — crash-safe pyramid consistency
+  `WHERE applyToParent=1 ORDER BY dist(player) LIMIT n` - crash-safe pyramid consistency
   with zero in-memory dependency tracking.
 - **Chunk hash gating** (DH): sparse-sampled content hash per chunk, persisted
   transactionally with its section; re-received identical chunks cost one hash compare.
@@ -118,12 +118,12 @@ if a level's merge produced no change, stop climbing (Voxy).
 - `IRenderer` registered at `EnumRenderStage.Opaque`, `RenderOrder = 0.36` (just before
   real terrain → depth-occluded by it; Farseer-proven).
 - ZFar extension via `ClientMain.MainCamera.ZFar` + `Reset3DProjection()`
-  (VintagestoryLib internals — standard practice, Farseer does it).
+  (VintagestoryLib internals - standard practice, Farseer does it).
 - Player-centered **quadtree** of render sections; expected detail = log(distance).
   **A parent renders until all 4 children have uploaded buffers** (DH's no-holes rule);
   buffer swaps are atomic; root ring never renders.
 - Mesh building on workers: load section + 4 neighbor **edge strips** (precomputed
-  column strips stored beside each section — DH's trick to avoid deserializing whole
+  column strips stored beside each section - DH's trick to avoid deserializing whole
   neighbors), emit visible faces of each run-box culled against vertical neighbors and
   adjacent columns, then greedy-merge per face direction. Compact vertex format
   (~16 B/vertex): section-relative int16 position, RGBA color, normal index, light,
@@ -136,21 +136,21 @@ if a level's merge produced no change, stop climbing (Voxy).
   Bayer-dithered discard fade at the boundary ring (DH); optionally push the innermost
   LOD ring down a few blocks like Farseer to hide silhouette mismatch.
 
-**Seasonal/snow staleness — the VS-specific problem, solved in the shader:**
+**Seasonal/snow staleness - the VS-specific problem, solved in the shader:**
 
 - Each palette entry is classified once into a **tint class**: `grass`, `foliage-deciduous`,
   `foliage-conifer`, `water`, `ice`, `rock`, `soil`, `sand`, `manmade`, `snow`.
 - Vertex color stores the block's *base* color; the tint class indexes a small uniform
   array of *current* seasonal multipliers computed each frame from
-  `capi.World.Calendar` + climate — so the whole LOD world re-colors continuously with
+  `capi.World.Calendar` + climate - so the whole LOD world re-colors continuously with
   seasons **without touching a single vertex buffer**.
 - Snow cover: compute the current snow line from calendar/climate; the fragment shader
   whitens up-facing fragments above it. Approximate, but at LOD distances
-  indistinguishable — and it changes daily like the real thing.
+  indistinguishable - and it changes daily like the real thing.
 - Actual block changes (player builds, tree falls) arrive via `ChunkDirty(MarkedDirty)`
   → hash check → normal update path.
 
-**Fast path (later, optional, GL 4.3+ detected at runtime):** Voxy-inspired — 8-byte
+**Fast path (later, optional, GL 4.3+ detected at runtime):** Voxy-inspired - 8-byte
 packed quads + vertex pulling, per-face-direction buckets, indirect multi-draw, Hi-Z
 occlusion. Never required; the 3.3 path remains complete.
 
@@ -160,7 +160,7 @@ occlusion. Never required; the 3.3 path remains complete.
   proportional to `pending × weight` (Voxy): ingest ≫ save ≫ mesh ≫ mip-propagate.
   Trivial to express in C# (semaphore + dedicated threads); auto-balances with no
   per-service tuning.
-- All queues **bounded and player-centered** (pop nearest, evict farthest — DH). The
+- All queues **bounded and player-centered** (pop nearest, evict farthest - DH). The
   system sheds load rather than falling behind.
 - Backpressure valves at every stage boundary (save-queue soft cap with caller-steal,
   mesh-queue dedup by section key, upload budget per frame).
@@ -168,28 +168,28 @@ occlusion. Never required; the 3.3 path remains complete.
 
 ## 8. Milestones
 
-- **M0 — skeleton**: client-only ModSystem, ChunkDirty subscription logging, buildable
+- **M0 - skeleton**: client-only ModSystem, ChunkDirty subscription logging, buildable
   csproj, launch config. *(done with initial commit)*
-- **M1 — first pixels**: in-memory heightmap LOD from received chunks → colored
+- **M1 - first pixels**: in-memory heightmap LOD from received chunks → colored
   heightmap mesh rendered past normal view distance (Farseer-class visuals, but
   client-built). Proves the whole loop: ingest → build → extended-ZFar render.
-- **M2 — persistence**: SQLite store, per-server/world keying, chunk-hash gating,
+- **M2 - persistence**: SQLite store, per-server/world keying, chunk-hash gating,
   reload cache on join. Now horizons persist across sessions.
-- **M3 — LOD pyramid**: full column-RLE model, mip levels + crash-safe propagation,
+- **M3 - LOD pyramid**: full column-RLE model, mip levels + crash-safe propagation,
   quadtree detail selection with parent-until-children rule.
-- **M4 — true 3D LODs**: run-box meshing with neighbor culling + greedy merge
+- **M4 - true 3D LODs**: run-box meshing with neighbor culling + greedy merge
   (overhangs, cliffs, caves-from-outside; DH-class visuals).
-- **M5 — polish**: seasonal tint classes + snow line, water surface, config GUI,
+- **M5 - polish**: seasonal tint classes + snow line, water surface, config GUI,
   in-chat commands, ModDB release.
-- **M6 — fast path (optional)**: GL 4.3 vertex-pulling/MDI renderer behind a runtime
+- **M6 - fast path (optional)**: GL 4.3 vertex-pulling/MDI renderer behind a runtime
   capability gate.
-- **M7 — optional server assist**: same mod, installable server-side, feeding clients
+- **M7 - optional server assist**: same mod, installable server-side, feeding clients
   terrain they have never visited. See §10.
 
 ## 9. Licensing
 
 VintageHorizons is **MIT**. DH (LGPL), Voxy (ARR) and Algernon's Terrain Sampler (no
-LICENSE shipped, so ARR) inform concepts only — no code is copied from any of them;
+LICENSE shipped, so ARR) inform concepts only - no code is copied from any of them;
 `reference/` clones are gitignored and never redistributed. Farseer (MIT) code may be
 adapted with attribution (will be credited in README and source headers where used).
 
@@ -202,7 +202,7 @@ ChunkLOD and TopoHorizon genuinely do better: we can only draw terrain the serve
 already sent us. A brand-new world shows nothing past the vanilla view distance until
 the player travels, and the flanks of a flight path stay empty.
 
-Those mods solve it by generating LOD server-side — and pay for it by being
+Those mods solve it by generating LOD server-side - and pay for it by being
 `requiredOnClient`, so a server running one forces the mod on everybody and a client
 running one cannot join a server without it. It is all-or-nothing in both directions.
 
@@ -237,7 +237,7 @@ Both flags matter, in opposite directions:
 | neither | n/a |
 
 `requiredOnServer: false` is what keeps a client with the mod able to join a vanilla
-server — dropping it inverts the problem instead of solving it.
+server - dropping it inverts the problem instead of solving it.
 
 One mod rather than a companion download also removes a compatibility matrix that
 would rot: no pairing of client 0.1.1 against server 0.2.0 to reason about, one
@@ -246,12 +246,12 @@ version number, one zip for both audiences.
 ### 10.3 Architecture: a third implementation of an existing seam
 
 The section source is already pluggable, and the async path added in the storage work
-is the exact shape a network source needs — request by key, answer arrives later,
+is the exact shape a network source needs - request by key, answer arrives later,
 install on the main thread:
 
-- `LodWorld.LoadFromStore` — `Func<long, LodSection?>`, synchronous, local disk
-- `LodWorld.RequestAsyncLoad` — `Action<long>`, results land via `InstallLoaded`
-- `LodStore.Serialize` / `Deserialize` — already a self-contained deflated `byte[]`
+- `LodWorld.LoadFromStore` - `Func<long, LodSection?>`, synchronous, local disk
+- `LodWorld.RequestAsyncLoad` - `Action<long>`, results land via `InstallLoaded`
+- `LodStore.Serialize` / `Deserialize` - already a self-contained deflated `byte[]`
 
 That last point matters more than it looks: **the stored blob is the wire format.**
 There is no second serialisation to design, and a section that survives a round trip
@@ -264,22 +264,22 @@ locally is asked for over the network instead of returning empty.
 
 Three parts are real work, and none of them is transport:
 
-**The server has no LOD database to serve.** It has to build one — running the same
+**The server has no LOD database to serve.** It has to build one - running the same
 capture over chunks it holds and keeping it current as the world changes.
 `LodWorker.Capture` reads `IWorldChunk` and `LodStore` needs only an `ILogger`, so both
 port as-is; the coordinator around them is the client `ModSystem` and does not.
 
 **The server cannot colour a palette.** `RegisterPaletteEntry` calls
 `Block.GetColorWithoutTint(ICoreClientAPI, BlockPos)`, which bottoms out in
-`capi.BlockTextureAtlas.GetAverageColor` — a dedicated server has no texture atlas at
+`capi.BlockTextureAtlas.GetAverageColor` - a dedicated server has no texture atlas at
 all, so the one field it physically cannot fill is the one every palette entry needs.
 Sections must therefore travel **colour-unresolved**, with the client filling colour in
 on receipt. That is less invasive than it sounds: `ResolvePendingPalette` already runs
 client-side on every section that comes off disk, already re-resolves block ids from
-codes, and already has the block in hand — it gains a colour pass.
+codes, and already has the block in hand - it gains a colour pass.
 
 **And it needs no schema change.** The first plan here was to persist an
-"unresolved" marker in the blob, which meant bumping `LodStore.SchemaVersion` — and that
+"unresolved" marker in the blob, which meant bumping `LodStore.SchemaVersion` - and that
 version is a cache-wipe: every existing player would lose the horizons they had explored,
 to enable something not yet switched on. Unnecessary, because the *transport* knows where
 a section came from. A section arriving over the channel gets the flag set in memory
@@ -290,7 +290,7 @@ and only the server reads them, and it never renders.
 by `HasDataSet`, populated at join by `LoadAllKeys` scanning the local DB. Against a
 remote source the client has no key set, so it can neither descend into remote areas
 nor tell that a request is worth making. The handshake therefore has to carry a **key
-manifest** — keys only, exactly what `LoadAllKeys` already yields, no blobs.
+manifest** - keys only, exactly what `LoadAllKeys` already yields, no blobs.
 
 ### 10.5 Precedence
 
@@ -303,7 +303,7 @@ overwrite would let stale terrain replace fresher ground the player is standing 
 
 Sending terrain a player has never visited hands them a survey of the world:
 coastlines, structures, other players' bases. The competing mods have the same
-property, but that is not a reason to ship it thoughtlessly — some admins will
+property, but that is not a reason to ship it thoughtlessly - some admins will
 consider it cheating, and they are not wrong to.
 
 It must be admin-configurable, and the default must be conservative:
@@ -319,7 +319,7 @@ It must be admin-configurable, and the default must be conservative:
   assumed: the warning sits only on the two `RegisterUdpChannel` overloads, never on
   `RegisterChannel`, and it is about NAT fragmentation of datagrams. The reliable
   channel has no such cap. Sections are still tens to hundreds of KB, so chunk them
-  anyway — for latency and peak memory, not because a limit forces it.
+  anyway - for latency and peak memory, not because a limit forces it.
 - **Rate limit and bound requests.** A client must not be able to ask for unlimited
   area; the server decides what it is willing to send, not the client.
 - **Protocol version in the handshake.** 0.1.1 clients already exist; a client must
@@ -330,8 +330,8 @@ It must be admin-configurable, and the default must be conservative:
 Going Universal means the assembly loads on servers for the first time. Split by side
 rather than branching inside one system:
 
-- `VintageHorizonsModSystem` — `ShouldLoad(side) => side == Client` (unchanged)
-- a new server system — `ShouldLoad(side) => side == Server`
+- `VintageHorizonsModSystem` - `ShouldLoad(side) => side == Client` (unchanged)
+- a new server system - `ShouldLoad(side) => side == Server`
 
 The client system casts `capi.World` to `ClientMain`, compiles shaders and registers a
 renderer. None of that may execute server-side, and the robust guarantee is that the
@@ -351,7 +351,7 @@ being wrong.
    clean stop, 0 errors on either side.
 3. ~~Key manifest~~ **done**. Sent in full at handshake, not by spatial query: a real
    5581-section world is 44 KB at 8 bytes a key, so the manifest is not the expensive
-   part — the sections are, at a mean 45.9 KB each (median 44.2, p95 86.4, max 154.5).
+   part - the sections are, at a mean 45.9 KB each (median 44.2, p95 86.4, max 154.5).
    That is what stage 4 has to budget for: "send what the client lacks" for that world
    would be 262 MB. Measured at volume: 5665 keys in 3 chunks, announced count exact,
    0 errors. Welcome and manifest come from one main-thread snapshot, because answering
@@ -360,7 +360,7 @@ being wrong.
 4. ~~Section transfer~~ **done**. The client asks only for keys the manifest offered that
    it has no local data for; the server answers with the stored blob verbatim, since the
    wire format *is* the storage format. Arrivals are installed and **persisted into the
-   client's own cache**, so the server seeds the cache rather than streaming to it — at a
+   client's own cache**, so the server seeds the cache rather than streaming to it - at a
    measured mean 45.9 KB a section, re-fetching every session was never an option, and a
    player who leaves the server keeps what they pulled. Measured end to end: 96 requested,
    96 received, 96 installed, 0 declined, 0 errors; 225 sections persisted locally
@@ -380,13 +380,13 @@ being wrong.
    nothing ever clears, so terrain froze rather than degraded.
 
    - Keys held back by the in-flight cap were dropped from the pending set while still in
-     `LodWorld.LoadsInFlight`, where the render scheduler skips them — stranded for the
+     `LodWorld.LoadsInFlight`, where the render scheduler skips them - stranded for the
      session, and transfer moved *nothing*. Only keys actually sent may be forgotten.
    - A declined key was cleared from the client's own in-flight set but not from
      `LoadsInFlight`, pinning its parent coarse forever.
    - **`HasDataSet` cannot answer "can local disk supply this?"** `RegisterInTree` walks
      *upward*, so registering any L0 key marks its L1–L6 ancestors as having data. Testing
-     manifest keys against it therefore skipped coarse keys the server really held —
+     manifest keys against it therefore skipped coarse keys the server really held -
      whichever of a node or its descendants was enumerated first decided the other's fate.
      Those keys stayed out of `RemoteOnly`, routed to a store with no such row, returned
      null, and landed in `LoadFailed`, which is permanent. It showed as hard-edged regions
@@ -405,12 +405,12 @@ being wrong.
 
    Serving defaults **on**, which is a deliberate departure from "conservative defaults":
    installing the mod on a server *is* the opt-in, and a mod that silently does nothing
-   until a file is edited reads as broken. The conservatism lives in the radius instead —
+   until a file is edited reads as broken. The conservatism lives in the radius instead -
    an admin who wants no sharing sets `EnableServing` false, and one who wants some gets a
    bounded amount rather than the whole world.
 
    The radius is checked when a section is about to be sent, against where the player is
-   *then*, not when the request was queued — a request that waited must not be honoured for
+   *then*, not when the request was queued - a request that waited must not be honoured for
    somewhere the player has since left. Distance is nearest-edge, not centre-to-centre: an
    L6 section spans 4096 blocks, so centre distance would refuse sections the player is
    standing inside.
@@ -423,7 +423,7 @@ being wrong.
 
 Singleplayer is **excluded**, and the earlier claim that it was the biggest early payoff
 was wrong. The integrated server does load the server side and the channel does connect
-in-process (§10.11) — but capture is driven by chunks loading, and in one process the
+in-process (§10.11) - but capture is driven by chunks loading, and in one process the
 server loads exactly the chunks the client is already shown, so a second pipeline
 duplicates the cache file, the work and the memory for nothing. Found live: two
 "LOD cache:" lines naming one database and a manifest of 3851 keys the host already had.
@@ -431,7 +431,7 @@ Server capture now requires `api.Server.IsDedicated`, and the server cache carri
 `-server` filename suffix so the collision cannot recur silently.
 
 What would genuinely pay in singleplayer is sweeping the savegame for chunks generated in
-past sessions — terrain the client has no other way to see. That is unbuilt, and is the
+past sessions - terrain the client has no other way to see. That is unbuilt, and is the
 real form of the payoff this section originally over-claimed.
 
 Running real worldgen on demand is explicitly not in scope: it is the expensive half of
@@ -452,14 +452,14 @@ been to, which is the last thing the competitors do that we would not.
 It stays optional, and below capture, for reasons that are not incidental:
 
 - **A sample is not a capture.** It yields height plus climate, so a column has to be
-  *synthesised* — the surface block inferred from temperature and rainfall — instead of
+  *synthesised* - the surface block inferred from temperature and rainfall - instead of
   replaying blocks that are actually there. No structures, no player edits, no accurate
   block choice. That is precisely the look we currently beat. It belongs in a third tier
   below server capture, which is already below local capture (§10.5), and must be
   overwritten the moment real data for the same key arrives.
 - **It forces a client download.** Its `modinfo.json` declares `RequiredOnClient: true`
   even though `ShouldLoad` restricts it to the server, so a server that installs it
-  makes *every* player fetch it — including players not running VintageHorizons. An
+  makes *every* player fetch it - including players not running VintageHorizons. An
   admin add-on that taxes uninvolved players is a real cost to state plainly in the
   docs, not a footnote.
 - **It is only as right as the worldgen it models.** Accuracy degrades with terrain-gen
@@ -468,11 +468,11 @@ It stays optional, and below capture, for reasons that are not incidental:
   in §10.6 covers this too.
 
 Licensing: the repository ships no LICENSE, so it is all rights reserved. Integration is
-reflection-only — the documented path, needing no assembly reference and no copied code.
+reflection-only - the documented path, needing no assembly reference and no copied code.
 Same rule as Voxy (§9): read for understanding, copy nothing.
 
 Client-side prediction is a dead end, recorded so it is not re-derived. `IWorldAccessor.Seed`
-is documented "Accessible on the server and the client", which makes it look feasible —
+is documented "Accessible on the server and the client", which makes it look feasible -
 but `AssetCategory.worldgen` is `EnumAppSide.Server`, so a client never loads the landform
 or geologic-province definitions the noise is shaped by, and a modded server's worldgen is
 not knowable from the client at all.
@@ -481,12 +481,12 @@ not knowable from the client at all.
 
 **Wrong LOD colour for blocks whose block-colour texture did not resolve.** Reported by a
 player running Conquest Reforged + Better Ruins: blocks look correct up close but wrong at
-LOD distance. Partly fixed — `DescribePalette` now rejects an unusable atlas sub-id (out of
+LOD distance. Partly fixed - `DescribePalette` now rejects an unusable atlas sub-id (out of
 range, or an unassigned `Positions` entry) and the unknown.png average, and falls back to
 any other baked texture the block owns, cached per block id.
 
 Root cause is in vanilla, not in the mods: `Block.LoadTextureSubIdForBlockColor` tries the
-`textureCodeForBlockColor` attribute, then `"up"`, then `Textures.First()` — and that last
+`textureCodeForBlockColor` attribute, then `"up"`, then `Textures.First()` - and that last
 step ends in `?? 0`, so a block whose first texture in dictionary order has no `Baked`
 entry silently resolves to atlas sub-id 0. Other faces bake fine, which is exactly why the
 block looks right up close and wrong only in LOD. Confirmed firing on vanilla
@@ -494,7 +494,7 @@ block looks right up close and wrong only in LOD. Confirmed firing on vanilla
 
 **Not confirmed to be the reported symptom.** The player described *purple*, and
 `unknown.png` measures near-white (32×32, mostly white with a small red mark, average
-255,249,249 — matching the `00FCFCFC` the atlas reports). So a magenta block is coming from
+255,249,249 - matching the `00FCFCFC` the atlas reports). So a magenta block is coming from
 somewhere else, most likely `GetAverageColor` on a sub-id the atlas never assigned, which
 the range/null guard now also catches. To close it properly, ask the reporter for the block
 code, whether it looks right up close, and any "texture not found" lines in
@@ -516,7 +516,7 @@ where the design was wrong.
 
 **`GetChannelState` is not the test to use.** Against a vanilla server it returned
 `Connected` for a channel that was not, and `SendPacket` then threw *"Attempting to send
-data to a not connected channel"* — from inside a `LevelFinalize` handler, which the
+data to a not connected channel"* - from inside a `LevelFinalize` handler, which the
 engine aborts on exception, so the optional extra took out the rest of the mod's own
 startup. Guard on `IClientNetworkChannel.Connected`, which is what the engine's error
 message names, and keep the handshake at the end of the handler behind a `try`. An
@@ -524,8 +524,8 @@ optional feature must never sit upstream of the work it is optional to.
 
 **One cosmetic cost on vanilla servers.** The client logs
 *"Client registered 1 network channels (vintagehorizons) the server does not know about"*
-at startup. Unavoidable for an optional channel — registration has to precede the
-connection handshake, so there is no point at which we could know to skip it — and it is
+at startup. Unavoidable for an optional channel - registration has to precede the
+connection handshake, so there is no point at which we could know to skip it - and it is
 a log line, not a dialog.
 
 **Do not ship `side: Universal` before stage 3.** It changes how the mod is categorised
@@ -554,12 +554,12 @@ regimen is local-only by necessity, not by preference.
 `fast` is a plain console assert harness in `tests/VintageHorizons.Checks`, run with
 `dotnet run`. No test framework: this repo has no NuGet dependencies at all and none
 cached locally, so a framework would mean the fast tier could not run without a network.
-It is also sequential, which is not a limitation to work around — `LodWorld.DetailDistance`
+It is also sequential, which is not a limitation to work around - `LodWorld.DetailDistance`
 is a mutable static that several checks set, so sequential is the only correct order.
 
 The one thing that could have sunk the tier is assembly loading. The mod references the
 game DLLs with `Private=false` so they never travel in the release zip, which also keeps
-them out of its `deps.json` entirely — nothing puts them on the TPA list, and references
+them out of its `deps.json` entirely - nothing puts them on the TPA list, and references
 do not flow through `ProjectReference`. The test csproj restates them without that flag,
 and `GameAssemblies` installs an `AssemblyLoadContext.Default.Resolving` handler from a
 `[ModuleInitializer]` that probes the install directly. `ProbeChecks` runs first and does
@@ -570,7 +570,7 @@ existing.
 ### 12.2 What the fast tier found immediately
 
 **The shader constant guard could not catch what it existed to catch.** `LodTerrainRenderer`
-compared `LodTintRegistry.MaxSlots` against `LodTintRegistry.GlslTintSlots` — two C#
+compared `LodTintRegistry.MaxSlots` against `LodTintRegistry.GlslTintSlots` - two C#
 constants in the same file. `GlslTintSlots` was a hand-maintained mirror of a number that
 actually lives in `lodterrain.vsh` and `.fsh`, so editing a shader and forgetting the
 mirror left the guard passing while water decoded as opaque and thin plants decoded as
@@ -579,14 +579,14 @@ unreachable code, because both sides were compile-time constants with the same v
 
 Both the mirror and the dead guard are now gone, and three sources of truth are two. The
 static suite reads the shader files, which is the only thing that can close it, and it
-also catches the `.vsh` and `.fsh` disagreeing with each other — which nothing did before.
+also catches the `.vsh` and `.fsh` disagreeing with each other - which nothing did before.
 
 While there, `MaxSlots * 3 <= 256`: the mesher packs three tint bands into a byte alpha,
 so raising `MaxSlots` past 85 wraps the thin band into the opaque band silently.
 
 **A fresh install announced that it was discarding data it never had.** `PurgeOutdatedData`
 compared the stored `FormatVersion` against the schema version, and a brand new database
-has no such row — so `null != "6"` and every first-ever run logged *"LOD cache semantics
+has no such row - so `null != "6"` and every first-ever run logged *"LOD cache semantics
 changed; discarding old cached data"*. Found by the smoke tier on its first execution,
 because the assertion "this line must not appear" is unconditional. Now conditional on a
 version actually having been present.
@@ -599,8 +599,8 @@ overload that does the player deref, so the mid-join no-position case keeps its 
 answer); the three `LodAssistClient` packet handlers became `internal` with
 `InternalsVisibleTo`.
 
-The fourth is `LodRemoteKeySet`, extracted from `LodPipeline`. That set logic is pure —
-it needs only a `LodWorld`, which has no constructor and no API field — but it sat behind
+The fourth is `LodRemoteKeySet`, extracted from `LodPipeline`. That set logic is pure -
+it needs only a `LodWorld`, which has no constructor and no API field - but it sat behind
 a constructor that takes an `ICoreAPI` and starts five threads, so it could not be reached.
 It holds the `localKeys`-versus-`HasDataSet` distinction, the most expensive bug in the
 project's history, and it now has a regression test that fails on reintroduction.
@@ -622,9 +622,9 @@ symptom that took three wrong diagnoses to find the first time.
 
 ### 12.5 The serve radius, finally verified
 
-The radius cap had been measured once and never watched. It is the map-revealing control —
+The radius cap had been measured once and never watched. It is the map-revealing control -
 sections come from wherever players have collectively been, so without it a new player
-could pull a survey of the whole explored world without travelling — and it was the one
+could pull a survey of the whole explored world without travelling - and it was the one
 admin-facing setting with no verification at all.
 
 The trap is that **a bare decline count proves nothing**. A section resident in RAM but not
@@ -641,19 +641,19 @@ difference:
 Same 861-key manifest both times. The cap cut delivered sections by more than half and
 raised refusals by an order of magnitude, and because the control run had the identical
 data available, that difference can only be the radius. A second independent run
-reproduced it closely — 302 installed / 386 declined capped against 629 / 46 uncapped —
+reproduced it closely - 302 installed / 386 declined capped against 629 / 46 uncapped -
 so the effect is the control, not one lucky sample.
 
 **The visual half does not work, and the honest thing is to say so rather than dress it
 up.** The check captures a screenshot pair from one vantage, capped and uncapped, and the
 images are not reproducible run to run. Three attempts, same route, same configs:
 
-- y=420 put the camera inside the cloud layer — two frames of white fog.
-- y=260, 75s settle — the capped frame showed near terrain plus a patchwork of flat coarse
+- y=420 put the camera inside the cloud layer - two frames of white fog.
+- y=260, 75s settle - the capped frame showed near terrain plus a patchwork of flat coarse
   plates, the uncapped frame showed continuous terrain. Tempting to read as the cap, but
   the capped client was screenshotted with 348 sections resident and only 20 meshed, so
   most of what distinguished the two frames was meshing progress.
-- y=260, 180s settle — the capped frame came back **empty**, no terrain at all, while the
+- y=260, 180s settle - the capped frame came back **empty**, no terrain at all, while the
   uncapped frame showed a full landscape. A capped run cannot legitimately render less at
   180s than it did at 75s, so something other than the radius is driving the picture.
 
@@ -662,14 +662,14 @@ The counters, over the same three runs, were tight: 274/302/302 installed capped
 
 Two things work against a usable image and neither is cheap to fix: the game's atmospheric
 fog swallows detail well before 512 blocks at any vantage that also clears the cloud layer,
-and what the client has *fetched* is not what it has *drawn* — meshing, eviction and the
+and what the client has *fetched* is not what it has *drawn* - meshing, eviction and the
 quadtree's own descent all sit in between. **The screenshot step is therefore informational
 only.** It asserts that two captures were produced, never what is in them, and nothing
 should be concluded from the pair without reading the counters beside it.
 
 ### 12.6 What tier 3 got wrong first
 
-Every scenario failure on the first full run was the harness, not the mod — which is its
+Every scenario failure on the first full run was the harness, not the mod - which is its
 own lesson, since each one would have read as a product bug to anyone trusting the output:
 
 - **`no-client-mod` waited for a log line that does not exist.** There is no "Loaded Game"
@@ -678,7 +678,7 @@ own lesson, since each one would have read as a product bug to anyone trusting t
   be rejected. Receiving the block registry only happens after acceptance.
 - **`deferral` could never have deferred.** Farseer is `requiredOnServer`, so against the
   vanilla server the scenario used, the client disabled it and `IsModEnabled` returned
-  false — nothing to defer to. Installing it on both sides is also the real-world shape.
+  false - nothing to defer to. Installing it on both sides is also the real-world shape.
 - **`deferral` waited for "Level finalized"**, which the deferring path returns before ever
   reaching.
 - **Scenarios were not standalone.** `no-client-mod` relied on a server an earlier scenario
@@ -691,3 +691,72 @@ own lesson, since each one would have read as a product bug to anyone trusting t
   busy port four times at 10s, and Linux holds TIME_WAIT for about 60s. That was survivable
   for as long as every restart had a long client run in front of it; adding the uncapped
   control meant restarting twice in a row, and the bind failed for good. Now six at 15s.
+
+## 13. Savegame sweeping
+
+The LOD cache only ever held terrain that happened to stream past a player running this
+mod. The savegame holds everything anyone has ever generated. On a test world that was
+12,632 generated chunk columns against 620 captured sections - and a world played for weeks
+skews far harder. All of it is already on disk, already paid for.
+
+Sweeping loads those columns so capture sees them. It is the cheap half of pre-generation
+and the half worth defaulting on: pregen *creates* terrain nobody has visited, costing
+worldgen time and disk and revealing places no player has been, while a sweep creates
+nothing and reveals nowhere new.
+
+### 13.1 Keeping the "generates nothing" promise
+
+`LoadChunkColumnPriority` generates a column that is not there, so the gate has to be
+exact. `TestMapChunkExists` is the supported check and is documented as not loading chunk
+data - the guarantee comes from the API contract rather than from any assumption about the
+save format.
+
+Gating the target column alone is not enough, and this is the part that had to be measured.
+Worldgen runs in passes, and a column only reaches `Done` once its neighbours have reached
+an earlier pass - which needs *their* neighbours. So loading a column near the frontier of
+explored terrain makes the engine generate whatever is missing beside it. Sweeping one
+world at each neighbourhood width, counting the chunk columns the savegame gained:
+
+| neighbourhood required intact | columns generated |
+| --- | --- |
+| none (target only) | 1460 |
+| radius 1 (3×3) | 714 |
+| radius 2 (5×5) | 509 |
+| radius 4 (9×9) | **0** |
+
+Radius 3 was not tested, so 4 may be one wider than strictly needed. Erring wide is the
+right direction: too narrow silently breaks the only promise the feature makes, while too
+wide costs a slightly thicker border of terrain going uncaptured.
+
+What identified the cause was sweeping a radius that fell entirely *inside* generated
+terrain: 4,225 of 4,225 positions existed, all were loaded, and the savegame gained exactly
+zero. That ruled out loading as the mechanism and left the frontier.
+
+Because neighbour state has to be known before anything is loaded, the sweep is two passes:
+probe every position (reaching one neighbourhood beyond the load area, so edge columns are
+not skipped for want of information), then load only what has an intact surround.
+
+### 13.2 How swept terrain reaches a singleplayer client
+
+Only the server side can ask for columns the player is nowhere near, and only the client
+side has a texture atlas. Each half holds exactly what the other lacks, so swept sections
+travel the same road as sections fetched from a real server: captured with every palette
+colour at 0, written to the `-server` cache, then read by the client, recoloured from their
+block codes on install, and stored in its own cache. `LodRemoteKeySet` does not care whether
+a blob arrived over a socket or off the disk beside it, which is why the client half is a
+reader (`LodLocalOfferSource`) rather than a subsystem.
+
+Verified end to end on a singleplayer world of 8,766 generated columns: the server side
+swept 5,847 of them, the client finished with 670 sections resident having captured only
+309 columns itself, the savegame row counts were unchanged, and sampling palette entries
+showed the server cache **0% coloured** against the client cache **100% coloured** - which
+is the recolour path working, since swept geometry starts with no colour at all.
+
+Adoption is demand-driven: the client took 698 of the 2,158 sections the sweep produced,
+because `RemoteWanted()` is fed by what the render path actually wants to draw.
+
+The singleplayer guard in `LodServerCaptureSystem` is therefore conditional rather than
+absolute. Running both sides in one process is still pointless for ordinary play - the
+server loads exactly the chunks the client is shown - but a sweep deliberately loads
+columns the client will never be shown, which is the one thing that side can do there that
+the client cannot do for itself.

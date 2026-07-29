@@ -88,7 +88,7 @@ public static class MesherChecks
     /// <summary>
     /// The tint slot rides in the vertex alpha byte in three bands, because the vertex
     /// format is position plus colour and there is nowhere else to put it. The shader
-    /// divides by TINT_SLOTS to recover which band it is — so the band boundaries here and
+    /// divides by TINT_SLOTS to recover which band it is - so the band boundaries here and
     /// the constant in the GLSL are the same number seen from two sides.
     /// </summary>
     static void AlphaBands(Check c)
@@ -211,8 +211,8 @@ public static class MesherChecks
     /// <summary>
     /// Walls the subject column emits on the edge it shares with its neighbour.
     ///
-    /// Both columns' walls land on the same plane — the subject's east face and the
-    /// neighbour's west face are both at x = 11 — so the plane alone cannot tell them
+    /// Both columns' walls land on the same plane - the subject's east face and the
+    /// neighbour's west face are both at x = 11 - so the plane alone cannot tell them
     /// apart. The pass does: a translucent column writes to the water buffer and an opaque
     /// one to the opaque buffer, and the two columns here always differ in exactly that.
     /// </summary>

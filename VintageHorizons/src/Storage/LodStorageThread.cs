@@ -6,7 +6,7 @@ namespace VintageHorizons;
 /// Serializes and writes LOD sections away from the render thread.
 ///
 /// Measured before this existed: save batches cost ~10-22ms of main-thread time on
-/// average and peaked near 49ms — an entire game tick — during exploration, which is
+/// average and peaked near 49ms - an entire game tick - during exploration, which is
 /// exactly when the player is moving and a stall is most visible. Deflate happens
 /// here, outside the store's transaction lock, so a main-thread demand load waits at
 /// most for a row write.
@@ -152,7 +152,7 @@ public class LodStorageThread : IDisposable
         }
     }
 
-    /// <summary>Sections enqueued but not yet written — surfaced in the stats line.</summary>
+    /// <summary>Sections enqueued but not yet written - surfaced in the stats line.</summary>
     public long Backlog => Interlocked.Read(ref enqueuedCount) - Interlocked.Read(ref completedCount);
 
     public void Dispose()

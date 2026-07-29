@@ -6,7 +6,7 @@ namespace VintageHorizons.Checks;
 /// fast tier into something that needs a network before it can tell you anything.
 ///
 /// Assertions never throw. A suite that fails its third assertion should still report the
-/// fourth — when a shared invariant breaks, the shape of the whole failure set is what
+/// fourth - when a shared invariant breaks, the shape of the whole failure set is what
 /// points at the cause, and stopping at the first one hides it.
 /// </summary>
 public sealed class Check

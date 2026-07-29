@@ -51,7 +51,7 @@ public static class PolicyChecks
     /// <summary>
     /// "fern" is a prefix of "ferntree", and a ferntree is an actual tree. The material
     /// guard is the only thing that stops the prefix match from turning every ferntree
-    /// trunk into a quarter-block mat — the prefix list alone would classify it as cover.
+    /// trunk into a quarter-block mat - the prefix list alone would classify it as cover.
     /// </summary>
     static void FernTree(Check c)
     {

@@ -17,7 +17,7 @@ public class VintageHorizonsConfig
 
 /// <summary>
 /// Client entry point: wires the shared <see cref="LodPipeline"/> to client events and
-/// owns everything the server has no equivalent of — the renderer, tint registry, chat
+/// owns everything the server has no equivalent of - the renderer, tint registry, chat
 /// commands and telemetry. Chunk columns arrive from `ChunkDirty` and go straight to the
 /// pipeline, which does the capture, mip and persistence work.
 /// See DESIGN.md at the repo root.
@@ -128,6 +128,7 @@ public class VintageHorizonsModSystem : ModSystem
 
         ReportFillIn();
         PumpServerAssist();
+        PumpLocalOffers();
         pipeline.Tick();
 
         var pos = capi.World.Player.Entity.Pos;
@@ -162,7 +163,7 @@ public class VintageHorizonsModSystem : ModSystem
 
         // Nearest first. The render path asks for exactly the sections it wants, but far
         // more than the in-flight cap allows at once, and an unordered set hands the
-        // network whatever hashes first — so distant terrain arrived while ground in front
+        // network whatever hashes first - so distant terrain arrived while ground in front
         // of the player stayed at its coarse parent, which is what the no-holes rule draws
         // until all four children land. Sorting here rather than in the pipeline keeps the
         // pipeline free of any notion of where the viewer is.
@@ -186,6 +187,80 @@ public class VintageHorizonsModSystem : ModSystem
     }
 
     bool loggedRemoteKeys;
+
+    /// <summary>
+    /// The server side's cache for this same singleplayer world, when it has swept one.
+    /// Null on a dedicated server (the network assist covers that) and on any world that
+    /// has never swept.
+    /// </summary>
+    LodLocalOfferSource? localOffers;
+    bool loggedLocalOffers;
+
+    /// <summary>
+    /// Adopt sections the server side swept out of the savegame.
+    ///
+    /// Identical in shape to PumpServerAssist and deliberately so - same remote-key
+    /// bookkeeping, same recolour on install, same nearest-first ordering. Only the
+    /// transport differs, and there is no in-flight cap because a local file read has no
+    /// round trip to protect. The budget per tick is there so a sweep of ten thousand
+    /// sections does not try to install all of them in one frame.
+    /// </summary>
+    void PumpLocalOffers()
+    {
+        if (localOffers == null) return;
+
+        // The sweep writes continuously, so re-reading the key list picks up whatever has
+        // landed since. AddRemoteKeys ignores anything already known, and anything local
+        // disk already holds.
+        long[] offered = localOffers.Keys();
+        if (offered.Length > 0) pipeline.AddRemoteKeys(offered);
+
+        long[] wanted = pipeline.RemoteWanted();
+        if (wanted.Length == 0) return;
+
+        if (wanted.Length > 1)
+        {
+            var at = capi.World.Player.Entity.Pos;
+            double px = at.X, pz = at.Z;
+            Array.Sort(wanted, (a, b) =>
+                LodWorld.NearestDistanceSqTo(a, px, pz).CompareTo(LodWorld.NearestDistanceSqTo(b, px, pz)));
+        }
+
+        int budget = Math.Min(wanted.Length, LocalOffersPerTick);
+        var taken = new long[budget];
+        for (int i = 0; i < budget; i++)
+        {
+            long key = wanted[i];
+            taken[i] = key;
+
+            byte[]? blob = localOffers.Blob(key);
+            // A miss is ordinary while the sweep is still running: the key was listed but
+            // its row is not written yet. MarkRemoteUnavailable is permanent, so it must
+            // not be used for "not yet" - leaving the key alone lets a later tick retry.
+            if (blob == null || blob.Length == 0) continue;
+
+            if (!pipeline.InstallForeignBlob(key, blob, RecolorForeignSection))
+            {
+                pipeline.MarkRemoteUnavailable(key);
+            }
+        }
+        pipeline.MarkRemoteRequested(taken);
+
+        if (!loggedLocalOffers && offered.Length > 0)
+        {
+            loggedLocalOffers = true;
+            Mod.Logger.Notification(
+                "Savegame sweep: {0} sections built from terrain generated in earlier "
+                + "sessions are available; adopting them as the view needs them.", offered.Length);
+        }
+    }
+
+    /// <summary>
+    /// Sections installed from the local sweep per tick. Higher than the network's in-flight
+    /// cap because there is no round trip to hide, but still bounded: each install
+    /// decompresses a blob and recolours a palette on the main thread.
+    /// </summary>
+    const int LocalOffersPerTick = 4;
 
     /// <summary>
     /// Fill in palette colours for a section captured by a server, which had no texture
@@ -230,13 +305,13 @@ public class VintageHorizonsModSystem : ModSystem
         return (color, (byte)tints.SlotFor(block));
     }
 
-    /// <summary>Average colour of unknown.png (near-white, not magenta — measured).</summary>
+    /// <summary>Average colour of unknown.png (near-white, not magenta - measured).</summary>
     int unknownTextureColor;
 
     /// <summary>
     /// Whether an atlas sub-id actually names a texture. `GetAverageColor` on an unassigned
     /// or out-of-range sub-id reads whatever the atlas holds there, which is where a
-    /// nonsense LOD colour comes from — and unlike the unknown.png case, that does not
+    /// nonsense LOD colour comes from - and unlike the unknown.png case, that does not
     /// require knowing what the placeholder looks like to detect.
     /// </summary>
     bool IsUsableAtlasTexture(int subId)
@@ -256,7 +331,7 @@ public class VintageHorizonsModSystem : ModSystem
     /// as itself instead of as a placeholder or as whatever the atlas holds at a bogus id.
     ///
     /// Vanilla picks that texture in Block.LoadTextureSubIdForBlockColor: the
-    /// 'textureCodeForBlockColor' attribute, else "up", else `Textures.First()` — and that
+    /// 'textureCodeForBlockColor' attribute, else "up", else `Textures.First()` - and that
     /// last step ends in `?? 0`, so a block whose first texture in dictionary order has no
     /// Baked entry silently resolves to atlas subid 0, which is unknown.png. The block's
     /// other faces are baked fine, which is why it looks correct up close and magenta only
@@ -264,7 +339,7 @@ public class VintageHorizonsModSystem : ModSystem
     /// not a modded-content problem -- content-heavy block packs just hit it more often.
     ///
     /// So: use any of the block's own baked textures instead of the first one. Cached per
-    /// block id — the answer cannot change within a session, and a palette entry is
+    /// block id - the answer cannot change within a session, and a palette entry is
     /// registered once per section, which is thousands of times per world.
     /// </summary>
     int ColorFromAnyTexture(Block block, int fallback)
@@ -345,6 +420,14 @@ public class VintageHorizonsModSystem : ModSystem
         joinClock.Restart();
         nextMilestone = 0;
 
+        // A singleplayer world whose server side has swept the savegame leaves its results
+        // in a sibling cache. Nothing to open on a dedicated server, where the same
+        // sections arrive over the network instead.
+        if (pipeline.DbPath is string dbPath)
+        {
+            localOffers = LodLocalOfferSource.TryOpen(dbPath, Mod.Logger);
+        }
+
         // Last, and after the pipeline is live. An exception in a LevelFinalize handler
         // skips everything the handler has left to do, so an optional extra must not sit
         // upstream of the mod's actual job -- it did, and it broke exactly the
@@ -358,7 +441,7 @@ public class VintageHorizonsModSystem : ModSystem
         capi.Event.RegisterCallback(_ => LogStats("Stats after 30s"), 30000);
 
         // Continuous telemetry. Was tied to AutoUnpause, which meant an *attended* session
-        // — the only kind where someone can say "this looks wrong" — was the one case with
+        // - the only kind where someone can say "this looks wrong" - was the one case with
         // no ongoing numbers to explain it. Its own switch now, so watching and driving are
         // independent.
         if (renderer.AutoUnpause || Environment.GetEnvironmentVariable("VINTAGEHORIZONS_STATS") == "1")
@@ -458,6 +541,12 @@ public class VintageHorizonsModSystem : ModSystem
     void OnLeaveWorld()
     {
         assist?.Reset();
+        // Belongs to the world being left: the next one is a different savegame with a
+        // different sibling cache, and holding this open would keep a file handle on a
+        // database the server side may want to delete or replace.
+        localOffers?.Dispose();
+        localOffers = null;
+        loggedLocalOffers = false;
         pipeline.Close();
         while (pipeline.Worker.MeshResults.TryDequeue(out _)) { }
         renderer.ClearMeshes();
@@ -532,7 +621,7 @@ public class VintageHorizonsModSystem : ModSystem
                     (int)LodWorld.MinDetailDistance, (int)LodWorld.MaxDetailDistance);
                 SaveConfig();
                 return TextCommandResult.Success(
-                    $"[VintageHorizons] detail distance {(int)LodWorld.DetailDistance} — full detail out to " +
+                    $"[VintageHorizons] detail distance {(int)LodWorld.DetailDistance} - full detail out to " +
                     $"{(int)LodWorld.DetailDistance * 2} blocks (saved). Terrain re-selects over the next few seconds.");
             });
     }

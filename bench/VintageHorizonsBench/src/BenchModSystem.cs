@@ -123,7 +123,7 @@ public class BenchModSystem : ModSystem, IRenderer
 
     /// <summary>
     /// Dismiss any open dialog. An unattended run has no window focus, so the client
-    /// puts up its "Game is still running" menu and sits there — the first benchmark
+    /// puts up its "Game is still running" menu and sits there - the first benchmark
     /// measured frame times with that overlay covering the view, which is not the
     /// gameplay it was supposed to measure.
     /// </summary>

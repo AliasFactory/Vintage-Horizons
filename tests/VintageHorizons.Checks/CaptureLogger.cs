@@ -9,7 +9,7 @@ namespace VintageHorizons.Checks;
 /// Implements the interface directly rather than extending LoggerBase, deliberately:
 /// LoggerBase's static constructor throws on purpose and then reads a filename out of the
 /// stack trace to find the source root. Without a PDB beside the DLL that filename is null,
-/// so the NRE happens inside the catch and escapes as a TypeInitializationException — a
+/// so the NRE happens inside the catch and escapes as a TypeInitializationException - a
 /// confusing failure a long way from its cause.
 /// </summary>
 public sealed class CaptureLogger : ILogger

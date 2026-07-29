@@ -10,13 +10,13 @@ VH_SANDBOX="$VH_ROOT/.testdata"
 VH_GAME="${VINTAGE_STORY:-$HOME/Games/vintagestory1.22.5}"
 
 # The desktop launcher's DOTNET_ROOT (~/.dotnet) is stale on this machine, but a
-# caller who sets it deliberately must win — same contract as dev-run.sh.
+# caller who sets it deliberately must win - same contract as dev-run.sh.
 export DOTNET_ROOT="${DOTNET_ROOT:-/usr/share/dotnet}"
 
 # True only if <pid> is live AND its command line runs against our sandbox
 # dataPath. Liveness alone is not enough: a crashed instance leaves its pidfile
 # behind and the kernel recycles PIDs, so a stale pidfile can point at an
-# unrelated process — possibly the user's own game.
+# unrelated process - possibly the user's own game.
 vh_is_ours() {
     local pid="$1"
     [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]] || return 1
@@ -52,7 +52,7 @@ vh_rotate_log() {
     return 0
 }
 
-# Launch detached, record the PID, then confirm it survived startup — a
+# Launch detached, record the PID, then confirm it survived startup - a
 # backgrounded failure never trips set -e, and a pidfile pointing at a dead PID
 # is exactly what feeds the recycled-PID hazard.
 vh_launch() {
@@ -80,7 +80,7 @@ vh_launch() {
 # Wait for an instance to actually be gone after test-stop.sh asked it to stop.
 #
 # test-stop.sh sends SIGTERM, polls for 10s, and then deliberately gives up rather than
-# escalating to SIGKILL — the right call, because a client mid-shutdown is flushing its
+# escalating to SIGKILL - the right call, because a client mid-shutdown is flushing its
 # LOD cache and killing it there is how a half-written database happens. But a client
 # with a few thousand sections to write regularly takes longer than 10s, and a caller
 # that starts the next instance immediately trips vh_guard_not_running on a pidfile that

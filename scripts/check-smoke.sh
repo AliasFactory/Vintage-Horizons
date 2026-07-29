@@ -9,7 +9,7 @@ set -euo pipefail
 # check that what was written can be read back.
 #
 # Everything here goes through the existing test-*.sh isolation plumbing unchanged.
-# Those rules are safety-critical — a violation once crashed the user's live game —
+# Those rules are safety-critical - a violation once crashed the user's live game -
 # and this script is a caller, never a modification.
 #
 # Usage: check-smoke.sh [--settle <seconds>]
@@ -62,7 +62,7 @@ run_client() {
 
     # Stop before asserting: the final statistics line and the storage drain both only
     # happen on a clean shutdown, and "nothing left unwritten" is exactly what we want
-    # to know. Then wait for it to really be gone — flushing a few thousand sections
+    # to know. Then wait for it to really be gone - flushing a few thousand sections
     # regularly outlasts test-stop.sh's 10s patience, and it must not be hurried.
     "$VH_ROOT/scripts/test-stop.sh" client >/dev/null
     vh_wait_stopped "$VH_SANDBOX/test-instance.pid" 120 \

@@ -7,8 +7,8 @@ namespace VintageHorizons;
 
 /// <summary>
 /// Per-world SQLite cache for LOD sections, built on the game's own SQLiteDBConnection
-/// (bundled Microsoft.Data.Sqlite — no external dependencies). One row per
-/// (detail level, section). Palettes store block CODES, not ids — ids are savegame-
+/// (bundled Microsoft.Data.Sqlite - no external dependencies). One row per
+/// (detail level, section). Palettes store block CODES, not ids - ids are savegame-
 /// local and can shift across game/mod updates (DH's lesson). The ApplyToParent flag
 /// persists the mip-propagation queue so pyramid consistency survives crashes.
 /// </summary>
@@ -70,7 +70,7 @@ public class LodStore : SQLiteDBConnection
 
         // Only say this when a cache really did hold an older format. A brand new
         // database has no FormatVersion row at all, so the check below is unequal on a
-        // first-ever run too — and announcing that we are discarding someone's data
+        // first-ever run too - and announcing that we are discarding someone's data
         // before they have any is alarming and untrue. The write still happens either
         // way; it is the claim that is conditional.
         if (existing != null)
@@ -162,7 +162,7 @@ public class LodStore : SQLiteDBConnection
             if (section == null)
             {
                 // Unreadable data must never linger to slow down or confuse future
-                // sessions — delete on sight; the area recaptures on exploration.
+                // sessions - delete on sight; the area recaptures on exploration.
                 logger.Warning("[VintageHorizons] Deleting unreadable cached section L{0} {1},{2}", level, sx, sz);
                 DeleteSection(level, sx, sz);
             }
@@ -172,7 +172,7 @@ public class LodStore : SQLiteDBConnection
 
     /// <summary>
     /// The stored blob, unparsed. The wire format is the storage format, so serving a
-    /// section over the network is a blob read and nothing else — no deserialize and
+    /// section over the network is a blob read and nothing else - no deserialize and
     /// re-serialize round trip on the server, which never needs to look inside.
     /// </summary>
     public byte[]? LoadBlob(int level, int sx, int sz)
@@ -200,7 +200,7 @@ public class LodStore : SQLiteDBConnection
     SqliteCommand? loadBlobCmd;
 
     /// <summary>
-    /// Parse a blob that did not come from this database — i.e. one off the network.
+    /// Parse a blob that did not come from this database - i.e. one off the network.
     /// Same reader as the disk path, so a section that survives the wire is
     /// indistinguishable from one that was stored locally.
     /// </summary>
@@ -208,7 +208,7 @@ public class LodStore : SQLiteDBConnection
 
     /// <summary>
     /// Finish a section that was deserialized off-thread by resolving its palette
-    /// block ids. MUST run on the main thread — it reads the block registry.
+    /// block ids. MUST run on the main thread - it reads the block registry.
     /// </summary>
     /// <summary>
     /// Recompute a palette entry's flags and tint slot from the live block. Set by the
@@ -264,7 +264,7 @@ public class LodStore : SQLiteDBConnection
     }
 
     /// <summary>
-    /// Enumerate stored section KEYS only — no blob parsing. Join-time cost stays
+    /// Enumerate stored section KEYS only - no blob parsing. Join-time cost stays
     /// proportional to explored area count, not data size; section data itself is
     /// demand-loaded when the renderer or pipeline first needs it.
     /// </summary>

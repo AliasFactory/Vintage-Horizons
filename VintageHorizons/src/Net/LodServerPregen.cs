@@ -18,7 +18,7 @@ namespace VintageHorizons.Net;
 /// hold in memory at once.
 ///
 /// Spiral order, not row-major: it is the order coverage is actually wanted in if the run
-/// is interrupted — a partial spiral is a usable disc around spawn, a partial raster is a
+/// is interrupted - a partial spiral is a usable disc around spawn, a partial raster is a
 /// band across the map.
 /// </summary>
 public class LodServerPregen

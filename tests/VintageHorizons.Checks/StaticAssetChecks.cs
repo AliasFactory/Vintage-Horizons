@@ -60,7 +60,7 @@ public static class StaticAssetChecks
     /// as water with no compile error.
     ///
     /// This used to be guarded at shader load by comparing MaxSlots against a second C#
-    /// constant that mirrored the shader's value by hand — two constants in the same file,
+    /// constant that mirrored the shader's value by hand - two constants in the same file,
     /// which cannot detect a shader being edited at all. The compiler said as much: that
     /// branch raised CS0162, unreachable code. Both the mirror and the dead guard are gone.
     ///
@@ -94,7 +94,7 @@ public static class StaticAssetChecks
     /// LodMesher packs the tint slot into a vertex alpha byte in three bands: opaque at
     /// slot, water at MaxSlots + slot, thin at MaxSlots * 2 + slot. Alpha is a byte, so the
     /// largest encodable value is MaxSlots * 3 - 1. Raise MaxSlots past 85 and the thin band
-    /// wraps into the opaque band with no error anywhere — thin plants would render as solid
+    /// wraps into the opaque band with no error anywhere - thin plants would render as solid
     /// terrain of an arbitrary tint.
     /// </summary>
     static void AlphaPacking(Check c)

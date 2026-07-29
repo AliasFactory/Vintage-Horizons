@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stop sandbox test instances — ONLY via their own pidfiles, and ONLY after
+# Stop sandbox test instances - ONLY via their own pidfiles, and ONLY after
 # confirming the process really is our sandbox instance.
 #
 # Two hard rules, both learned the hard way:
 #  - Never kill by process name or argument pattern: the user runs their personal
 #    game concurrently and pgrep matching has burned us before.
 #  - Never trust a pidfile on liveness alone. A crashed instance leaves its
-#    pidfile behind, and the kernel recycles PIDs — the recycled PID could be
+#    pidfile behind, and the kernel recycles PIDs - the recycled PID could be
 #    the user's own game. is_ours() checks /proc/<pid>/cmdline for the sandbox
 #    dataPath before any signal is sent.
 
@@ -16,7 +16,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SANDBOX="$ROOT/.testdata"
 
 # True only if <pid> is a live process whose command line runs the game against
-# our sandbox dataPath. Anything else — dead, recycled, or the user's own game —
+# our sandbox dataPath. Anything else - dead, recycled, or the user's own game -
 # is refused.
 is_ours() {
     local pid="$1"
@@ -40,7 +40,7 @@ stop_one() {
 
     if ! is_ours "$pid"; then
         if kill -0 "$pid" 2>/dev/null; then
-            echo "$label: pid $pid is NOT a sandbox process (recycled PID?) — refusing to signal it; clearing stale pidfile" >&2
+            echo "$label: pid $pid is NOT a sandbox process (recycled PID?) - refusing to signal it; clearing stale pidfile" >&2
         else
             echo "$label: pid $pid already gone"
         fi
@@ -55,7 +55,7 @@ stop_one() {
     done
 
     if is_ours "$pid"; then
-        echo "$label: pid $pid did not exit after 10s; NOT force-killing — pidfile kept, check it manually" >&2
+        echo "$label: pid $pid did not exit after 10s; NOT force-killing - pidfile kept, check it manually" >&2
         failed=1
         return 0
     fi

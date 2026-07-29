@@ -13,7 +13,7 @@ namespace VintageHorizons.Net;
 ///
 /// Dedicated servers only. In singleplayer the client side of this same process already
 /// captures every chunk that loads, so a second pipeline would duplicate the cache file,
-/// the work and the memory for nothing — see StartServerSide.
+/// the work and the memory for nothing - see StartServerSide.
 ///
 /// Deliberately not merged into <see cref="LodAssistServerSystem"/>: the handshake has to
 /// keep answering, and answer honestly, even when capture is off or skipped.
@@ -25,6 +25,7 @@ public class LodServerCaptureSystem : ModSystem
     ICoreServerAPI sapi = null!;
     LodPipeline? pipeline;
     LodServerPregen? pregen;
+    LodSavegameSweep? sweep;
     long tickListenerId;
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Server;
@@ -46,7 +47,10 @@ public class LodServerCaptureSystem : ModSystem
         : pregen.Done ? $"pre-generation complete ({pregen.Total} columns)"
         : $"pre-generating {pregen.Requested}/{pregen.Total} columns";
 
-    /// <summary>Main thread only — the capture pipeline mutates this set every tick.</summary>
+    /// <summary>Progress line for /vhserver, or null when no sweep is running.</summary>
+    public string? SweepStatus => sweep?.Status;
+
+    /// <summary>Main thread only - the capture pipeline mutates this set every tick.</summary>
     public long[] SnapshotKeys() =>
         pipeline == null ? Array.Empty<long>() : pipeline.World.HasDataSet.ToArray();
 
@@ -86,21 +90,27 @@ public class LodServerCaptureSystem : ModSystem
         }
 
         // Singleplayer (and LAN-hosted) worlds run client and integrated server in one
-        // process, sharing one data path — so both pipelines would open the SAME cache
-        // file for the same savegame, double every capture, and hold two copies of the
-        // section pyramid in RAM. Observed live: two "LOD cache:" lines naming one file,
-        // and a manifest of 3851 keys the client already had, every one of them redundant.
+        // process. Ordinarily there is nothing for this side to do there: capture is driven
+        // by chunks loading, and in one process the server loads exactly the chunks the
+        // client is already shown, so running both sides doubles every capture and holds
+        // two copies of the section pyramid for no gain. Observed live before this was
+        // guarded: a manifest of 3851 keys the client already had, every one redundant.
         //
-        // There is also nothing to gain. Capture is driven by chunks loading, and in one
-        // process the server loads exactly the chunks the client is shown. Serving the
-        // host its own data back is pure overhead. What WOULD pay here is sweeping the
-        // savegame for chunks generated in past sessions, which this does not yet do.
-        if (!api.Server.IsDedicated)
+        // Sweeping is the exception, and the reason the guard is conditional rather than
+        // absolute. A sweep deliberately loads columns the client will never be shown -
+        // terrain generated in sessions before this mod was installed, or hundreds of
+        // blocks from where the player is standing. That is the one thing this side can do
+        // in singleplayer that the client cannot do for itself.
+        //
+        // The two caches stay separate regardless (the -server suffix below), so the
+        // double-open that caused the original bug cannot recur.
+        if (!api.Server.IsDedicated && !Config.SweepEnabled)
         {
             Mod.Logger.Notification(
-                "Singleplayer or LAN-hosted world: skipping server LOD capture. The client "
-                + "side already captures everything this process loads, and running both "
-                + "would duplicate the cache, the work and the memory for no gain.");
+                "Singleplayer or LAN-hosted world with sweeping off: skipping server LOD "
+                + "capture. The client side already captures everything this process loads, "
+                + "and running both would duplicate the cache, the work and the memory for "
+                + "no gain. Set SweepSavegame to index terrain from earlier sessions.");
             return;
         }
 
@@ -128,6 +138,17 @@ public class LodServerCaptureSystem : ModSystem
 
         Mod.Logger.Notification("Server LOD capture active ({0} sections from cache). {1}",
             pipeline.CachedSectionsLoaded, Config.Describe());
+
+        // Sweep before pregen, and not only because it is cheaper. Sweeping loads terrain
+        // that already exists; pregen makes more. Doing the free work first means an
+        // interrupted startup has still indexed everything real before spending a second on
+        // inventing anything.
+        if (Config.SweepEnabled)
+        {
+            sweep = new LodSavegameSweep(sapi, Mod.Logger,
+                Config.SweepRadiusChunks, Config.SweepColumnsPerSecond);
+            sweep.Start();
+        }
 
         if (Config.PregenRadiusChunks > 0)
         {

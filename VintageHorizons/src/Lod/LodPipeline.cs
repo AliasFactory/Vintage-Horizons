@@ -28,7 +28,7 @@ public delegate byte LodTintSlotResolver(Block block);
 /// Side-agnostic on purpose. The client drives it from `ChunkDirty` and also renders from
 /// the same LodWorld; a server drives it from `ChunkColumnLoaded` and never renders. What
 /// differs between them is which chunks arrive and what a palette entry's colour is, so
-/// those are the two things injected rather than branched on — a copy of this per side
+/// those are the two things injected rather than branched on - a copy of this per side
 /// would drift, and the mip and persistence rules are exactly what must not.
 ///
 /// Every method here must be called from the thread that owns the world (the game tick).
@@ -189,7 +189,7 @@ public class LodPipeline
 
     /// <summary>
     /// The stored blob for a key, unparsed, for serving over the network. Null when the
-    /// key is not on disk — including when it is resident in RAM but not yet flushed,
+    /// key is not on disk - including when it is resident in RAM but not yet flushed,
     /// which is why the caller treats a miss as "ask again later" rather than "gone".
     /// </summary>
     public byte[]? LoadBlob(long key) => store?.LoadBlob(
@@ -225,7 +225,7 @@ public class LodPipeline
 
     /// <summary>
     /// Which keys a remote source can supply and which the view is waiting on. Its own
-    /// class so the set logic can be tested without a game API — see LodRemoteKeySet.
+    /// class so the set logic can be tested without a game API - see LodRemoteKeySet.
     /// Private, and reached only through the delegating members below: the pipeline is
     /// the facade the mod system talks to, and two doors to the same state is how they
     /// drift apart.

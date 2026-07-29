@@ -28,7 +28,7 @@
     keeps them out of its deps.json entirely. Nothing then puts them on the TPA list, so
     a test host resolves nothing and throws FileNotFoundException at the first method
     that touches a game type. References do not flow through ProjectReference either, so
-    restating them here is the minimum — copy-local puts them beside the test binary and
+    restating them here is the minimum - copy-local puts them beside the test binary and
     into this project's own deps.json.
 
     Copy-local covers the direct references. It does NOT cover VintagestoryAPI's own

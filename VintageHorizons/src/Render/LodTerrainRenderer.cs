@@ -9,7 +9,7 @@ namespace VintageHorizons;
 /// Renders the LodWorld section pyramid beyond the vanilla view distance. Meshes are
 /// built off-thread by the LodWorker from section snapshots; this class schedules
 /// mesh jobs (nearest-first), uploads finished vertex data on the render thread, and
-/// walks the quadtree each frame picking detail by distance — a parent renders until
+/// walks the quadtree each frame picking detail by distance - a parent renders until
 /// all four child slots are covered, so level swaps never open holes (DH's rule).
 ///
 /// Rendering techniques (render order/stage, ZFar extension, camera-relative model
@@ -85,7 +85,7 @@ public class LodTerrainRenderer : IRenderer
     /// Why each coarse node in the current draw list is not descending. Written for one
     /// specific failure: a node drawn far below its wanted level, with the pipeline idle, so
     /// no amount of waiting changes it. Reports each child's actual state rather than an
-    /// inference — which is what three wrong diagnoses in a row cost.
+    /// inference - which is what three wrong diagnoses in a row cost.
     /// </summary>
     public string ExplainCoarseDraws(double px, double pz, int maxNodes = 6)
     {
@@ -164,7 +164,7 @@ public class LodTerrainRenderer : IRenderer
         // The shaders carry their own `const int TINT_SLOTS`, because this game version
         // exposes no way to inject a #define, and a mismatch decodes water as opaque and
         // thin plants as water with no compile error. That used to be guarded here by
-        // comparing MaxSlots against a hand-maintained C# mirror of the shader's value —
+        // comparing MaxSlots against a hand-maintained C# mirror of the shader's value -
         // which is two constants in one file, and so could never notice a shader being
         // edited. The compiler agreed: the branch raised CS0162, unreachable code.
         // The check that works reads the shader files, in the fast tier of check.sh.
@@ -245,7 +245,7 @@ public class LodTerrainRenderer : IRenderer
                 if (HasAnyMesh(ck))
                 {
                     // Gate meshes are load-bearing even when never drawn (the walk
-                    // descends THROUGH them) — stamp so the evictor spares them.
+                    // descends THROUGH them) - stamp so the evictor spares them.
                     lastSelectedFrame[ck] = frameCounter;
                 }
                 else
@@ -268,7 +268,7 @@ public class LodTerrainRenderer : IRenderer
 
         // Demand-driven meshing: request ONLY at the level the walk actually wants
         // here. Descending through meshless parents must not request every leaf the
-        // recursion happens to reach — coarser/finer nodes on the path stay unmeshed
+        // recursion happens to reach - coarser/finer nodes on the path stay unmeshed
         // until the wanted level for their own distance says otherwise.
         if (!hasMesh && level == wanted) RequestMesh(key);
 
@@ -395,11 +395,11 @@ public class LodTerrainRenderer : IRenderer
 
     /// <summary>
     /// Drop meaningless render-dirty entries: no live mesh AND finer than the level
-    /// the walk wants there — meshing those wastes work. Entries at wanted level or
+    /// the walk wants there - meshing those wastes work. Entries at wanted level or
     /// COARSER must survive: they are draw targets or gate meshes the walk descends
     /// through (pruning gates stalls descent and freezes approached terrain at the
     /// coarse level it was first meshed at). Runs every frame regardless of worker
-    /// backlog — pruning must never starve.
+    /// backlog - pruning must never starve.
     /// </summary>
     void PruneRenderDirty()
     {

@@ -4,7 +4,7 @@ namespace VintageHorizons;
 /// Bookkeeping for sections a remote source offers: which keys only it has, which of those
 /// the view currently wants, and which have been asked for already.
 ///
-/// Split out of LodPipeline so it can be reasoned about — and tested — on its own. It is
+/// Split out of LodPipeline so it can be reasoned about - and tested - on its own. It is
 /// pure set logic over a LodWorld, but living inside a class whose constructor needs a game
 /// API and starts five threads made it unreachable, and the one bug that mattered most here
 /// took three wrong diagnoses read off counters before anyone looked at the branch itself.
@@ -35,7 +35,7 @@ public class LodRemoteKeySet
 
     /// <summary>
     /// Route a reload request. True when only the network can supply this key, so the
-    /// caller sends it there instead of to the local store — a key local disk has never
+    /// caller sends it there instead of to the local store - a key local disk has never
     /// held would come back empty and land in LoadFailed, which is permanent.
     /// </summary>
     public bool WantFromRemote(long key)
@@ -56,7 +56,7 @@ public class LodRemoteKeySet
         {
             // Against localKeys, NOT HasDataSet. HasDataSet also contains every ancestor
             // that RegisterInTree synthesised while registering a finer key, so testing it
-            // skipped coarse keys the server really could serve — whichever of a node and
+            // skipped coarse keys the server really could serve - whichever of a node and
             // its descendants happened to be processed first decided the other's fate.
             // Those keys stayed out of RemoteOnly, routed to a local store with no such
             // row, came back null, and were recorded in LoadFailed, which is permanent.
@@ -99,7 +99,7 @@ public class LodRemoteKeySet
     }
 
     /// <summary>
-    /// The remote source will not supply this key — declined, gone, or unparseable. Clears
+    /// The remote source will not supply this key - declined, gone, or unparseable. Clears
     /// the render path's wait on it: LodWorld.LoadsInFlight is set by TryGetForRender and
     /// otherwise only cleared by InstallLoaded, so without this a declined key stays
     /// "in flight" for the session, the mesh scheduler skips it, and its parent is pinned

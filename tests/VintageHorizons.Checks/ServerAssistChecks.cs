@@ -19,7 +19,7 @@ public static class ServerAssistChecks
 
     /// <summary>
     /// Pre-generation walks a square spiral so that any prefix of the sequence is a filled
-    /// square around spawn — stopping early, or being stopped early, still leaves a
+    /// square around spawn - stopping early, or being stopped early, still leaves a
     /// complete horizon rather than a partial arm sticking out in one direction.
     ///
     /// Walked exhaustively out to the configured maximum radius, because "covers every
@@ -173,7 +173,7 @@ public static class ServerAssistChecks
 
         // The empty-string case is NOT the null case. Both AssistWelcome string fields carry
         // a "" initializer, and protobuf-net runs initializers before filling in what the
-        // wire actually sent — so a server that simply omits the field yields "", which
+        // wire actually sent - so a server that simply omits the field yields "", which
         // sails past the ?? guard and renders a blank in the middle of the status line.
         // Harmless today, since our own server always sets it. Recorded rather than fixed
         // so the guard's real coverage is not overstated.
@@ -220,7 +220,7 @@ public static class ServerAssistChecks
         }, "a manifest chunk with no keys does not throw");
 
         // An empty blob means the server declined. The installer is still called, because
-        // it is the one place that can release the render path's wait on the key —
+        // it is the one place that can release the render path's wait on the key -
         // short-circuiting here left declined keys stuck in flight and pinned their parents
         // coarse for the whole session.
         var offered = new List<long>();

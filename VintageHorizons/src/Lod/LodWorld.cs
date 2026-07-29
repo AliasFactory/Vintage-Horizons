@@ -14,7 +14,7 @@ public class LodWorld
 
     /// <summary>
     /// Level 0 is selected out to twice this distance; each level doubles the band.
-    /// Raising it pushes every detail level outward — the single biggest lever on
+    /// Raising it pushes every detail level outward - the single biggest lever on
     /// perceived quality, and also on cost: the level-0 band grows with the square of
     /// this value, so doubling it asks for roughly four times as many leaf meshes.
     /// Tunable live via .vhdetail; the selection walk simply picks different levels on
@@ -44,7 +44,7 @@ public class LodWorld
     /// <summary>Every key (all levels) that holds data or has any descendant with data. Drives quadtree descent.</summary>
     public readonly HashSet<long> HasDataSet = new();
 
-    /// <summary>Top-level (MaxLevel) ancestor keys — the quadtree roots.</summary>
+    /// <summary>Top-level (MaxLevel) ancestor keys - the quadtree roots.</summary>
     public readonly HashSet<long> TopLevelKeys = new();
 
     // ---- Key packing: level(4) | sz(30) | sx(30). VS world coords are non-negative. ----
@@ -89,7 +89,7 @@ public class LodWorld
     {
         if (Sections.TryGetValue(key, out LodSection? section)) return section;
 
-        // A previously-evicted section must come back from disk, not start empty —
+        // A previously-evicted section must come back from disk, not start empty -
         // capture merges and mip propagation would otherwise clobber stored data.
         if (HasDataSet.Contains(key))
         {
@@ -198,7 +198,7 @@ public class LodWorld
             int level = KeyLevel(key);
             if (level >= MaxLevel) continue;
             // Unsaved or unpropagated data pins a section; a pending mesh rebuild does
-            // NOT — the scheduler demand-reloads from disk when its turn comes.
+            // NOT - the scheduler demand-reloads from disk when its turn comes.
             if (SaveDirty.Contains(key) || MipDirty.Contains(key)) { LastSweepPinned++; continue; }
 
             int footprint = KeyFootprintBlocks(key);
@@ -256,7 +256,7 @@ public class LodWorld
     }
 
     /// <summary>
-    /// Registers a stored section KEY from the persistent cache — no data attached.
+    /// Registers a stored section KEY from the persistent cache - no data attached.
     /// The quadtree skeleton (HasDataSet/TopLevelKeys) and pending-mip flags come
     /// from keys alone; section data demand-loads when first needed, so join time
     /// and RAM stay independent of how much was ever explored.

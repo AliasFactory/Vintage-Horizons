@@ -48,6 +48,7 @@ public class LodAssistServerSystem : ModSystem
                     + $"{capture?.ColumnsCaptured ?? 0} columns captured. Served {sectionsServed} sections "
                     + $"({bytesServed / 1e6:0.0} MB, {(sectionsServed > 0 ? blobReadMs / sectionsServed : 0):0.00}ms avg read), "
                     + $"{sectionsOutsideRadius} refused as out of radius, {pendingByPlayer.Count} players waiting. "
+                    + (capture?.SweepStatus is string sw ? sw + ". " : "")
                     + (capture?.PregenStatus is string pg ? pg + ". " : "")
                     + "Settings live in ModConfig/vintagehorizons-server.json (restart to apply).");
             });
@@ -65,7 +66,7 @@ public class LodAssistServerSystem : ModSystem
 
         // Answered from the main thread, one tick later, rather than from here. Message
         // handlers do not run on the main thread, and both the key set and its count come
-        // from a HashSet the capture pipeline mutates every tick — reading it here is a
+        // from a HashSet the capture pipeline mutates every tick - reading it here is a
         // torn read, and the count would disagree with the manifest that follows it
         // (observed: announced 5634, sent 5638, four sections captured in between).
         sapi.Event.EnqueueMainThreadTask(() => Answer(fromPlayer), "vintagehorizons-hello");
@@ -134,7 +135,7 @@ public class LodAssistServerSystem : ModSystem
 
     /// <summary>
     /// Serve at most the per-second cap to each waiting player. Called once a second, so
-    /// the cap is simply the batch size — no token bucket to get wrong.
+    /// the cap is simply the batch size - no token bucket to get wrong.
     /// </summary>
     void ServePending()
     {

@@ -8,7 +8,7 @@ namespace VintageHorizons;
 /// Everything the storage thread needs is copied on the main thread, because the
 /// live section keeps mutating: palette entries are appended, Captured is written
 /// in place, and LodSection.SetColumn edits Runs/ColumnStart in place when a
-/// column's run count is unchanged. Block CODES are resolved here too — the
+/// column's run count is unchanged. Block CODES are resolved here too - the
 /// storage thread must never touch the game's block registry.
 ///
 /// The copies are a few hundred KB of memcpy, against the ~20ms of deflate and

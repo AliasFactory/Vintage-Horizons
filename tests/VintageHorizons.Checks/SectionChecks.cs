@@ -2,7 +2,7 @@ namespace VintageHorizons.Checks;
 
 /// <summary>
 /// The RLE column store. Runs live in one flat array with per-column prefix offsets, so
-/// every mutation is index arithmetic over a shared buffer — a class of code where an
+/// every mutation is index arithmetic over a shared buffer - a class of code where an
 /// off-by-one does not crash, it just hands the mesher another column's terrain.
 /// </summary>
 public static class SectionChecks

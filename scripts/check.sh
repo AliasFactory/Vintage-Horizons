@@ -10,7 +10,7 @@ set -uo pipefail
 #
 # There is no CI, and there cannot be: building this repo requires the Vintage Story
 # assemblies from a local game install, which are not redistributable. So this script
-# is the whole safety net — nothing else re-checks any of it.
+# is the whole safety net - nothing else re-checks any of it.
 #
 # Tiers run in order and stop at the first failure, cheapest first, so a broken build
 # costs thirty seconds rather than half an hour.
@@ -41,7 +41,7 @@ build() {
 }
 
 run_fast() {
-    rule "fast — pure logic and static assets"
+    rule "fast - pure logic and static assets"
 
     # Nothing else enforces that either project still compiles; there is no CI to catch
     # it, and the bench harness in particular is easy to break without noticing because
@@ -55,8 +55,8 @@ run_fast() {
     dotnet run --project "$ROOT/tests/VintageHorizons.Checks" -v quiet -- "$@"
 }
 
-run_smoke()  { rule "smoke — one end-to-end sandbox run";        "$ROOT/scripts/check-smoke.sh" "$@"; }
-run_matrix() { rule "matrix — install combinations and controls"; "$ROOT/scripts/check-matrix.sh" "$@"; }
+run_smoke()  { rule "smoke - one end-to-end sandbox run";        "$ROOT/scripts/check-smoke.sh" "$@"; }
+run_matrix() { rule "matrix - install combinations and controls"; "$ROOT/scripts/check-matrix.sh" "$@"; }
 
 case "$TIER" in
     fast)   run_fast "$@";   status=$? ;;

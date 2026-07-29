@@ -5,7 +5,7 @@ namespace VintageHorizons.Checks;
 /// <summary>
 /// The server-side admin knobs. Sanitize is the boundary between a config file an admin
 /// typed and the values that reach the serve loop, and its ceilings come from measurement
-/// rather than taste — a served section costs about 0.9ms of main-thread blob read, so the
+/// rather than taste - a served section costs about 0.9ms of main-thread blob read, so the
 /// total cap is what decides how much of a core an admin can hand over by editing a file.
 /// </summary>
 public static class ConfigChecks
@@ -33,6 +33,16 @@ public static class ConfigChecks
 
         // Generating terrain nobody has visited is opt-in.
         c.Eq(0, config.PregenRadiusChunks, "pre-generation is off by default");
+
+        // Sweeping is not, and the asymmetry is the point: it loads terrain that already
+        // exists, so it costs no worldgen and reveals nowhere a player has not been.
+        c.True(config.SweepSavegame, "savegame sweeping is on by default");
+        c.True(config.SweepRadiusChunks > 0, "the default sweep radius actually sweeps something");
+        c.True(config.SweepEnabled, "the defaults leave sweeping enabled");
+        c.False(new LodServerConfig { SweepSavegame = false }.SweepEnabled,
+            "clearing the flag disables sweeping");
+        c.False(new LodServerConfig { SweepRadiusChunks = 0 }.SweepEnabled,
+            "a zero radius disables sweeping as surely as the flag does");
 
         c.Eq(LodAssist.MaxSectionsPerSecondPerPlayer, config.MaxSectionsPerSecondPerPlayer,
             "the per-player default tracks the protocol constant");
@@ -70,6 +80,20 @@ public static class ConfigChecks
             "pre-generation rate is capped");
         c.Eq(1, Sanitized(cfg => cfg.PregenColumnsPerSecond = 0).PregenColumnsPerSecond,
             "a zero pre-generation rate becomes one");
+
+        // A wider sweep ceiling than pregen's, because the cost tracks terrain that exists
+        // rather than the radius: examining a position that was never generated is an index
+        // lookup, so a large radius over a small world is nearly free.
+        c.Eq(512, Sanitized(cfg => cfg.SweepRadiusChunks = 99999).SweepRadiusChunks,
+            "sweep radius is capped at 512 chunks");
+        c.Eq(0, Sanitized(cfg => cfg.SweepRadiusChunks = -1).SweepRadiusChunks,
+            "a negative sweep radius means off, never negative");
+        c.Eq(64, Sanitized(cfg => cfg.SweepColumnsPerSecond = 1000).SweepColumnsPerSecond,
+            "sweep rate is capped");
+        c.Eq(1, Sanitized(cfg => cfg.SweepColumnsPerSecond = 0).SweepColumnsPerSecond,
+            "a zero sweep rate becomes one, not a stall");
+        c.Eq(48, Sanitized(cfg => cfg.SweepRadiusChunks = 48).SweepRadiusChunks,
+            "an in-range sweep radius is preserved exactly");
 
         // The invariant that matters downstream: WithinServeRadius squares this value and
         // compares it against a squared distance, so a negative would compare as positive
@@ -109,6 +133,10 @@ public static class ConfigChecks
         var off = new LodServerConfig { EnableCapture = false, EnableServing = false };
         c.True(off.Describe().Contains("capture off"), "capture off is described");
         c.True(off.Describe().Contains("serving off"), "serving off is described");
+
+        c.True(text.Contains("sweep 128 chunks"), "the description reports the sweep radius");
+        c.True(new LodServerConfig { SweepSavegame = false }.Describe().Contains("sweep off"),
+            "a disabled sweep is described as off");
     }
 
     static LodServerConfig Sanitized(Action<LodServerConfig> setup)

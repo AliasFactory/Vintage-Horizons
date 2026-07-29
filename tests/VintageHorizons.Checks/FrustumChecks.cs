@@ -6,7 +6,7 @@ namespace VintageHorizons.Checks;
 /// View-frustum plane extraction and the p-vertex box test.
 ///
 /// docs/STATUS.md has claimed since the performance pass that this has a standalone
-/// harness. It did not — nothing matching it exists in the tree or anywhere in the history.
+/// harness. It did not - nothing matching it exists in the tree or anywhere in the history.
 /// This is that harness, written for real.
 ///
 /// Matrices are built with the game's own Mat4f rather than by hand, which is what keeps
@@ -74,7 +74,7 @@ public static class FrustumChecks
 
     /// <summary>
     /// The p-vertex test rejects only boxes fully outside a plane. Erring toward keeping
-    /// a box is correct — a false accept costs one draw call, a false reject punches a
+    /// a box is correct - a false accept costs one draw call, a false reject punches a
     /// hole in the terrain.
     /// </summary>
     static void Conservative(Check c, LodFrustum f)

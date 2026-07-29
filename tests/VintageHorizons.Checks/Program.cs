@@ -4,7 +4,7 @@ namespace VintageHorizons.Checks;
 
 /// <summary>
 /// The fast tier of scripts/check.sh: everything that can be proven without a game process.
-/// Runs sequentially and in-process, which is not a limitation to work around — LodWorld
+/// Runs sequentially and in-process, which is not a limitation to work around - LodWorld
 /// carries mutable static state (DetailDistance) that several checks set, so sequential is
 /// the only correct order anyway.
 /// </summary>
@@ -91,7 +91,7 @@ public static class Program
         // empty run is how a check suite quietly stops checking.
         if (ran == 0)
         {
-            Console.WriteLine($"  no suite matched '{only}' — nothing ran");
+            Console.WriteLine($"  no suite matched '{only}' - nothing ran");
             Console.WriteLine();
             return 2;
         }
