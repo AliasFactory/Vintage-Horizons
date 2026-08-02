@@ -3,22 +3,28 @@ using Vintagestory.API.MathTools;
 namespace VintageHorizons;
 
 /// <summary>
-/// The in-memory section pyramid: all detail levels of LodSections, dirty tracking,
-/// and child→parent mip propagation. All mutation happens on the main thread; the
-/// worker thread only ever reads immutable snapshots (Runs/ColumnStart arrays are
-/// replaced wholesale, never edited in place).
+/// The section pyramid in memory. It holds the LodSection objects at each detail level, the
+/// dirty tracking, and the mip propagation from a child to its parent.
+///
+/// Each change occurs on the main thread. The worker thread reads snapshots only, and those
+/// snapshots do not change. A write replaces a full Runs array or ColumnStart array. It never
+/// edits one in place.
 /// </summary>
 public class LodWorld
 {
-    public const int MaxLevel = 6; // L6 sections span 4096 blocks (64-block columns at the horizon)
+    public const int MaxLevel = 6; // An L6 section covers 4096 blocks, with 64-block columns at the horizon.
 
     /// <summary>
-    /// Level 0 is selected out to twice this distance; each level doubles the band.
-    /// Raising it pushes every detail level outward - the single biggest lever on
-    /// perceived quality, and also on cost: the level-0 band grows with the square of
-    /// this value, so doubling it asks for roughly four times as many leaf meshes.
-    /// Tunable live via .vhdetail; the selection walk simply picks different levels on
-    /// the next frame and demand-meshes whatever it newly wants.
+    /// The walk selects level 0 out to two times this distance. Each level then doubles
+    /// the width of its band.
+    ///
+    /// A larger value moves each detail level outward. This is the largest single control
+    /// over the quality that a player sees, and over the cost. The band of level 0 grows
+    /// with the square of this value. Thus a value two times larger asks for approximately
+    /// four times as many leaf meshes.
+    ///
+    /// A player can change this value during play, with `.vhdetail`. The selection walk then
+    /// selects different levels in the next frame, and it meshes what it wants now.
     /// </summary>
     public static double DetailDistance = 512;
 
@@ -27,27 +33,32 @@ public class LodWorld
 
     public readonly Dictionary<long, LodSection> Sections = new();
 
-    /// <summary>Set by the coordinator when persistence is available: reload an evicted section from disk.</summary>
+    /// <summary>The coordinator sets this when persistence is available. It loads a section
+    /// from the disk after an eviction.</summary>
     public Func<long, LodSection?>? LoadFromStore;
 
     public int EvictedSectionsTotal { get; private set; }
 
-    /// <summary>Sections whose mesh is stale.</summary>
+    /// <summary>The sections whose mesh is not current.</summary>
     public readonly HashSet<long> RenderDirty = new();
 
-    /// <summary>Sections whose DB row is stale.</summary>
+    /// <summary>The sections whose database row is not current.</summary>
     public readonly HashSet<long> SaveDirty = new();
 
-    /// <summary>Sections whose parent still needs to absorb their content (persisted as ApplyToParent).</summary>
+    /// <summary>The sections whose parent must still take in their content. The database
+    /// stores this as ApplyToParent.</summary>
     public readonly HashSet<long> MipDirty = new();
 
-    /// <summary>Every key (all levels) that holds data or has any descendant with data. Drives quadtree descent.</summary>
+    /// <summary>Each key, at each level, that holds data or that has a descendant with data.
+    /// This set drives the descent of the quadtree.</summary>
     public readonly HashSet<long> HasDataSet = new();
 
-    /// <summary>Top-level (MaxLevel) ancestor keys - the quadtree roots.</summary>
+    /// <summary>The ancestor keys at the top level, which is MaxLevel. These are the roots
+    /// of the quadtree.</summary>
     public readonly HashSet<long> TopLevelKeys = new();
 
-    // ---- Key packing: level(4) | sz(30) | sx(30). VS world coords are non-negative. ----
+    // ---- Key packing: level(4) | sz(30) | sx(30). Vintage Story world coordinates are
+    // never negative. ----
 
     public static long SectionKey(int level, int sx, int sz) =>
         ((long)level << 60) | ((long)(sz & 0x3FFFFFFF) << 30) | (uint)(sx & 0x3FFFFFFF);
@@ -65,13 +76,15 @@ public class LodWorld
     public static long NeighborKey(long key, int dx, int dz) =>
         SectionKey(KeyLevel(key), KeySx(key) + dx, KeySz(key) + dz);
 
-    /// <summary>Section footprint in blocks at this key's level.</summary>
+    /// <summary>The area of a section in blocks, at the level of this key.</summary>
     public static int KeyFootprintBlocks(long key) => LodSection.SectionBlocks << KeyLevel(key);
 
     /// <summary>
-    /// Distance from a point to the nearest edge of a section's footprint, squared.
-    /// Nearest-edge rather than centre: an L6 section spans 4096 blocks, so centre distance
-    /// would rank a section the viewer is standing inside as far away.
+    /// The square of the distance from a point to the nearest edge of the area of a section.
+    ///
+    /// The distance is to the nearest edge, and not to the center. An L6 section covers 4096
+    /// blocks. Thus a center distance gives a large value for a section that the viewer is
+    /// inside.
     /// </summary>
     public static double NearestDistanceSqTo(long key, double x, double z)
     {
@@ -89,8 +102,9 @@ public class LodWorld
     {
         if (Sections.TryGetValue(key, out LodSection? section)) return section;
 
-        // A previously-evicted section must come back from disk, not start empty -
-        // capture merges and mip propagation would otherwise clobber stored data.
+        // A section that the mod evicted before must return from the disk. It must not
+        // start empty. An empty start lets a capture merge or a mip propagation overwrite
+        // the stored data.
         if (HasDataSet.Contains(key))
         {
             section = LoadFromStore?.Invoke(key);
@@ -102,12 +116,13 @@ public class LodWorld
         }
 
         Sections[key] = section = new LodSection();
-        LoadFailed.Remove(key); // it has data again; a past miss must not block reloads
+        LoadFailed.Remove(key); // The key has data again. An earlier miss must not stop a reload.
         RegisterInTree(key);
         return section;
     }
 
-    /// <summary>Get a section from RAM or disk without creating an empty one. For mesh scheduling.</summary>
+    /// <summary>Get a section from RAM or from the disk, and do not make an empty one. The
+    /// mesh scheduler uses this.</summary>
     public bool TryGetOrLoad(long key, out LodSection section)
     {
         if (Sections.TryGetValue(key, out section!)) return true;
@@ -120,23 +135,29 @@ public class LodWorld
         return true;
     }
 
-    /// <summary>Ask the storage thread to reload an evicted section; null when unavailable.</summary>
+    /// <summary>Ask the storage thread to load an evicted section again. This is null when
+    /// no storage thread exists.</summary>
     public Action<long>? RequestAsyncLoad;
 
-    /// <summary>Keys with a reload in flight, so the render path stops re-requesting them.</summary>
+    /// <summary>The keys that have a load in progress. Thus the render path stops asking for
+    /// them again.</summary>
     public readonly HashSet<long> LoadsInFlight = new();
 
     /// <summary>
-    /// Keys whose reload came back empty (row missing, or deleted as unreadable).
-    /// Without this the selection walk would re-request them every single frame
-    /// forever, since the section never becomes resident.
+    /// The keys whose load returned nothing. The row is absent, or the mod deleted it
+    /// because it could not read it.
+    ///
+    /// Without this set, the selection walk asks for those keys again in each frame, forever,
+    /// because the section never becomes resident.
     /// </summary>
     public readonly HashSet<long> LoadFailed = new();
 
     /// <summary>
-    /// Non-blocking variant for the render path: returns false and starts a background
-    /// reload rather than stalling the frame on a decompress. The selection walk
-    /// re-requests the mesh on later frames, so the section is picked up once it lands.
+    /// The variant for the render path, which does not block. It returns false and starts a
+    /// load in the background. Thus a decompress does not delay the frame.
+    ///
+    /// The selection walk asks for the mesh again in a later frame. Thus the mod uses the
+    /// section after it arrives.
     /// </summary>
     public bool TryGetForRender(long key, out LodSection section)
     {
@@ -145,7 +166,8 @@ public class LodWorld
 
         if (RequestAsyncLoad == null)
         {
-            // No storage thread (no persistence this session): fall back to inline.
+            // There is no storage thread, because this session has no persistence. Do the
+            // load in this call instead.
             return TryGetOrLoad(key, out section);
         }
 
@@ -154,9 +176,11 @@ public class LodWorld
     }
 
     /// <summary>
-    /// Install a section that finished loading in the background. A section that
-    /// became resident while the read was in flight (a capture created or reloaded it
-    /// inline) is strictly newer, so the arriving copy is discarded.
+    /// Install a section that a background load completed.
+    ///
+    /// A section can become resident while the read is in progress, because a capture made it
+    /// or loaded it in the same call. That section is newer. Thus the mod discards the copy
+    /// that arrives.
     /// </summary>
     public void InstallLoaded(long key, LodSection? section)
     {
@@ -170,16 +194,18 @@ public class LodWorld
 
         Sections[key] = section;
 
-        // Deliberately not marked render-dirty: reloads are requested by the render
-        // path AND by mip propagation, and the selection walk re-requests a mesh by
-        // itself on the next frame if it still wants one here. Marking every arrival
-        // would mesh sections that only propagation asked for.
+        // Do not mark this section as render-dirty. The render path asks for a load, and
+        // the mip propagation asks for a load also. The selection walk asks for a mesh
+        // itself in the next frame, if it still wants one here. A mark on each arrival
+        // meshes the sections that only the propagation asked for.
     }
 
     /// <summary>
-    /// Drop cold sections from RAM (their rows stay on disk; HasDataSet keeps the
-    /// quadtree semantics intact). Cold = the walk wants this area at least two
-    /// levels coarser than this section, and nothing dirty references it.
+    /// Remove cold sections from RAM. Their rows stay on the disk, and HasDataSet keeps the
+    /// meaning of the quadtree correct.
+    ///
+    /// A section is cold when two conditions are true. The walk wants this area at least two
+    /// levels coarser than this section. And no dirty set holds this key.
     /// </summary>
     public int LastSweepChecked { get; private set; }
     public int LastSweepPinned { get; private set; }
@@ -197,8 +223,9 @@ public class LodWorld
             LastSweepChecked++;
             int level = KeyLevel(key);
             if (level >= MaxLevel) continue;
-            // Unsaved or unpropagated data pins a section; a pending mesh rebuild does
-            // NOT - the scheduler demand-reloads from disk when its turn comes.
+            // Data that the mod did not save, or did not propagate, holds a section in
+            // RAM. A mesh rebuild that waits does NOT hold it. The scheduler loads the
+            // section from the disk again when its turn arrives.
             if (SaveDirty.Contains(key) || MipDirty.Contains(key)) { LastSweepPinned++; continue; }
 
             int footprint = KeyFootprintBlocks(key);
@@ -246,8 +273,9 @@ public class LodWorld
         SaveDirty.Add(key);
         if (KeyLevel(key) < MaxLevel) MipDirty.Add(key);
 
-        // Neighbor meshes cull their faces against our edge columns; conservatively
-        // refresh all four (change locality tracking can come later).
+        // The mesh of a neighbour culls its faces against the edge columns of this
+        // section. Refresh all four neighbours. A record of where the change occurred can
+        // come later.
         for (int d = 0; d < 4; d++)
         {
             long nk = NeighborKey(key, d == 0 ? -1 : d == 1 ? 1 : 0, d == 2 ? -1 : d == 3 ? 1 : 0);
@@ -256,10 +284,14 @@ public class LodWorld
     }
 
     /// <summary>
-    /// Registers a stored section KEY from the persistent cache - no data attached.
-    /// The quadtree skeleton (HasDataSet/TopLevelKeys) and pending-mip flags come
-    /// from keys alone; section data demand-loads when first needed, so join time
-    /// and RAM stay independent of how much was ever explored.
+    /// Registers the KEY of a stored section from the cache. No data comes with it.
+    ///
+    /// The structure of the quadtree, which is HasDataSet and TopLevelKeys, comes from the
+    /// keys alone. The pending mip flags come from the keys also. The mod loads the data of a
+    /// section when something first needs it.
+    ///
+    /// Thus the join time and the RAM use do not increase with the quantity of terrain that
+    /// anyone explored.
     /// </summary>
     public void InstallStoredKey(int level, int sx, int sz, bool applyToParent)
     {
@@ -268,7 +300,8 @@ public class LodWorld
         if (applyToParent && level < MaxLevel) MipDirty.Add(key);
     }
 
-    // ---- Mip propagation (child → parent), main thread, budgeted ----
+    // ---- Mip propagation from a child to its parent. This runs on the main thread, with a
+    // budget. ----
 
     public void ProcessPropagation(int maxSections)
     {
@@ -284,16 +317,16 @@ public class LodWorld
 
         foreach (long childKey in batch)
         {
-            // Both sides must be in RAM before the flag may be cleared. Clearing it
-            // while a section is still on disk would drop the propagation on the
-            // floor, so a section awaiting a reload simply stays pending and is
-            // retried on a later tick.
+            // Both sections must be in RAM before the mod clears the flag. If the mod
+            // clears the flag while a section is still on the disk, the propagation is
+            // lost. Thus a section that waits for a load stays pending, and the mod tries
+            // again on a later tick.
             long parentKey = ParentKey(childKey);
             if (!EnsureResident(childKey)) continue;
             if (!EnsureResident(parentKey)) continue;
 
             MipDirty.Remove(childKey);
-            SaveDirty.Add(childKey); // persist the cleared ApplyToParent flag
+            SaveDirty.Add(childKey); // Store the ApplyToParent flag in its cleared state.
 
             if (!Sections.TryGetValue(childKey, out LodSection? child) || child.CapturedColumns == 0) continue;
 
@@ -307,14 +340,17 @@ public class LodWorld
     }
 
     /// <summary>
-    /// True when the section is in RAM, or when there is nothing to load for it so the
-    /// caller may proceed. False means a background reload was started and the caller
-    /// must leave its pending work alone and retry later.
+    /// True when the section is in RAM, or when there is nothing to load for it. Then the
+    /// caller can continue.
     ///
-    /// This is how mip propagation avoids blocking the frame on a decompress without
-    /// ever creating an empty section that would shadow -- and then overwrite -- a
-    /// stored row. It is TryGetForRender's policy with one difference: a key with
-    /// nothing to load is "proceed" here, rather than "no mesh".
+    /// False means that a background load started. Then the caller must leave its pending
+    /// work as it is, and try again later.
+    ///
+    /// This is how the mip propagation does not block the frame on a decompress. It also
+    /// never makes an empty section, which would hide a stored row and then overwrite it.
+    ///
+    /// The rule is the rule of TryGetForRender, with one difference. Here a key with nothing
+    /// to load means "continue", and not "no mesh".
     /// </summary>
     public bool EnsureResident(long key) =>
         TryGetForRender(key, out _) || !LoadsInFlight.Contains(key);

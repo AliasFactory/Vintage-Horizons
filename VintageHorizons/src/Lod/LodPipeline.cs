@@ -7,31 +7,40 @@ using Vintagestory.API.MathTools;
 namespace VintageHorizons;
 
 /// <summary>
-/// Colour and tint slot for a captured block. The only part of capture that is not
-/// side-agnostic: block colour comes from <c>capi.BlockTextureAtlas</c>, which a
-/// dedicated server does not have. See DESIGN.md §10.4.
+/// The color and the tint slot for a captured block. This is the one part of the capture
+/// that is not the same on both sides. The color of a block comes from
+/// <c>capi.BlockTextureAtlas</c>, and a dedicated server does not have that atlas. Read
+/// DESIGN.md section 10.4.
 /// </summary>
-/// <param name="blockId">Live block id from the capture.</param>
-/// <param name="cx">Chunk column X, for sampling position.</param>
-/// <param name="cz">Chunk column Z, for sampling position.</param>
-/// <param name="sampleY">Y of the run's top, for sampling position.</param>
+/// <param name="blockId">The live block id from the capture.</param>
+/// <param name="cx">The X of the chunk column, for the sample position.</param>
+/// <param name="cz">The Z of the chunk column, for the sample position.</param>
+/// <param name="sampleY">The Y of the top of the run, for the sample position.</param>
 public delegate (int Color, byte TintSlot) LodPaletteDescriber(int blockId, int cx, int cz, int sampleY);
 
-/// <summary>Which live tint applies to a block. The server has none and answers 0.</summary>
+/// <summary>The live tint that applies to a block. A server has no tints, and it answers
+/// 0.</summary>
 public delegate byte LodTintSlotResolver(Block block);
 
 /// <summary>
-/// Everything between "a chunk column arrived" and "a section is on disk": capture
-/// scheduling, palette registration, mip propagation and persistence. Owns all mutation
-/// of the <see cref="LodWorld"/>; the worker thread only reads immutable snapshots.
+/// All the work between "a chunk column arrived" and "a section is on the disk". That work
+/// is the capture scheduling, the palette registration, the mip propagation and the
+/// persistence.
 ///
-/// Side-agnostic on purpose. The client drives it from `ChunkDirty` and also renders from
-/// the same LodWorld; a server drives it from `ChunkColumnLoaded` and never renders. What
-/// differs between them is which chunks arrive and what a palette entry's colour is, so
-/// those are the two things injected rather than branched on - a copy of this per side
-/// would drift, and the mip and persistence rules are exactly what must not.
+/// This class owns each change to the <see cref="LodWorld"/>. The worker thread reads
+/// snapshots only, and those snapshots do not change.
 ///
-/// Every method here must be called from the thread that owns the world (the game tick).
+/// This class is the same on both sides, on purpose. The client drives it from `ChunkDirty`,
+/// and it also draws from the same LodWorld. A server drives it from `ChunkColumnLoaded`, and
+/// it never draws.
+///
+/// Two things differ between the sides: which chunks arrive, and the color of a palette
+/// entry. Thus the caller supplies those two things. There is no branch on the side. One copy
+/// of this class for each side would become different over time, and the mip rules and the
+/// persistence rules are exactly the rules that must stay the same.
+///
+/// CAUTION: Call each method here from the thread that owns the world, which is the game
+/// tick.
 /// </summary>
 public class LodPipeline
 {
@@ -43,9 +52,9 @@ public class LodPipeline
     const int ChunkSize = GlobalConstants.ChunkSize;
 
     /// <summary>
-    /// Queued snapshots hold copies of their section's run data, so an unbounded queue
-    /// is an unbounded memory leak if the disk can't keep up. Past this depth the
-    /// sections simply stay dirty (and therefore RAM-resident) and retry later.
+    /// A snapshot in the queue holds a copy of the run data of its section. Thus a queue
+    /// with no limit is a memory leak with no limit, if the disk is too slow. Above this
+    /// depth, a section stays dirty, and thus it stays in RAM. The mod tries again later.
     /// </summary>
     const int MaxStorageBacklog = 256;
 
@@ -53,7 +62,8 @@ public class LodPipeline
     readonly ILogger logger;
     readonly LodPaletteDescriber describePalette;
 
-    /// <summary>Tint slot for a block; the server has no tints and leaves it 0.</summary>
+    /// <summary>The tint slot for a block. A server has no tints, and it leaves this at
+    /// 0.</summary>
     readonly LodTintSlotResolver tintSlotFor;
 
     public LodWorld World { get; }
@@ -67,9 +77,10 @@ public class LodPipeline
     readonly BlockPos paletteSamplePos = new(0, 0, 0);
 
     /// <summary>
-    /// False until the store exists. Nothing may touch sections before then: applying a
-    /// capture to a freshly-created empty section would shadow (and later overwrite) the
-    /// stored row. The column queue holds work until it flips.
+    /// This is false until the store exists. Nothing can touch a section before that
+    /// moment. A capture that goes into a new empty section hides the stored row, and later
+    /// it overwrites that row. The column queue holds the work until this value becomes
+    /// true.
     /// </summary>
     public bool Active { get; private set; }
 
@@ -79,8 +90,8 @@ public class LodPipeline
     public int PendingColumns => pendingColumns.Count;
     public string? DbPath { get; private set; }
 
-    // Main-thread storage cost, measured to decide whether moving SQLite work to a
-    // background thread is worth its complexity.
+    // The storage cost on the main thread. This measurement decided whether a move of the
+    // SQLite work to a background thread is worth its complexity.
     readonly System.Diagnostics.Stopwatch storageClock = new();
     public double SaveMsMax { get; private set; }
     public double SaveMsTotal { get; private set; }
@@ -110,7 +121,8 @@ public class LodPipeline
         SaveCalls = LoadCalls = 0;
     }
 
-    /// <summary>Note a chunk column as needing (re)capture. Safe from any thread.</summary>
+    /// <summary>Record that a chunk column needs a capture. Any thread can call
+    /// this.</summary>
     public void QueueColumn(int cx, int cz)
     {
         long key = ((long)cz << 32) | (uint)cx;
@@ -118,15 +130,18 @@ public class LodPipeline
     }
 
     /// <summary>
-    /// Open (or create) the LOD cache for the current world and adopt its key set.
-    /// Failing to open is not fatal: capture and rendering work without persistence.
+    /// Open the LOD cache for the current world, or make it, and take its key set.
+    ///
+    /// A failure to open is not fatal. The capture and the rendering both operate without
+    /// persistence.
     /// </summary>
-    /// <param name="subdir">ModData-relative directory for the cache file.</param>
+    /// <param name="subdir">The directory for the cache file, relative to ModData.</param>
     /// <param name="suffix">
-    /// Appended to the world key. Belt and braces after a real bug: client and server
-    /// resolve the same ModData path from the same savegame identifier, so in one process
-    /// they opened one file through two connections. Naming them apart means that class of
-    /// mistake cannot silently corrupt a cache even if the two ever coexist again.
+    /// The mod adds this to the world key. It is a second protection after a real defect.
+    /// The client and the server find the same ModData path from the same savegame
+    /// identifier. Thus in one process they opened one file through two connections.
+    /// Different names mean that this class of mistake cannot damage a cache, even if the
+    /// two sides exist together again.
     /// </param>
     public void Open(string subdir, string suffix = "")
     {
@@ -154,14 +169,14 @@ public class LodPipeline
         };
         storageThread = new LodStorageThread(newStore);
 
-        // Background reloads for the render path. The loader runs on the storage
-        // thread; results are installed on the world thread in Tick.
+        // Background loads for the render path. The loader runs on the storage thread. The
+        // world thread installs the results, in Tick.
         storageThread.SetLoader(key => newStore.LoadSection(
             LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key), api.World, resolveBlockIds: false));
-        // Routing, not just loading: a key the server offered and local disk has never
-        // held would come back empty from the store and land in LoadFailed, which is
-        // permanent. Those go to the network instead, and the quadtree's own
-        // LoadsInFlight bookkeeping covers both paths unchanged.
+        // This is routing, and not only loading. The server offers a key that the local
+        // disk never held. That key returns nothing from the store, and it goes into
+        // LoadFailed, which is permanent. Thus such a key goes to the network instead. The
+        // LoadsInFlight record of the quadtree covers both paths without a change.
         World.RequestAsyncLoad = key =>
         {
             if (!Remote.WantFromRemote(key)) storageThread?.RequestLoad(key);
@@ -188,17 +203,21 @@ public class LodPipeline
     }
 
     /// <summary>
-    /// The stored blob for a key, unparsed, for serving over the network. Null when the
-    /// key is not on disk - including when it is resident in RAM but not yet flushed,
-    /// which is why the caller treats a miss as "ask again later" rather than "gone".
+    /// The stored blob for a key, without a parse, to give over the network.
+    ///
+    /// The result is null when the key is not on the disk. This includes a key that is
+    /// resident in RAM but that the mod did not write yet. For that reason the caller treats
+    /// a miss as "ask again later", and not as "gone".
     /// </summary>
     public byte[]? LoadBlob(long key) => store?.LoadBlob(
         LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key));
 
     /// <summary>
-    /// Adopt a section that arrived from somewhere other than local disk. Returns false if
-    /// the key already has local data, which wins: the client's own capture is what it
-    /// actually observed, including edits it witnessed (DESIGN.md §10.5).
+    /// Take a section that arrived from a source other than the local disk.
+    ///
+    /// The result is false when the key has local data already. The local data wins. The
+    /// capture of the client is what the client observed, and it includes the edits that the
+    /// client saw. Read DESIGN.md section 10.5.
     /// </summary>
     public bool InstallForeignBlob(long key, byte[] blob, Action<LodSection>? recolor)
     {
@@ -208,14 +227,15 @@ public class LodPipeline
         LodSection? section = store.DeserializeForeign(blob, api.World);
         if (section == null) return false;
 
-        // The sender had no texture atlas, so every palette colour is 0. Fill them in
-        // before anything can draw the section.
+        // The sender had no texture atlas, thus each palette color is 0. Give them a color
+        // before anything draws the section.
         recolor?.Invoke(section);
         section.RemoveRunsWithFlag(LodPaletteEntry.FlagSkip);
 
         World.InstallLoaded(key, section);
-        // Persist it: re-fetching a mean 45.9 KB a section every session is not an option,
-        // so a section from the network becomes part of the local cache like any other.
+        // Store it. A fetch of 45.9 KB for each section, in each session, is not
+        // acceptable. Thus a section from the network goes into the local cache, as each
+        // other section does.
         World.MarkChanged(key);
         ForeignSectionsInstalled++;
         return true;
@@ -224,11 +244,14 @@ public class LodPipeline
     public int ForeignSectionsInstalled { get; private set; }
 
     /// <summary>
-    /// Which keys a remote source can supply and which the view is waiting on. Its own
-    /// class so the set logic can be tested without a game API - see LodRemoteKeySet.
-    /// Private, and reached only through the delegating members below: the pipeline is
-    /// the facade the mod system talks to, and two doors to the same state is how they
-    /// drift apart.
+    /// The keys that a remote source can supply, and the keys that the view waits for.
+    ///
+    /// This is its own class, thus a test can reach the set logic without a game API. Read
+    /// LodRemoteKeySet.
+    ///
+    /// The field is private, and the members below are the only way to it. The pipeline is
+    /// the one interface that the mod system uses. Two ways into the same state is how two
+    /// parts become different.
     /// </summary>
     readonly LodRemoteKeySet Remote;
 
@@ -247,7 +270,8 @@ public class LodPipeline
     /// <inheritdoc cref="LodRemoteKeySet.MarkRequested"/>
     public void MarkRemoteRequested(IEnumerable<long> sent) => Remote.MarkRequested(sent);
 
-    /// <summary>One step of the whole pipeline. Call once per game tick.</summary>
+    /// <summary>One step of the full pipeline. Call this one time in each game
+    /// tick.</summary>
     public void Tick()
     {
         if (!Active) return;
@@ -261,8 +285,10 @@ public class LodPipeline
     }
 
     /// <summary>
-    /// Drop cold sections from RAM around an anchor. Only meaningful once reload-from-disk
-    /// exists, and only every ~5s: the sweep walks every resident section.
+    /// Remove cold sections from RAM, around an anchor point.
+    ///
+    /// This is useful only after a load from the disk is possible. Call it approximately
+    /// every 5 seconds, because the sweep walks each resident section.
     /// </summary>
     public bool MaybeEvictAround(double x, double z)
     {
@@ -272,8 +298,9 @@ public class LodPipeline
     }
 
     /// <summary>
-    /// Adopt sections the storage thread finished reading. Cheap: the decompress
-    /// already happened off-thread, this only publishes the reference.
+    /// Take the sections that the storage thread finished reading. This is cheap. The
+    /// decompress occurred on the other thread already, and this method only publishes the
+    /// reference.
     /// </summary>
     void InstallLoadedSections()
     {
@@ -281,21 +308,23 @@ public class LodPipeline
 
         while (storageThread.LoadResults.TryDequeue(out (long Key, LodSection? Section) result))
         {
-            // Palette ids are resolved here, on the world thread, before anything can
-            // read them: the storage thread must not touch the block registry.
+            // The mod finds the palette ids here, on the world thread, before anything
+            // reads them. The storage thread must not touch the block registry.
             if (result.Section != null && store != null)
             {
                 store.ResolvePendingPalette(result.Section, api.World);
-                // Reclassify has just refreshed flags from the live blocks, so this drops
-                // runs for anything that is no longer terrain (fire, meta) from sections
-                // captured under an older policy, without needing a re-explore.
+                // Reclassify took the flags from the live blocks again. Thus this call
+                // removes the runs for anything that is no longer terrain, such as fire or
+                // a meta block. It does this for a section that the mod captured under an
+                // older policy, and the player does not explore that area again.
                 result.Section.RemoveRunsWithFlag(LodPaletteEntry.FlagSkip);
             }
             World.InstallLoaded(result.Key, result.Section);
         }
     }
 
-    // ---- Capture scheduling (world thread gathers refs, worker reads blocks) ----
+    // ---- Capture scheduling. The world thread collects the references, and the worker
+    // reads the blocks. ----
 
     void ScheduleCaptures()
     {
@@ -329,7 +358,7 @@ public class LodPipeline
         }
     }
 
-    // ---- Applying capture results: block ids → section palette ids ----
+    // ---- Apply the capture results: block ids to the palette ids of a section ----
 
     void ApplyCaptureResults()
     {
@@ -355,8 +384,8 @@ public class LodPipeline
                         pidByBlockId[blockId] = pid;
                     }
 
-                    // Decorative ground cover never becomes terrain: a flower would
-                    // otherwise be a solid, pale-grey 1-block cube.
+                    // Decorative ground cover never becomes terrain. Without this rule, a
+                    // flower is a solid, pale grey cube of 1 block.
                     if ((section.Palette[pid].Flags & LodPaletteEntry.FlagSkip) != 0) continue;
 
                     runs[kept++] = LodSection.PackRun(pid, LodSection.RunYTop(runs[i]), LodSection.RunYBottom(runs[i]));
@@ -393,8 +422,8 @@ public class LodPipeline
         {
             if (World.Sections.TryGetValue(key, out LodSection? section))
             {
-                // Freeze on this thread (the section keeps mutating), compress and
-                // write on the storage thread.
+                // Copy on this thread, because the section continues to change. Then
+                // compress and write on the storage thread.
                 var snap = LodSaveSnapshot.Of(LodWorld.KeyLevel(key), LodWorld.KeySx(key), LodWorld.KeySz(key),
                     section, api.World, World.MipDirty.Contains(key));
                 storageThread?.Enqueue(snap);
@@ -411,8 +440,10 @@ public class LodPipeline
     }
 
     /// <summary>
-    /// Flush and shut the cache down. Order matters: queue everything, let the writer
-    /// finish, stop the thread, and only then close the connection it was writing through.
+    /// Write the remaining data and close the cache.
+    ///
+    /// The order is important. Put each item into the queue. Let the writer finish. Stop the
+    /// thread. Only then close the connection that the writer used.
     /// </summary>
     public void Close()
     {
@@ -441,7 +472,8 @@ public class LodPipeline
         queuedColumns.Clear();
         pendingColumns.Clear();
         Remote.Clear();
-        // Results for the world we are leaving must not be applied to the next one.
+        // The results for the world that the player leaves must not go into the next
+        // world.
         while (Worker.CaptureResults.TryDequeue(out _)) { }
         World.Clear();
         CachedSectionsLoaded = 0;
