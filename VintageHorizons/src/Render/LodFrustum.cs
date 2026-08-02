@@ -1,20 +1,23 @@
 namespace VintageHorizons;
 
 /// <summary>
-/// Six view-frustum planes extracted from a view-projection matrix (Gribb-Hartmann),
-/// used to skip draw calls for sections outside the camera's view.
+/// The six planes of the view frustum, taken from a view-projection matrix with the
+/// Gribb-Hartmann method. The mod uses them to skip a draw call for a section that is outside
+/// the view of the camera.
 ///
-/// The planes come from the SAME matrices handed to the LOD shader, so the test can
-/// never disagree with what is actually rendered - deriving them from the game's own
-/// culler would tie us to the vanilla view distance and to its per-frame update order,
-/// neither of which matches our extended ZFar.
+/// The planes come from the SAME matrices that the LOD shader gets. Thus the test can never
+/// disagree with what the mod draws.
 ///
-/// All coordinates are camera-relative (camera at the origin), matching the LOD model
-/// matrices.
+/// The planes do not come from the culler of the game. That culler connects this mod to the
+/// vanilla view distance, and to the order in which the game updates it. Neither one matches
+/// the extended ZFar of this mod.
+///
+/// Each coordinate is relative to the camera, with the camera at the origin. This matches the
+/// LOD model matrices.
 /// </summary>
 public class LodFrustum
 {
-    // plane[i] = (a, b, c, d), normal (a,b,c) pointing INTO the frustum.
+    // plane[i] = (a, b, c, d). The normal (a,b,c) points INTO the frustum.
     readonly float[,] planes = new float[6, 4];
     readonly float[] viewProj = new float[16];
 
@@ -23,8 +26,9 @@ public class LodFrustum
         Vintagestory.API.MathTools.Mat4f.Multiply(viewProj, projection, view);
         float[] m = viewProj;
 
-        // Column-major (OpenGL): m[col * 4 + row].
-        // Row i of the matrix as used below: r0 = (m0, m4, m8, m12) etc.
+        // The layout is column-major, as OpenGL uses: m[col * 4 + row].
+        // Row i of the matrix, as the code below uses it: r0 = (m0, m4, m8, m12), and so
+        // on.
         SetPlane(0, m[3] + m[0], m[7] + m[4], m[11] + m[8], m[15] + m[12]);   // left
         SetPlane(1, m[3] - m[0], m[7] - m[4], m[11] - m[8], m[15] - m[12]);   // right
         SetPlane(2, m[3] + m[1], m[7] + m[5], m[11] + m[9], m[15] + m[13]);   // bottom
@@ -44,9 +48,11 @@ public class LodFrustum
     }
 
     /// <summary>
-    /// True if any part of the camera-relative box may be visible. Uses the p-vertex
-    /// test: only the box corner furthest along each plane normal has to be checked,
-    /// so a box is rejected only when it is fully behind some plane.
+    /// True when any part of the box can be visible. The box is relative to the camera.
+    ///
+    /// This uses the p-vertex test. The mod tests only the corner of the box that is
+    /// furthest along the normal of each plane. Thus the mod rejects a box only when the box
+    /// is fully behind one plane.
     /// </summary>
     public bool BoxInView(double minX, double minY, double minZ, double maxX, double maxY, double maxZ)
     {

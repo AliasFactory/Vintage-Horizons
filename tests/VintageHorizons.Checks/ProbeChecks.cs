@@ -3,18 +3,21 @@ using Vintagestory.API.Common;
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// Runs first, and exists only to fail loudly and specifically when the game assemblies
-/// cannot be loaded.
+/// This suite runs first. It exists to fail clearly and specifically when the runtime cannot
+/// load the game assemblies.
 ///
-/// Every other suite here is either pure BCL or touches game types so lightly that a
-/// loading failure would surface as a confusing TypeInitializationException halfway
-/// through an unrelated assertion. These two calls exercise the only two real loading
-/// risks in the whole fast tier, so when they pass the rest is mechanically safe:
+/// Each other suite here uses the BCL only, or it touches game types very lightly. For those
+/// suites, a loading failure appears as a confusing TypeInitializationException, in the
+/// middle of an unrelated assertion.
 ///
-///   - Block: around two hundred virtual methods, and building its vtable resolves every
-///     one of their signatures. That reaches further than any other type the checks touch.
-///   - LodStore: overrides CreateTablesIfNotExists(SqliteConnection), so merely loading
-///     the type forces Microsoft.Data.Sqlite to resolve, even though no database is opened.
+/// These two calls exercise the only two real loading risks in the full fast tier. Thus when
+/// they pass, the remainder is safe.
+///
+///   - Block has approximately two hundred virtual methods. The build of its vtable resolves
+///     the signature of each one. That reaches further than any other type that the checks
+///     touch.
+///   - LodStore overrides CreateTablesIfNotExists(SqliteConnection). Thus a load of the type
+///     alone makes Microsoft.Data.Sqlite resolve, and no database opens.
 /// </summary>
 public static class ProbeChecks
 {

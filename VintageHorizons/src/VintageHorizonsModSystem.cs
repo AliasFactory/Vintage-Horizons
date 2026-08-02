@@ -8,19 +8,23 @@ namespace VintageHorizons;
 
 public class VintageHorizonsConfig
 {
-    /// <summary>0 = unlimited.</summary>
+    /// <summary>A value of 0 is unlimited.</summary>
     public int FarViewDistanceCap = 0;
 
-    /// <summary>Distance at which detail starts halving; see LodWorld.DetailDistance.</summary>
+    /// <summary>The distance at which the detail starts to decrease. Read
+    /// LodWorld.DetailDistance.</summary>
     public int DetailDistance = 512;
 }
 
 /// <summary>
-/// Client entry point: wires the shared <see cref="LodPipeline"/> to client events and
-/// owns everything the server has no equivalent of - the renderer, tint registry, chat
-/// commands and telemetry. Chunk columns arrive from `ChunkDirty` and go straight to the
-/// pipeline, which does the capture, mip and persistence work.
-/// See DESIGN.md at the repo root.
+/// The entry point on the client. It connects the shared <see cref="LodPipeline"/> to the
+/// client events. It also owns each part that the server has no equivalent of: the renderer,
+/// the tint registry, the chat commands and the telemetry.
+///
+/// A chunk column arrives from `ChunkDirty` and goes directly to the pipeline. The pipeline
+/// does the capture, the mip and the persistence.
+///
+/// Read DESIGN.md at the root of the repository.
 /// </summary>
 public class VintageHorizonsModSystem : ModSystem
 {
@@ -30,14 +34,16 @@ public class VintageHorizonsModSystem : ModSystem
     LodPipeline pipeline = null!;
     LodTerrainRenderer renderer = null!;
 
-    /// <summary>Block -> live tint slot; shared by capture, cache loads and the renderer.</summary>
+    /// <summary>A map from a block to its live tint slot. The capture, the cache loads and
+    /// the renderer all use it.</summary>
     readonly LodTintRegistry tints = new();
     long tickListenerId;
 
     readonly BlockPos paletteSamplePos = new(0, 0, 0);
 
-    // Dev auto-explore (unattended stress testing): teleport along an expanding
-    // spiral so fresh chunks stream through the pipeline continuously.
+    // Automatic exploration, for development and for an unattended stress test. It teleports
+    // the player along a spiral that grows. Thus new chunks stream through the pipeline
+    // continuously.
     bool autoExplore;
     int exploreLeg;      // spiral leg counter
     int exploreStep;     // steps taken on current leg
@@ -47,16 +53,18 @@ public class VintageHorizonsModSystem : ModSystem
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Client;
 
     /// <summary>
-    /// Other LOD mods, by mod id. Farseer, ChunkLOD and TopoHorizon are all Universal
-    /// with requiredOnClient, so a server running one forces every client to load it
-    /// too -- the player cannot opt out of theirs, only out of ours.
+    /// The other LOD mods, by their mod id. Farseer, ChunkLOD and TopoHorizon are all
+    /// Universal with requiredOnClient. Thus a server that runs one of them makes each client
+    /// load it. A player cannot refuse those mods, and can refuse this one only.
     /// </summary>
     static readonly string[] CompetingLodMods = { "farseer", "chunklod", "vistasbeyond", "topohorizon" };
 
-    /// <summary>Set when another LOD mod is present; we then stay out of its way.</summary>
+    /// <summary>The mod sets this when another LOD mod is present. Then this mod does
+    /// nothing.</summary>
     string? deferringTo;
 
-    /// <summary>Optional server assist (DESIGN.md §10); null while deferring.</summary>
+    /// <summary>The optional server assist (DESIGN.md section 10). It is null while this mod
+    /// defers to another LOD mod.</summary>
     LodAssistClient? assist;
 
     public override void StartClientSide(ICoreClientAPI api)
@@ -67,14 +75,17 @@ public class VintageHorizonsModSystem : ModSystem
         {
             if (!capi.ModLoader.IsModEnabled(modid)) continue;
 
-            // Two LOD mods both extend the camera's far plane and both draw terrain out
-            // there: they would reset the projection matrix against each other every
-            // frame and z-fight over the same ground. Defer rather than fight, because
-            // a server-side mod is mandatory for anyone on that server while we are not.
+            // Two LOD mods both increase the far plane of the camera, and both draw
+            // terrain there. Thus they set the projection matrix against each other in each
+            // frame, and they z-fight over the same ground.
+            //
+            // This mod defers instead. A server-side mod is necessary for each player on
+            // that server, and this mod is not.
             deferringTo = modid;
             Mod.Logger.Notification(
                 "'{0}' is loaded, so VintageHorizons is staying idle to avoid drawing over it "
-                + "and fighting it for the camera far plane. Remove '{0}' to use VintageHorizons instead.",
+                + "and setting the camera far plane against it. To use VintageHorizons "
+                + "instead, remove '{0}'.",
                 modid);
             RegisterCommands();
             return;
@@ -100,9 +111,10 @@ public class VintageHorizonsModSystem : ModSystem
             FarViewDistanceCap = config.FarViewDistanceCap,
         };
 
-        // Registered here rather than on world join: channel registration has to be in
-        // place before the connection handshake runs, or the server never learns we
-        // speak it. Against a vanilla server this stays an unused registration.
+        // Register here, and not at the world join. The registration of a channel must
+        // exist before the connection handshake runs. Without that, the server never learns
+        // that this mod uses the channel. Against a vanilla server, this registration stays
+        // unused.
         assist = new LodAssistClient(capi, Mod.Logger, Mod.Info.Version);
         assist.Register();
 
@@ -142,8 +154,8 @@ public class VintageHorizonsModSystem : ModSystem
     }
 
     /// <summary>
-    /// Adopt whatever the server sent, then ask for what the render path now wants.
-    /// Both on the game tick, because both mutate the LodWorld.
+    /// Take what the server sent. Then ask for what the render path wants now. Both steps
+    /// run on the game tick, because both change the LodWorld.
     /// </summary>
     void PumpServerAssist()
     {
@@ -157,16 +169,21 @@ public class VintageHorizonsModSystem : ModSystem
             return false;
         });
 
-        // Manifest keys become quadtree-visible here rather than in the packet handler:
-        // HasDataSet belongs to this thread.
+        // The manifest keys become visible to the quadtree here, and not in the packet
+        // handler. HasDataSet belongs to this thread.
         if (assist.RemoteKeys.Count > 0) pipeline.AddRemoteKeys(assist.RemoteKeys);
 
-        // Nearest first. The render path asks for exactly the sections it wants, but far
-        // more than the in-flight cap allows at once, and an unordered set hands the
-        // network whatever hashes first - so distant terrain arrived while ground in front
-        // of the player stayed at its coarse parent, which is what the no-holes rule draws
-        // until all four children land. Sorting here rather than in the pipeline keeps the
-        // pipeline free of any notion of where the viewer is.
+        // Take the nearest first.
+        //
+        // The render path asks for exactly the sections that it wants. That is many more
+        // than the in-flight limit permits at one time. A set with no order gives the
+        // network the key that hashes first.
+        //
+        // Thus distant terrain arrived while the ground in front of the player stayed at its
+        // coarse parent. The no-holes rule draws that parent until all four children arrive.
+        //
+        // The sort is here, and not in the pipeline. Thus the pipeline needs no knowledge of
+        // the position of the viewer.
         long[] wanted = pipeline.RemoteWanted();
         if (wanted.Length > 1)
         {
@@ -181,37 +198,43 @@ public class VintageHorizonsModSystem : ModSystem
         {
             loggedRemoteKeys = true;
             Mod.Logger.Notification(
-                "Server assist: {0} sections offered that this client has never captured; "
-                + "fetching them as the view needs them.", pipeline.RemoteOnly.Count);
+                "Server assist: the server offers {0} sections that this client never "
+                + "captured. The client fetches each one when the view needs it.",
+                pipeline.RemoteOnly.Count);
         }
     }
 
     bool loggedRemoteKeys;
 
     /// <summary>
-    /// The server side's cache for this same singleplayer world, when it has swept one.
-    /// Null on a dedicated server (the network assist covers that) and on any world that
-    /// has never swept.
+    /// The cache of the server side, for this same singleplayer world, when a sweep made
+    /// one.
+    ///
+    /// This is null on a dedicated server, where the network assist covers the same need. It
+    /// is also null on a world that never swept.
     /// </summary>
     LodLocalOfferSource? localOffers;
     bool loggedLocalOffers;
 
     /// <summary>
-    /// Adopt sections the server side swept out of the savegame.
+    /// Take the sections that the server side swept out of the savegame.
     ///
-    /// Identical in shape to PumpServerAssist and deliberately so - same remote-key
-    /// bookkeeping, same recolour on install, same nearest-first ordering. Only the
-    /// transport differs, and there is no in-flight cap because a local file read has no
-    /// round trip to protect. The budget per tick is there so a sweep of ten thousand
-    /// sections does not try to install all of them in one frame.
+    /// The shape is the same as PumpServerAssist, on purpose. It has the same record of the
+    /// remote keys, the same recolor at install, and the same nearest-first order.
+    ///
+    /// Only the transport is different. There is no in-flight limit, because a read of a
+    /// local file has no round trip to protect.
+    ///
+    /// The budget for each tick exists so that a sweep of ten thousand sections does not
+    /// install all of them in one frame.
     /// </summary>
     void PumpLocalOffers()
     {
         if (localOffers == null) return;
 
-        // The sweep writes continuously, so re-reading the key list picks up whatever has
-        // landed since. AddRemoteKeys ignores anything already known, and anything local
-        // disk already holds.
+        // The sweep writes continuously. Thus a new read of the key list finds what arrived
+        // since the last read. AddRemoteKeys ignores a key that it knows already, and a key
+        // that the local disk holds already.
         long[] offered = localOffers.Keys();
         if (offered.Length > 0) pipeline.AddRemoteKeys(offered);
 
@@ -234,9 +257,11 @@ public class VintageHorizonsModSystem : ModSystem
             taken[i] = key;
 
             byte[]? blob = localOffers.Blob(key);
-            // A miss is ordinary while the sweep is still running: the key was listed but
-            // its row is not written yet. MarkRemoteUnavailable is permanent, so it must
-            // not be used for "not yet" - leaving the key alone lets a later tick retry.
+            // A miss is normal while the sweep runs. The list held the key, but the mod did
+            // not write its row yet.
+            //
+            // MarkRemoteUnavailable is permanent. Thus do not use it for "not yet". Leave the
+            // key as it is, and a later tick tries again.
             if (blob == null || blob.Length == 0) continue;
 
             if (!pipeline.InstallForeignBlob(key, blob, RecolorForeignSection))
@@ -250,22 +275,27 @@ public class VintageHorizonsModSystem : ModSystem
         {
             loggedLocalOffers = true;
             Mod.Logger.Notification(
-                "Savegame sweep: {0} sections built from terrain generated in earlier "
-                + "sessions are available; adopting them as the view needs them.", offered.Length);
+                "Savegame sweep: {0} sections are available, built from terrain that earlier "
+                + "sessions generated. The client takes each one when the view needs it.",
+                offered.Length);
         }
     }
 
     /// <summary>
-    /// Sections installed from the local sweep per tick. Higher than the network's in-flight
-    /// cap because there is no round trip to hide, but still bounded: each install
-    /// decompresses a blob and recolours a palette on the main thread.
+    /// The number of sections from the local sweep that the mod installs in each tick.
+    ///
+    /// This is higher than the in-flight limit of the network, because there is no round trip
+    /// to hide. It still has a limit, because each install decompresses a blob and gives a
+    /// palette its colors, on the main thread.
     /// </summary>
     const int LocalOffersPerTick = 4;
 
     /// <summary>
-    /// Fill in palette colours for a section captured by a server, which had no texture
-    /// atlas and stored 0 for every one of them (DESIGN.md §10.4). Block ids are already
-    /// resolved from codes by the deserializer, so this only needs the atlas.
+    /// Give the colors to the palette of a section that a server captured. That server had
+    /// no texture atlas, and it stored 0 for each color (DESIGN.md section 10.4).
+    ///
+    /// The deserializer found the block ids from the codes already. Thus this method needs
+    /// the atlas only.
     /// </summary>
     void RecolorForeignSection(LodSection section)
     {
@@ -284,10 +314,13 @@ public class VintageHorizonsModSystem : ModSystem
     }
 
     /// <summary>
-    /// The client half of palette registration: the untinted average colour from the
-    /// texture atlas, plus which live tint applies. Stored untinted on purpose, so the
-    /// shader can follow the calendar instead of freezing the season it was captured in.
-    /// A server has no atlas and cannot answer this at all (DESIGN.md §10.4).
+    /// The client half of the palette registration. It gives the average color from the
+    /// texture atlas, with no tint, and the live tint that applies.
+    ///
+    /// The mod stores the color with no tint on purpose. Thus the shader can follow the
+    /// calendar. Without that, the color holds the season of the capture forever.
+    ///
+    /// A server has no atlas, and it cannot answer this at all (DESIGN.md section 10.4).
     /// </summary>
     (int Color, byte TintSlot) DescribePalette(int blockId, int cx, int cz, int sampleY)
     {
@@ -296,8 +329,9 @@ public class VintageHorizonsModSystem : ModSystem
         int color = block.GetColorWithoutTint(capi, paletteSamplePos);
 
         if (!IsUsableAtlasTexture(block.TextureSubIdForBlockColor)
-            // Guarded on non-zero: if the atlas never populated AvgColor we would be
-            // comparing against 0 and "fixing" every legitimately black block.
+            // The guard tests for a value other than zero. If the atlas never filled
+            // AvgColor, the comparison is against 0. Then the mod "corrects" each block that
+            // is correctly black.
             || (unknownTextureColor != 0 && color == unknownTextureColor))
         {
             color = ColorFromAnyTexture(block, color);
@@ -305,14 +339,18 @@ public class VintageHorizonsModSystem : ModSystem
         return (color, (byte)tints.SlotFor(block));
     }
 
-    /// <summary>Average colour of unknown.png (near-white, not magenta - measured).</summary>
+    /// <summary>The average color of unknown.png. It is near white, and it is not magenta.
+    /// This was measured.</summary>
     int unknownTextureColor;
 
     /// <summary>
-    /// Whether an atlas sub-id actually names a texture. `GetAverageColor` on an unassigned
-    /// or out-of-range sub-id reads whatever the atlas holds there, which is where a
-    /// nonsense LOD colour comes from - and unlike the unknown.png case, that does not
-    /// require knowing what the placeholder looks like to detect.
+    /// Whether a sub-id of the atlas names a real texture.
+    ///
+    /// `GetAverageColor` on a sub-id with no assignment, or on a sub-id out of range, reads
+    /// what the atlas holds at that position. That is the source of an incorrect LOD color.
+    ///
+    /// This test is better than the test for unknown.png, because it does not need any
+    /// knowledge of the appearance of the placeholder.
     /// </summary>
     bool IsUsableAtlasTexture(int subId)
     {
@@ -327,20 +365,27 @@ public class VintageHorizonsModSystem : ModSystem
     bool loggedMissingTexture;
 
     /// <summary>
-    /// Salvage a colour for a block whose block-colour texture did not resolve, so it draws
-    /// as itself instead of as a placeholder or as whatever the atlas holds at a bogus id.
+    /// Find a color for a block whose block-color texture did not resolve. Thus the mod
+    /// draws that block as itself. It does not draw a placeholder, or the content of the
+    /// atlas at an incorrect id.
     ///
-    /// Vanilla picks that texture in Block.LoadTextureSubIdForBlockColor: the
-    /// 'textureCodeForBlockColor' attribute, else "up", else `Textures.First()` - and that
-    /// last step ends in `?? 0`, so a block whose first texture in dictionary order has no
-    /// Baked entry silently resolves to atlas subid 0, which is unknown.png. The block's
-    /// other faces are baked fine, which is why it looks correct up close and magenta only
-    /// in LOD. Measured firing on vanilla 'fruitingbush-wild-blackberry-free', so this is
-    /// not a modded-content problem -- content-heavy block packs just hit it more often.
+    /// Vanilla selects that texture in Block.LoadTextureSubIdForBlockColor. It tries the
+    /// attribute 'textureCodeForBlockColor', then "up", then `Textures.First()`. That last
+    /// step ends in `?? 0`.
     ///
-    /// So: use any of the block's own baked textures instead of the first one. Cached per
-    /// block id - the answer cannot change within a session, and a palette entry is
-    /// registered once per section, which is thousands of times per world.
+    /// Thus a block whose first texture in dictionary order has no Baked entry resolves to
+    /// atlas sub-id 0, which is unknown.png. No message occurs. The other faces of the block
+    /// bake correctly. That is the reason why the block looks correct near the player, and
+    /// magenta at LOD distance only.
+    ///
+    /// This was measured on the vanilla block 'fruitingbush-wild-blackberry-free'. Thus it is
+    /// not a problem of modded content. A block pack with much content only meets it more
+    /// often.
+    ///
+    /// The solution is to use any baked texture of the block, and not the first one. The
+    /// result is cached for each block id. The answer cannot change during a session. The mod
+    /// also registers a palette entry one time for each section, which is thousands of times
+    /// for each world.
     /// </summary>
     int ColorFromAnyTexture(Block block, int fallback)
     {
@@ -368,16 +413,18 @@ public class VintageHorizonsModSystem : ModSystem
         {
             loggedMissingTexture = true;
             Mod.Logger.Notification(
-                "Block '{0}' has no usable block-colour texture (vanilla resolved it to unknown.png); "
-                + "using another of its own textures instead so it does not render wrong at distance.",
+                "Block '{0}' has no usable block-colour texture, because vanilla resolved it "
+                + "to unknown.png. This mod uses another texture of that same block instead. "
+                + "Thus the block does not draw with a wrong colour at a distance.",
                 block.Code);
         }
         return found;
     }
 
     /// <summary>
-    /// Find a block using the standard plant tint, so plants that declare no colour map
-    /// (ferns) can borrow it instead of rendering as their greyscale texture.
+    /// Find a block that uses the standard plant tint. Thus a plant that declares no color
+    /// map, such as a fern, can use that tint. Without it, the mod draws the greyscale
+    /// texture of the plant.
     /// </summary>
     void ResolvePlantTintFallback()
     {
@@ -410,8 +457,9 @@ public class VintageHorizonsModSystem : ModSystem
     void OnLevelFinalize()
     {
         ResolvePlantTintFallback();
-        // Read once here rather than per palette entry: the atlas exists by now, and a
-        // reload would change the position object but not what magenta looks like.
+        // Read this one time here, and not for each palette entry. The atlas exists now. A
+        // reload changes the position object, but it does not change the appearance of
+        // magenta.
         unknownTextureColor = capi.BlockTextureAtlas.UnknownTexturePosition.AvgColor;
         Mod.Logger.Debug("Missing-texture colour is {0:X8}{1}", unknownTextureColor,
             unknownTextureColor == 0 ? " (zero: magenta-block salvage disabled)" : "");
@@ -420,18 +468,20 @@ public class VintageHorizonsModSystem : ModSystem
         joinClock.Restart();
         nextMilestone = 0;
 
-        // A singleplayer world whose server side has swept the savegame leaves its results
-        // in a sibling cache. Nothing to open on a dedicated server, where the same
-        // sections arrive over the network instead.
+        // In a singleplayer world, the server side sweeps the savegame and leaves the
+        // results in a cache beside this one. There is nothing to open on a dedicated
+        // server, where the same sections arrive over the network.
         if (pipeline.DbPath is string dbPath)
         {
             localOffers = LodLocalOfferSource.TryOpen(dbPath, Mod.Logger);
         }
 
-        // Last, and after the pipeline is live. An exception in a LevelFinalize handler
-        // skips everything the handler has left to do, so an optional extra must not sit
-        // upstream of the mod's actual job -- it did, and it broke exactly the
-        // vanilla-server case it exists to stay out of the way of.
+        // Do this last, and after the pipeline runs. An exception in a LevelFinalize handler
+        // skips each remaining step of that handler.
+        //
+        // Thus an optional extra must not come before the real work of the mod. It did come
+        // before, and it broke exactly the vanilla-server case that it exists to leave
+        // alone.
         assist?.Greet();
 
         Mod.Logger.Notification(
@@ -440,10 +490,10 @@ public class VintageHorizonsModSystem : ModSystem
 
         capi.Event.RegisterCallback(_ => LogStats("Stats after 30s"), 30000);
 
-        // Continuous telemetry. Was tied to AutoUnpause, which meant an *attended* session
-        // - the only kind where someone can say "this looks wrong" - was the one case with
-        // no ongoing numbers to explain it. Its own switch now, so watching and driving are
-        // independent.
+        // Continuous telemetry. This used AutoUnpause before. Thus an *attended* session had
+        // no continuous numbers, and an attended session is the only kind where a person can
+        // say "this looks wrong". It has its own switch now. Thus watching and driving are
+        // separate.
         if (renderer.AutoUnpause || Environment.GetEnvironmentVariable("VINTAGEHORIZONS_STATS") == "1")
         {
             capi.Event.RegisterGameTickListener(_ => LogStats("Stats"), 15000);
@@ -470,7 +520,7 @@ public class VintageHorizonsModSystem : ModSystem
         exploreX += exploreDirX * hop;
         exploreZ += exploreDirZ * hop;
 
-        // Square spiral: legs lengthen every second turn.
+        // A square spiral. Each second turn makes the legs longer.
         if (++exploreStep >= exploreLeg / 2 + 1)
         {
             exploreStep = 0;
@@ -541,9 +591,9 @@ public class VintageHorizonsModSystem : ModSystem
     void OnLeaveWorld()
     {
         assist?.Reset();
-        // Belongs to the world being left: the next one is a different savegame with a
-        // different sibling cache, and holding this open would keep a file handle on a
-        // database the server side may want to delete or replace.
+        // This belongs to the world that the player leaves. The next world is a different
+        // savegame with a different cache beside it. An open handle here also keeps a file
+        // handle on a database that the server side can delete or replace.
         localOffers?.Dispose();
         localOffers = null;
         loggedLocalOffers = false;
@@ -555,7 +605,7 @@ public class VintageHorizonsModSystem : ModSystem
     void RegisterCommands()
     {
         capi.ChatCommands.Create("vhinfo")
-            .WithDescription("VintageHorizons status")
+            .WithDescription("Show the status of VintageHorizons")
             .HandleWith(_ => deferringTo != null
                 ? TextCommandResult.Success(
                     $"[VintageHorizons] idle: '{deferringTo}' is also installed and is drawing the "
@@ -578,12 +628,12 @@ public class VintageHorizonsModSystem : ModSystem
                       (assist.ManifestComplete ? "" : " (manifest still arriving)")
                     : "")));
 
-        // The remaining commands drive the renderer, which does not exist when we are
-        // deferring to another LOD mod.
+        // The remaining commands drive the renderer. That renderer does not exist while this
+        // mod defers to another LOD mod.
         if (deferringTo != null) return;
 
         capi.ChatCommands.Create("vhwhy")
-            .WithDescription("Explain why nearby LOD terrain is drawn coarser than it should be")
+            .WithDescription("Give the reason why near LOD terrain is coarser than its wanted level")
             .HandleWith(_ =>
             {
                 var at = capi.World.Player.Entity.Pos;
@@ -592,7 +642,7 @@ public class VintageHorizonsModSystem : ModSystem
             });
 
         capi.ChatCommands.Create("vhfar")
-            .WithDescription("Cap VintageHorizons render distance in blocks (0 = unlimited)")
+            .WithDescription("Limit the render distance of VintageHorizons, in blocks. 0 is unlimited.")
             .WithArgs(capi.ChatCommands.Parsers.Int("blocks"))
             .HandleWith(args =>
             {
@@ -605,7 +655,7 @@ public class VintageHorizonsModSystem : ModSystem
             });
 
         capi.ChatCommands.Create("vhdetail")
-            .WithDescription("Distance in blocks before LOD detail starts halving (default 512; higher = sharper far terrain, more VRAM/CPU)")
+            .WithDescription("Distance in blocks before the LOD detail decreases. The default is 512. A larger value gives sharper far terrain, and it uses more VRAM and CPU.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalInt("blocks"))
             .HandleWith(args =>
             {
@@ -626,7 +676,8 @@ public class VintageHorizonsModSystem : ModSystem
             });
     }
 
-    /// <summary>Writes every setting: a partial write would silently reset the others.</summary>
+    /// <summary>Write each setting. A partial write returns the other settings to their
+    /// defaults, and it gives no message.</summary>
     void SaveConfig()
     {
         capi.StoreModConfig(new VintageHorizonsConfig
@@ -644,7 +695,7 @@ public class VintageHorizonsModSystem : ModSystem
             capi.Event.LevelFinalize -= OnLevelFinalize;
             capi.Event.LeaveWorld -= OnLeaveWorld;
             capi.Event.UnregisterGameTickListener(tickListenerId);
-            // Stops the storage writer before the connection it writes through.
+            // Stop the storage writer before the connection that it writes through.
             pipeline?.Dispose();
             renderer?.Dispose();
         }

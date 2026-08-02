@@ -1,12 +1,13 @@
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// Child to parent downsampling. Four child columns become one parent column via a
-/// y-boundary slice sweep, with a slice surviving only when enough columns cover it.
+/// Downsampling from a child to its parent. Four child columns become one parent column,
+/// through a slice sweep on the y boundaries. A slice stays only when enough columns cover
+/// it.
 ///
-/// The whole quadtree's appearance rests on this: every level above 0 is produced here
-/// and nowhere else, so a fault shows up as distant terrain that is subtly wrong in a
-/// way no one can trace back to a single block.
+/// The appearance of the full quadtree depends on this code. It makes each level above 0, and
+/// nothing else does. Thus a defect appears as distant terrain that is slightly wrong, and
+/// nobody can trace that back to one block.
 /// </summary>
 public static class MipChecks
 {
@@ -21,7 +22,8 @@ public static class MipChecks
         NothingToDo(c);
     }
 
-    /// <summary>A child section fills exactly one quadrant of its parent, and only that one.</summary>
+    /// <summary>A child section fills exactly one quadrant of its parent, and no other
+    /// quadrant.</summary>
     static void QuadrantPlacement(Check c)
     {
         for (int qz = 0; qz < 2; qz++)
@@ -34,7 +36,8 @@ public static class MipChecks
                 c.True(LodMip.DownsampleIntoParent(child, parent, qx, qz),
                     $"quadrant ({qx},{qz}) reports the parent changed");
 
-                // A full child section covers a half-by-half block of parent columns.
+                // A full child section covers one half by one half of the parent
+                // columns.
                 c.Eq(Half * Half, parent.CapturedColumns, $"quadrant ({qx},{qz}) captures a quarter of the parent");
 
                 int inside = LodSection.ColumnIndex(qx * Half, qz * Half);
@@ -42,8 +45,8 @@ public static class MipChecks
                 c.Eq(1, parent.ColumnRuns(inside).Length, $"quadrant ({qx},{qz}) fills its near corner");
                 c.Eq(1, parent.ColumnRuns(alsoInside).Length, $"quadrant ({qx},{qz}) fills its far corner");
 
-                // The other three quadrants must be untouched, or siblings would overwrite
-                // each other and only the last one downsampled would survive.
+                // The other three quadrants must not change. Without that rule, the
+                // siblings overwrite each other, and only the last one stays.
                 int outsideX = qx == 0 ? Half : 0;
                 int outsideZ = qz == 0 ? Half : 0;
                 c.False(parent.Captured[LodSection.ColumnIndex(outsideX, qz * Half)],
@@ -53,7 +56,7 @@ public static class MipChecks
             }
         }
 
-        // All four siblings into one parent: together they cover it exactly once.
+        // All four siblings go into one parent. Together they cover it exactly one time.
         var shared = new LodSection();
         for (int qz = 0; qz < 2; qz++)
         {
@@ -63,14 +66,15 @@ public static class MipChecks
     }
 
     /// <summary>
-    /// A slice survives when at least two of the four child columns cover it, so a lone
-    /// spire does not become a full-width pillar at the coarser level. With only one
-    /// column captured the threshold drops to one, or the frontier of explored terrain
-    /// would silently lose its edge columns.
+    /// A slice stays when two or more of the four child columns cover it. Thus one thin
+    /// spire does not become a pillar at the full width, at the coarser level.
+    ///
+    /// When the mod captured one column only, the threshold becomes one. Without that, the
+    /// frontier of the explored terrain loses its edge columns, and no message occurs.
     /// </summary>
     static void MajorityOccupancy(Check c)
     {
-        // One column reaches to 20, the other three stop at 10.
+        // One column reaches y=20. The other three stop at y=10.
         var child = new LodSection();
         child.FindOrAddPaletteEntry(blockId: 1, color: 0x00445566, flags: 0);
         child.SetColumn(LodSection.ColumnIndex(0, 0), new[] { LodSection.PackRun(0, 20, 0) });
@@ -86,7 +90,7 @@ public static class MipChecks
         c.Eq(10, LodSection.RunYTop(merged[0]), "the parent takes the height the majority agreed on");
         c.Eq(0, LodSection.RunYBottom(merged[0]), "the merged run keeps the shared floor");
 
-        // A single captured column has no majority to lose to.
+        // One captured column has no majority against it.
         var lonely = new LodSection();
         lonely.FindOrAddPaletteEntry(blockId: 1, color: 0x00445566, flags: 0);
         lonely.SetColumn(LodSection.ColumnIndex(0, 0), new[] { LodSection.PackRun(0, 20, 0) });
@@ -100,10 +104,12 @@ public static class MipChecks
     }
 
     /// <summary>
-    /// Slices are walked one boundary at a time, so a uniform column arrives as several
-    /// abutting slices and must come back out as one run. Without the merge every parent
-    /// column would carry a run per distinct y in its children - the run arrays would grow
-    /// with depth instead of shrinking, which is the entire point of the pyramid.
+    /// The sweep walks one boundary at a time. Thus a column with one material arrives as
+    /// several slices that touch each other, and it must leave as one run.
+    ///
+    /// Without the merge, each parent column holds one run for each distinct y in its
+    /// children. Then the run arrays grow with the depth, and they do not become smaller. A
+    /// smaller array is the purpose of the pyramid.
     /// </summary>
     static void RunMerging(Check c)
     {
@@ -111,7 +117,7 @@ public static class MipChecks
         child.FindOrAddPaletteEntry(blockId: 1, color: 0x00112233, flags: 0);
         child.FindOrAddPaletteEntry(blockId: 2, color: 0x00445566, flags: 0);
 
-        // Two stacked runs of the SAME block, split at y=10.
+        // Two runs of the SAME block, one above the other, with a division at y=10.
         ulong[] sameBlock = { LodSection.PackRun(0, 20, 10), LodSection.PackRun(0, 10, 0) };
         for (int dz = 0; dz < 2; dz++)
         {
@@ -126,7 +132,8 @@ public static class MipChecks
         c.Eq(20, LodSection.RunYTop(merged[0]), "the fused run keeps the top");
         c.Eq(0, LodSection.RunYBottom(merged[0]), "the fused run keeps the bottom");
 
-        // Different blocks must NOT fuse, or stone would swallow the soil above it.
+        // Two different blocks must NOT join. Without that rule, stone takes the soil above
+        // it.
         var layered = new LodSection();
         layered.FindOrAddPaletteEntry(blockId: 1, color: 0x00112233, flags: 0);
         layered.FindOrAddPaletteEntry(blockId: 2, color: 0x00445566, flags: 0);
@@ -147,14 +154,14 @@ public static class MipChecks
     }
 
     /// <summary>
-    /// Parent and child hold independent palettes, so ids must be translated rather than
-    /// copied. A raw copy would silently reinterpret every run as whatever block happened
-    /// to occupy that index in the parent.
+    /// The parent and the child hold separate palettes. Thus the mod must translate an id,
+    /// and it must not copy the id. A direct copy reads each run as the block at that index
+    /// in the parent, and it gives no message.
     /// </summary>
     static void PaletteRemap(Check c)
     {
         var child = new LodSection();
-        // Deliberately not index 0: an identity mapping would hide the bug.
+        // This is deliberately not index 0. A map that changes nothing hides the defect.
         child.FindOrAddPaletteEntry(blockId: 100, color: 0x00AAAAAA, flags: 0);
         child.FindOrAddPaletteEntry(blockId: 200, color: 0x00BBCCDD,
             flags: LodPaletteEntry.FlagWater, tintSlot: 7);
@@ -165,7 +172,8 @@ public static class MipChecks
             for (int dx = 0; dx < 2; dx++) child.SetColumn(LodSection.ColumnIndex(dx, dz), runs);
         }
 
-        // Give the parent an unrelated entry first, so the child's id 1 cannot coincide.
+        // Give the parent an unrelated entry first. Thus id 1 of the child cannot be the
+        // same by chance.
         var parent = new LodSection();
         parent.FindOrAddPaletteEntry(blockId: 999, color: 0x00000001, flags: 0);
 
@@ -190,15 +198,16 @@ public static class MipChecks
             "an empty child leaves the parent unchanged");
         c.Eq(0, parent.CapturedColumns, "an empty child captures nothing");
 
-        // Re-running an identical downsample must be a no-op, or every mip pass would
-        // mark the parent dirty and re-queue a save and a re-mesh forever.
+        // An identical downsample, run again, must change nothing. Without that, each mip
+        // pass marks the parent dirty. Then it queues a save and a new mesh, forever.
         LodSection child = Solid(0, 10, 0);
         var target = new LodSection();
         c.True(LodMip.DownsampleIntoParent(child, target, 0, 0), "the first downsample changes the parent");
         c.False(LodMip.DownsampleIntoParent(child, target, 0, 0), "an identical re-run changes nothing");
     }
 
-    /// <summary>A fully captured child section, every column one run of palette id 0.</summary>
+    /// <summary>A child section that the mod captured fully. Each column holds one run of
+    /// palette id 0.</summary>
     static LodSection Solid(int paletteId, int yTop, int yBottom)
     {
         var s = new LodSection();

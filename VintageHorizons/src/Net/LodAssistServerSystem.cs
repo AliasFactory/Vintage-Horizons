@@ -4,14 +4,16 @@ using Vintagestory.API.Server;
 namespace VintageHorizons.Net;
 
 /// <summary>
-/// Server half of the optional assist (DESIGN.md §10). Stage 1 answers the handshake and
-/// nothing else, which is the point: it proves the mod can go Universal without changing
-/// anything for anyone, before any terrain is put on the wire.
+/// The server half of the optional assist (DESIGN.md section 10).
 ///
-/// This is a separate ModSystem rather than a branch inside the client one. The client
-/// system casts World to ClientMain, compiles shaders and registers a renderer; the
-/// robust guarantee that none of that runs on a server is that the code is not there,
-/// not a side check that one refactor could get wrong.
+/// Stage 1 answers the handshake and does nothing else. That is the purpose. It proves that
+/// the mod can become Universal and change nothing for any user, before any terrain goes
+/// onto the wire.
+///
+/// This is a separate ModSystem, and not a branch inside the client system. The client
+/// system casts World to ClientMain, compiles shaders and registers a renderer. The strong
+/// guarantee that none of that runs on a server is that the code is not there. A test of the
+/// side is weaker, because one refactor can make it incorrect.
 /// </summary>
 public class LodAssistServerSystem : ModSystem
 {
@@ -32,12 +34,12 @@ public class LodAssistServerSystem : ModSystem
             .SetMessageHandler<AssistHello>(OnHello)
             .SetMessageHandler<AssistSectionRequest>(OnSectionRequest);
 
-        // Once a second, not every tick: the per-second serve cap then IS the batch size,
-        // with no token bucket to get subtly wrong.
+        // One time each second, and not in each tick. Thus the serve limit for each second
+        // is also the batch size. There is no token bucket that can be incorrect.
         api.Event.RegisterGameTickListener(_ => ServePending(), 1000);
 
         api.ChatCommands.Create("vhserver")
-            .WithDescription("VintageHorizons server assist status")
+            .WithDescription("Show the status of the VintageHorizons server assist")
             .RequiresPrivilege(Privilege.controlserver)
             .HandleWith(_ =>
             {
@@ -54,8 +56,8 @@ public class LodAssistServerSystem : ModSystem
             });
 
         Mod.Logger.Notification(
-            "VintageHorizons {0} server assist listening. Players without the mod are "
-            + "unaffected and do not need to install anything.",
+            "VintageHorizons {0} server assist listening. This does not affect a player "
+            + "without the mod. Such a player installs nothing.",
             Mod.Info.Version);
     }
 
@@ -64,18 +66,22 @@ public class LodAssistServerSystem : ModSystem
         Mod.Logger.Debug("VintageHorizons: assist hello from {0} (client {1}, protocol {2})",
             fromPlayer.PlayerName, msg.ModVersion, msg.Protocol);
 
-        // Answered from the main thread, one tick later, rather than from here. Message
-        // handlers do not run on the main thread, and both the key set and its count come
-        // from a HashSet the capture pipeline mutates every tick - reading it here is a
-        // torn read, and the count would disagree with the manifest that follows it
-        // (observed: announced 5634, sent 5638, four sections captured in between).
+        // The answer comes from the main thread, one tick later, and not from here. A
+        // message handler does not run on the main thread. The key set and its count both
+        // come from a HashSet that the capture pipeline changes in each tick.
+        //
+        // Thus a read here is a torn read, and the count does not agree with the manifest
+        // that follows it. This was observed: the mod announced 5634 and sent 5638, because
+        // it captured four sections between the two.
         sapi.Event.EnqueueMainThreadTask(() => Answer(fromPlayer), "vintagehorizons-hello");
     }
 
     /// <summary>
-    /// Welcome plus the key manifest, from one snapshot so the announced count is a fact
-    /// rather than an estimate. Enabled stays false until sections can actually move:
-    /// reporting true would leave a client waiting for terrain that is not coming.
+    /// The welcome message and the key manifest, from one snapshot. Thus the announced count
+    /// is a fact, and not an estimate.
+    ///
+    /// Enabled stays false until sections can move. A value of true leaves a client that
+    /// waits for terrain that does not arrive.
     /// </summary>
     void Answer(IServerPlayer player)
     {
@@ -102,9 +108,11 @@ public class LodAssistServerSystem : ModSystem
     }
 
     /// <summary>
-    /// Pending section requests, per player, oldest first. Held here rather than answered
-    /// inline so the per-second cap has something to meter, and so a player who asks for a
-    /// hundred sections gets them steadily instead of in one spike.
+    /// The section requests that wait, for each player, with the oldest first.
+    ///
+    /// The mod holds them here, and it does not answer them immediately. Thus the limit for
+    /// each second has something to measure. A player who asks for one hundred sections also
+    /// gets them at a constant rate, and not in one large group.
     /// </summary>
     readonly Dictionary<string, Queue<long>> pendingByPlayer = new();
 
@@ -112,8 +120,9 @@ public class LodAssistServerSystem : ModSystem
     {
         if (msg.Keys == null || msg.Keys.Length == 0) return;
 
-        // Onto the main thread for the same reason as the manifest: this touches shared
-        // state, and the blob read has to be ordered against the capture that writes it.
+        // Move to the main thread, for the same reason as the manifest. This code touches
+        // shared state. The blob read must also have an order against the capture that
+        // writes it.
         long[] keys = msg.Keys;
         string uid = fromPlayer.PlayerUID;
         sapi.Event.EnqueueMainThreadTask(() =>
@@ -123,9 +132,9 @@ public class LodAssistServerSystem : ModSystem
                 pendingByPlayer[uid] = queue = new Queue<long>();
             }
 
-            // Bounded: the client is supposed to limit itself, but a server must not
-            // depend on a client behaving. Past the cap the newest asks are dropped and
-            // the client re-asks later.
+            // This queue has a limit. The client limits itself, but a server must not
+            // depend on the behaviour of a client. Above the limit, the mod drops the newest
+            // requests, and the client asks again later.
             int room = Math.Max(0, MaxQueuedPerPlayer - queue.Count);
             foreach (long key in keys.Take(room)) queue.Enqueue(key);
         }, "vintagehorizons-request");
@@ -134,8 +143,9 @@ public class LodAssistServerSystem : ModSystem
     const int MaxQueuedPerPlayer = 256;
 
     /// <summary>
-    /// Serve at most the per-second cap to each waiting player. Called once a second, so
-    /// the cap is simply the batch size - no token bucket to get wrong.
+    /// Give at most the limit for one second to each player that waits. The mod calls this
+    /// one time each second. Thus the limit is the batch size, and there is no token bucket
+    /// that can be incorrect.
     /// </summary>
     void ServePending()
     {
@@ -150,8 +160,8 @@ public class LodAssistServerSystem : ModSystem
 
         LodServerConfig config = capture.Config;
 
-        // Round-robin from a rotating start, so the global budget below cannot be
-        // monopolised by whichever player happens to sort first in the dictionary.
+        // Go through the players in turn, from a start point that rotates. Thus the player
+        // that sorts first in the dictionary cannot take the full budget below.
         List<string> uids = pendingByPlayer.Keys.ToList();
         uids.Sort(StringComparer.Ordinal);
         int start = uids.Count == 0 ? 0 : (int)(serveRound++ % (uint)uids.Count);
@@ -176,9 +186,9 @@ public class LodAssistServerSystem : ModSystem
             {
                 long key = queue.Dequeue();
 
-                // Radius is checked here, against where the player is NOW, rather than when
-                // the request was queued: a request that waited in the queue must not be
-                // honoured for somewhere the player has since left.
+                // Test the radius here, against the position of the player NOW. Do not use
+                // the position from the time of the request. A request that waited in the
+                // queue must not be honoured for a place that the player left.
                 if (!WithinServeRadius(key, player, config.ServeRadiusBlocks))
                 {
                     channel.SendPacket(new AssistSection { Key = key }, player);
@@ -191,8 +201,9 @@ public class LodAssistServerSystem : ModSystem
                 byte[] blob = capture.LoadBlob(key) ?? Array.Empty<byte>();
                 blobReadMs += serveClock.Elapsed.TotalMilliseconds;
 
-                // Empty blob rather than silence for a miss: the client needs to know to
-                // stop asking, and cannot tell "declined" from "lost" otherwise.
+                // Send an empty blob for a miss, and not silence. The client must know to
+                // stop asking. Without an answer, the client cannot separate "declined" from
+                // "lost".
                 channel.SendPacket(new AssistSection { Key = key, Blob = blob }, player);
                 sectionsServed++;
                 bytesServed += blob.Length;
@@ -204,8 +215,8 @@ public class LodAssistServerSystem : ModSystem
 
         if (emptied != null) foreach (string uid in emptied) pendingByPlayer.Remove(uid);
 
-        // Report what serving actually costs the tick, so the caps above can be judged
-        // against a measurement instead of an estimate.
+        // Report the real cost of the serving to the tick. Thus a person can judge the
+        // limits above against a measurement, and not against an estimate.
         if (sectionsServed - lastReportedServed >= 200)
         {
             lastReportedServed = sectionsServed;
@@ -216,14 +227,17 @@ public class LodAssistServerSystem : ModSystem
     }
 
     /// <summary>
-    /// Nearest-edge distance from the player to the section, not centre-to-centre: an L6
-    /// section spans 4096 blocks, so centre distance would refuse sections the player is
-    /// standing inside.
+    /// The distance from the player to the nearest edge of the section. This is not the
+    /// distance from center to center. An L6 section covers 4096 blocks. Thus a center
+    /// distance refuses a section that the player is inside.
     /// </summary>
     /// <summary>
-    /// Radius check for a player. Separate from the math below so the deref of a player
-    /// who has no entity yet (mid-join) keeps its own answer: with an unlimited radius
-    /// there is nothing to compare against, so the absent position does not matter.
+    /// The radius test for a player.
+    ///
+    /// This is separate from the arithmetic below. A player in the middle of a join has no
+    /// entity yet, and this method keeps its own answer for that case. With an unlimited
+    /// radius there is nothing to compare against, thus the absent position has no
+    /// effect.
     /// </summary>
     static bool WithinServeRadius(long key, IServerPlayer player, int radiusBlocks)
     {
@@ -254,7 +268,8 @@ public class LodAssistServerSystem : ModSystem
     long sectionsServed, lastReportedServed, bytesServed;
     double blobReadMs;
 
-    /// <summary>Keys the server holds, in chunks. Main thread only.</summary>
+    /// <summary>The keys that the server holds, in parts. Use this on the main thread
+    /// only.</summary>
     void SendManifest(IServerPlayer player, long[] keys)
     {
         int sent = 0, sequence = 0;

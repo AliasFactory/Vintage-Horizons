@@ -3,17 +3,20 @@ using System.Collections.Concurrent;
 namespace VintageHorizons;
 
 /// <summary>
-/// Serializes and writes LOD sections away from the render thread.
+/// Serializes LOD sections and writes them, off the render thread.
 ///
-/// Measured before this existed: save batches cost ~10-22ms of main-thread time on
-/// average and peaked near 49ms - an entire game tick - during exploration, which is
-/// exactly when the player is moving and a stall is most visible. Deflate happens
-/// here, outside the store's transaction lock, so a main-thread demand load waits at
-/// most for a row write.
+/// This was measured before this class existed. A save batch cost 10 ms to 22 ms of main
+/// thread time on average. It reached approximately 49 ms, which is one full game tick.
 ///
-/// Ordering: a single consumer over a FIFO queue, so repeated saves of the same
-/// section land in the order the main thread produced them and the newest snapshot
-/// wins.
+/// That occurred during exploration. Exploration is exactly when the player moves, and a
+/// delay is most visible then.
+///
+/// The deflate occurs here, outside the transaction lock of the store. Thus a load on the
+/// main thread waits for a row write at most.
+///
+/// The order is correct because one consumer reads a FIFO queue. Thus more than one save of
+/// the same section arrives in the order that the main thread made them, and the newest
+/// snapshot wins.
 /// </summary>
 public class LodStorageThread : IDisposable
 {
@@ -23,14 +26,15 @@ public class LodStorageThread : IDisposable
     readonly Thread thread;
     volatile bool running = true;
 
-    // Demand reloads. Requests come from the render path, which can tolerate a
-    // section arriving a few frames late; the capture path still loads inline
-    // because it must merge into stored data before it may create anything.
+    // Loads that come from demand. The requests come from the render path, which accepts a
+    // section that arrives a few frames late. The capture path still loads in the same call,
+    // because it must merge into the stored data before it makes anything.
     readonly ConcurrentQueue<long> loadRequests = new();
     public readonly ConcurrentQueue<(long Key, LodSection? Section)> LoadResults = new();
     Func<long, LodSection?>? loadFunc;
 
-    /// <summary>Set by the coordinator: performs one blocking read, called on this thread.</summary>
+    /// <summary>The coordinator sets this. It does one read that blocks, and this thread
+    /// calls it.</summary>
     public void SetLoader(Func<long, LodSection?> loader) => loadFunc = loader;
 
     public void RequestLoad(long key)
@@ -44,8 +48,9 @@ public class LodStorageThread : IDisposable
     public string? FirstSaveError;
     public long SectionsWritten;
 
-    // Drain waits on these rather than on an empty queue: the queue goes empty the
-    // moment the last item is dequeued, while its write is still in progress.
+    // Drain waits on these values, and not on an empty queue. The queue becomes empty at
+    // the moment when the mod takes the last item, and the write of that item is still in
+    // progress.
     long enqueuedCount;
     long completedCount;
 
@@ -74,8 +79,8 @@ public class LodStorageThread : IDisposable
         {
             bool didWork = false;
 
-            // Loads first: a pending read is blocking terrain from appearing, a
-            // pending write is not blocking anything.
+            // Do the loads first. A read that waits stops terrain from appearing. A write
+            // that waits stops nothing.
             while (loadRequests.TryDequeue(out long key))
             {
                 didWork = true;
@@ -91,7 +96,8 @@ public class LodStorageThread : IDisposable
             if (!didWork) signal.WaitOne(200);
         }
 
-        // Shutting down: never drop queued work, the rows are the player's cache.
+        // The mod is stopping. Never discard the work in the queue, because those rows are
+        // the cache of the player.
         while (queue.TryDequeue(out LodSaveSnapshot? snap)) WriteOne(snap);
     }
 
@@ -110,8 +116,9 @@ public class LodStorageThread : IDisposable
 
         if (section != null) SectionsRead++;
 
-        // Always answer, even on failure/miss: the requester clears its in-flight
-        // marker from this queue and would otherwise never retry the key.
+        // Always answer, for a failure and for a miss also. The requester clears its
+        // in-flight mark from this queue. Without an answer, it never tries that key
+        // again.
         LoadResults.Enqueue((key, section));
     }
 
@@ -138,8 +145,9 @@ public class LodStorageThread : IDisposable
     }
 
     /// <summary>
-    /// Block until every queued section has been written. Called before the store is
-    /// closed on leave-world; without it a crash-free exit could still lose sections.
+    /// Wait until the mod writes each section in the queue. The caller uses this before it
+    /// closes the store, when the player leaves the world. Without it, an exit with no crash
+    /// still loses sections.
     /// </summary>
     public void Drain(int timeoutMs = 15000)
     {
@@ -152,7 +160,8 @@ public class LodStorageThread : IDisposable
         }
     }
 
-    /// <summary>Sections enqueued but not yet written - surfaced in the stats line.</summary>
+    /// <summary>The sections that are in the queue and that the mod did not write yet. The
+    /// statistics line shows this count.</summary>
     public long Backlog => Interlocked.Read(ref enqueuedCount) - Interlocked.Read(ref completedCount);
 
     public void Dispose()

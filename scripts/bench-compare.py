@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Merge benchmark CSVs into one comparison table.
+"""Join the benchmark CSV files into one table for a comparison.
 
     scripts/bench-compare.py [bench-dir]
 
-Reads every <label>.csv written by scripts/bench.sh and prints, per waypoint, each
-configuration's frame timings side by side with its cost relative to the 'vanilla'
-baseline when one is present. A distance mod's whole job is to draw more terrain, so
-what matters is how much frame time it spends doing that -- not the raw fps of a client
-that is drawing nothing beyond 224 blocks.
+This script reads each <label>.csv that scripts/bench.sh wrote. For each waypoint it
+prints the frame timings of each configuration, side by side. When a 'vanilla' baseline
+is present, it also prints the cost against that baseline.
+
+The job of a distance mod is to draw more terrain. Thus the important number is the frame
+time that the mod spends on that work. The raw fps of a client that draws nothing past
+224 blocks is not the important number.
 """
 import csv
 import glob
@@ -33,7 +35,8 @@ for r in rows:
 
 by_key = {(r["label"], r["waypoint"]): r for r in rows}
 
-# 'vanilla' means no LOD mod at all: the cost floor every mod is measured against.
+# 'vanilla' means no LOD mod at all. It is the lowest cost, and each mod is measured
+# against it.
 baseline = "vanilla" if "vanilla" in labels else None
 
 hdr = f"{'waypoint':<18} {'configuration':<24} {'fps avg':>8} {'1% low':>8} {'ms avg':>7} {'ms 1%':>7} {'RSS MB':>7}"
@@ -51,8 +54,9 @@ for wp in waypoints:
         line = (f"{wp:<18} {label:<24} {float(r['fps_avg']):>8.0f} {float(r['fps_1pct_low']):>8.0f} "
                 f"{float(r['frame_ms_avg']):>7.2f} {float(r['frame_ms_1pct_low']):>7.2f} {int(r['rss_mb']):>7}")
         if base and label != baseline:
-            # Added frame time is the honest cost metric: fps ratios exaggerate at high
-            # framerates, where a fraction of a millisecond looks like a huge percentage.
+            # The added frame time is the honest measure of the cost. A ratio of fps values
+            # gives too large a number at a high frame rate, where a fraction of a
+            # millisecond appears as a large percentage.
             extra_ms = float(r["frame_ms_avg"]) - float(base["frame_ms_avg"])
             extra_mb = int(r["rss_mb"]) - int(base["rss_mb"])
             line += f" {extra_ms:>+7.2f}ms {extra_mb:>+5}MB"

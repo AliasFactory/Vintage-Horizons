@@ -4,7 +4,8 @@ using Vintagestory.API.Config;
 
 namespace VintageHorizons;
 
-/// <summary>Immutable view of a section for off-thread meshing. Arrays are never edited in place, only swapped.</summary>
+/// <summary>A view of a section that does not change, for meshing on another thread. The mod
+/// never edits an array in place. It replaces the full array.</summary>
 public class SectionSnapshot
 {
     public required ulong[] Runs;
@@ -47,12 +48,13 @@ public class CaptureJob
     public required ushort[] RainMap;      // copied on the main thread
 }
 
-/// <summary>Runs carry raw BLOCK ids (not palette ids); the main thread remaps on apply.</summary>
+/// <summary>A run holds a raw BLOCK id, and not a palette id. The main thread changes them
+/// at apply.</summary>
 public class CaptureResult
 {
     public long SectionKey;
     public int Cx, Cz;
-    public required ulong[]?[] RunsByColumn; // GridSize² entries, only this chunk column's 16×16 filled
+    public required ulong[]?[] RunsByColumn; // GridSize squared entries. Only the 16 x 16 of this chunk column hold data.
 }
 
 public class MeshJob
@@ -71,7 +73,7 @@ public class MeshResult
     public int VertexCount;
     public int IndexCount;
 
-    // Water/translucent geometry, drawn in a second blended pass.
+    // Water and other translucent geometry. The mod draws it in a second blended pass.
     public float[]? WaterXyz;
     public byte[]? WaterRgba;
     public int[]? WaterIndices;
@@ -80,10 +82,13 @@ public class MeshResult
 }
 
 /// <summary>
-/// The background thread: converts chunk block data into RLE columns (capture) and
-/// sections into vertex data (meshing). Capture jobs take priority - meshes are only
-/// as good as the data beneath them. All game-state access is via refs the main
-/// thread handed over; chunk reads are guarded against concurrent disposal.
+/// The background thread. It converts the block data of a chunk into RLE columns, which is
+/// the capture. It also converts a section into vertex data, which is the meshing.
+///
+/// A capture job has the higher priority. A mesh is only as correct as the data below it.
+///
+/// Each access to the game state uses a reference that the main thread gave. A read of a
+/// chunk also has a guard, because the engine can remove that chunk at the same time.
 /// </summary>
 public class LodWorker : IDisposable
 {
@@ -94,12 +99,14 @@ public class LodWorker : IDisposable
     public readonly ConcurrentQueue<CaptureResult> CaptureResults = new();
     public readonly ConcurrentQueue<MeshResult> MeshResults = new();
 
-    /// <summary>Wakes the capture thread. One job, one thread, so auto-reset is right.</summary>
+    /// <summary>Wakes the capture thread. There is one job and one thread, thus auto-reset
+    /// is correct.</summary>
     readonly AutoResetEvent captureSignal = new(false);
 
     /// <summary>
-    /// One permit per queued mesh job, so N waiting threads wake for N jobs. An
-    /// AutoResetEvent would wake exactly one however many were queued.
+    /// One permit for each mesh job in the queue. Thus N threads that wait wake for N jobs.
+    /// An AutoResetEvent wakes exactly one thread, whatever the number of jobs in the
+    /// queue.
     /// </summary>
     readonly SemaphoreSlim meshSignal = new(0);
 
@@ -108,12 +115,16 @@ public class LodWorker : IDisposable
     volatile bool running = true;
 
     /// <summary>
-    /// Mesh builders. Meshing reads only immutable SectionSnapshots - the reason the
-    /// snapshot discipline exists - so it parallelises with no locking. Capture does not
-    /// get the same treatment: it reads live IWorldChunk objects the engine owns, and
-    /// multiplying that by a thread count multiplies the risk for no comparable gain.
+    /// The threads that build meshes.
     ///
-    /// Leaves two cores for the game's own render and simulation threads.
+    /// Meshing reads SectionSnapshot objects only, and those do not change. That is the
+    /// reason for the snapshot rule. Thus meshing runs on many threads with no lock.
+    ///
+    /// Capture does not get the same treatment. It reads live IWorldChunk objects that the
+    /// engine owns. More threads there multiply the risk, and the gain is much smaller.
+    ///
+    /// This count leaves two cores for the render thread and the simulation thread of the
+    /// game.
     /// </summary>
     static int MeshThreadCount => Math.Clamp(Environment.ProcessorCount - 2, 1, 4);
 
@@ -125,7 +136,8 @@ public class LodWorker : IDisposable
     public int CaptureErrors;
     public int MeshErrors;
 
-    /// <summary>First swallowed exception of each kind, for soak-log diagnosis.</summary>
+    /// <summary>The first exception of each kind that the worker caught. A person uses these
+    /// to diagnose a long test run.</summary>
     public string? FirstCaptureError;
     public string? FirstMeshError;
 
@@ -164,9 +176,10 @@ public class LodWorker : IDisposable
         meshSignal.Release();
     }
 
-    // Separate loops, not one. The old shared loop drained EVERY queued capture before
-    // taking a single mesh job, so exploring - which is exactly when new terrain most needs
-    // drawing - starved meshing and left coarse parents on screen for minutes.
+    // There are two loops, and not one. The old shared loop took EACH capture from the queue
+    // before it took one mesh job. Thus exploration stopped the meshing, and a coarse parent
+    // stayed on the screen for minutes. Exploration is exactly when new terrain most needs a
+    // mesh.
 
     void CaptureLoop()
     {
@@ -183,7 +196,8 @@ public class LodWorker : IDisposable
                 }
                 catch (Exception e)
                 {
-                    // Chunk disposed mid-read or similar; the column re-enqueues on its next ChunkDirty.
+                    // The engine removed the chunk during the read, or something similar
+                    // occurred. The column returns to the queue at its next ChunkDirty.
                     Interlocked.Increment(ref CaptureErrors);
                     Interlocked.CompareExchange(ref FirstCaptureError, e.ToString(), null);
                 }
@@ -197,7 +211,8 @@ public class LodWorker : IDisposable
     {
         while (running)
         {
-            // Timed wait rather than indefinite, so shutdown never depends on a permit.
+            // The wait has a time limit, and it is not indefinite. Thus a shutdown never
+            // waits for a permit.
             if (!meshSignal.Wait(250)) continue;
             if (!meshJobs.TryDequeue(out MeshJob? job)) continue;
 
@@ -207,14 +222,15 @@ public class LodWorker : IDisposable
             }
             catch (Exception e)
             {
-                // Snapshot inconsistency; section will re-mesh on its next change.
+                // The snapshot is not consistent. The mod meshes the section again at its
+                // next change.
                 Interlocked.Increment(ref MeshErrors);
                 Interlocked.CompareExchange(ref FirstMeshError, e.ToString(), null);
             }
         }
     }
 
-    // ---- Capture: chunk column → RLE columns with raw block ids ----
+    // ---- Capture: a chunk column becomes RLE columns that hold raw block ids ----
 
     static CaptureResult? Capture(CaptureJob job)
     {
@@ -232,8 +248,9 @@ public class LodWorker : IDisposable
         var runs = new List<ulong>(24);
         bool anyColumn = false;
 
-        // Rain map values can sit at/above map height on freshly streamed columns
-        // (uninitialized sentinel) - clamp so the y walk stays inside the chunk stack.
+        // A value in the rain map can be at the map height or above it, on a column that
+        // arrived just now. That value is an uninitialized marker. Clamp it, thus the walk
+        // over y stays inside the chunk stack.
         int maxY = job.Chunks.Length * ChunkSize - 1;
 
         for (int cz = 0; cz < colsPerChunk; cz++)

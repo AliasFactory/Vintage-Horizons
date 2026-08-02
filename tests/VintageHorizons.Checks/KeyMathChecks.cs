@@ -1,9 +1,11 @@
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// Section key packing and the quadtree coordinate math built on it. Everything the
-/// renderer's descent, the storage rows and the network manifest agree about is encoded
-/// in these few functions, so a silent change here corrupts all three at once.
+/// The packing of a section key, and the quadtree coordinate arithmetic above it.
+///
+/// These few functions hold each fact that the descent of the renderer, the storage rows and
+/// the network manifest agree about. Thus a change here that gives no message damages all
+/// three together.
 /// </summary>
 public static class KeyMathChecks
 {
@@ -29,8 +31,9 @@ public static class KeyMathChecks
             }
         }
 
-        // Distinctness matters more than the exact layout: the whole scheme is a
-        // Dictionary key, so any collision silently merges two regions of the world.
+        // A distinct value matters more than the exact layout. The full scheme is a
+        // Dictionary key. Thus one collision joins two regions of the world, and it gives no
+        // message.
         var seen = new HashSet<long>();
         for (int level = 0; level <= LodWorld.MaxLevel; level++)
         {
@@ -41,8 +44,8 @@ public static class KeyMathChecks
         }
         c.Eq((LodWorld.MaxLevel + 1) * 144, seen.Count, "no key collisions across levels and a 12x12 patch");
 
-        // KeyLevel uses an unsigned shift, so the top bit of a maximal key must not
-        // sign-extend into a negative level.
+        // KeyLevel uses a shift without a sign. Thus the top bit of a maximum key must not
+        // extend the sign into a negative level.
         long extreme = LodWorld.SectionKey(LodWorld.MaxLevel, 0x3FFFFFFF, 0x3FFFFFFF);
         c.Eq(LodWorld.MaxLevel, LodWorld.KeyLevel(extreme), "level survives a maximal sx/sz");
     }
@@ -51,7 +54,7 @@ public static class KeyMathChecks
     {
         long parent = LodWorld.SectionKey(3, 10, 20);
 
-        // Every child names its parent, and the four children are distinct.
+        // Each child names its parent, and the four children are all different.
         var children = new HashSet<long>();
         for (int qz = 0; qz < 2; qz++)
         {
@@ -65,13 +68,13 @@ public static class KeyMathChecks
         }
         c.Eq(4, children.Count, "the four children are distinct");
 
-        // A parent's footprint is exactly its children's, which is what lets the renderer
-        // stop descending once all four are covered.
+        // The area of a parent is exactly the area of its children. That is what lets the
+        // renderer stop the descent after all four have cover.
         c.Eq(LodWorld.KeyFootprintBlocks(parent),
             LodWorld.KeyFootprintBlocks(LodWorld.ChildKey(parent, 0, 0)) * 2,
             "a parent spans twice a child's edge");
 
-        // Odd coordinates must floor toward the parent, not round.
+        // An odd coordinate must go down to the parent. It must not round.
         c.Eq(LodWorld.SectionKey(1, 5, 5), LodWorld.ParentKey(LodWorld.SectionKey(0, 11, 11)),
             "odd child coordinates floor into the parent");
 
@@ -81,11 +84,14 @@ public static class KeyMathChecks
         c.Eq(LodWorld.SectionKey(0, 4, 3), LodWorld.NeighborKey(origin, 0, -1), "north neighbour");
         c.Eq(LodWorld.SectionKey(0, 4, 5), LodWorld.NeighborKey(origin, 0, 1), "south neighbour");
 
-        // Stepping west from sx=0 wraps to the top of the 30-bit field rather than going
-        // negative. That is only safe because Vintage Story world coordinates are
-        // non-negative, so the wrapped key names a section that cannot exist and simply
-        // misses every lookup. If world coordinates ever go negative this becomes a
-        // wrong-neighbour bug, not a miss.
+        // A step west from sx=0 goes to the top of the 30-bit field. It does not become
+        // negative.
+        //
+        // That is safe only because Vintage Story world coordinates are never negative. Thus
+        // the wrapped key names a section that cannot exist, and each lookup misses it.
+        //
+        // CAUTION: If world coordinates ever become negative, this becomes a wrong-neighbour
+        // defect, and not a miss.
         long wrapped = LodWorld.NeighborKey(LodWorld.SectionKey(0, 0, 0), -1, 0);
         c.Eq(0x3FFFFFFF, LodWorld.KeySx(wrapped), "stepping west of the origin wraps rather than going negative");
         c.Eq(0, LodWorld.KeyLevel(wrapped), "the wrap does not corrupt the level field");
@@ -113,9 +119,9 @@ public static class KeyMathChecks
         int size = LodSection.SectionBlocks;
         double minX = 2 * size, minZ = 3 * size;
 
-        // The reason this is nearest-edge and not centre-to-centre: a viewer standing
-        // inside a section must rank it at distance zero. An L6 section spans 4096 blocks,
-        // so centre distance would call it two kilometres away and refuse to descend.
+        // This is the reason for the nearest edge, and not the center. A viewer inside a
+        // section must get a distance of zero for it. An L6 section covers 4096 blocks. Thus
+        // a center distance gives two kilometres, and the walk refuses to descend.
         c.Eq(0.0, LodWorld.NearestDistanceSqTo(key, minX + 1, minZ + 1), "inside the footprint is distance zero");
         c.Eq(0.0, LodWorld.NearestDistanceSqTo(key, minX, minZ), "the min corner is distance zero");
         c.Eq(0.0, LodWorld.NearestDistanceSqTo(key, minX + size - 0.001, minZ + size - 0.001),
@@ -124,12 +130,12 @@ public static class KeyMathChecks
         long big = LodWorld.SectionKey(6, 0, 0);
         c.Eq(0.0, LodWorld.NearestDistanceSqTo(big, 2000, 2000), "inside a 4096-block L6 section is distance zero");
 
-        // Axis-aligned: only the offending axis contributes.
+        // The offset is along an axis. Thus only that axis adds to the distance.
         c.Eq(100.0, LodWorld.NearestDistanceSqTo(key, minX - 10, minZ + 1), "10 blocks west is 100");
         c.Eq(100.0, LodWorld.NearestDistanceSqTo(key, minX + 1, minZ - 10), "10 blocks north is 100");
         c.Eq(100.0, LodWorld.NearestDistanceSqTo(key, minX + size + 10, minZ + 1), "10 blocks east is 100");
 
-        // Diagonal: both axes contribute.
+        // The offset is diagonal. Thus both axes add to the distance.
         c.Eq(200.0, LodWorld.NearestDistanceSqTo(key, minX - 10, minZ - 10), "diagonal corner sums both axes");
 
         c.True(LodWorld.NearestDistanceSqTo(key, 0, 0) > 0, "the world origin is outside this section");

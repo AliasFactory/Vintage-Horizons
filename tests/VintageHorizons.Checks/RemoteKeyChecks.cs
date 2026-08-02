@@ -1,13 +1,15 @@
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// Which sections the client fetches from a server rather than from its own disk.
+/// The sections that the client gets from a server, and not from its own disk.
 ///
-/// This is where the most expensive bug in the project's history lived. It survived three
-/// diagnoses read off counters - fetch ordering, mesh throughput, uncoverable children -
-/// before anyone printed the actual branch state and saw it in one shot. The lesson written
-/// into DESIGN.md was "instrument the decision, do not infer it"; these checks are the
-/// standing version of that.
+/// The most expensive defect in the history of this project was here. It survived three
+/// diagnoses that came from the counters. Those were the order of the fetches, the mesh
+/// throughput, and children that cannot be covered.
+///
+/// Then a person printed the real state of the branch, and saw the cause in one attempt.
+/// DESIGN.md records the lesson: instrument the decision, do not infer it. These checks are
+/// the permanent form of that lesson.
 /// </summary>
 public static class RemoteKeyChecks
 {
@@ -21,25 +23,29 @@ public static class RemoteKeyChecks
     }
 
     /// <summary>
-    /// THE regression test.
+    /// This is THE regression test.
     ///
-    /// Registering a fine key walks UPWARD, adding every ancestor to HasDataSet so the
-    /// quadtree can descend to it. Those ancestors hold no data of their own - they are
-    /// scaffolding. Testing HasDataSet to answer "can local disk supply this?" therefore
-    /// says yes for keys local disk has never held.
+    /// The registration of a fine key walks UPWARD. It adds each ancestor to HasDataSet, thus
+    /// the quadtree can descend to that key. Those ancestors hold no data of their own. They
+    /// are structure only.
     ///
-    /// The consequence was not a missing section, it was a permanent one: the coarse key
-    /// stayed out of RemoteOnly, was routed to a local store with no such row, came back
-    /// null, and landed in LoadFailed - which nothing clears. Terrain that could never
-    /// resolve, at any distance, showing as L5 nodes with two children stuck "load-failed"
-    /// and an idle pipeline.
+    /// Thus a test of HasDataSet, to answer "can the local disk supply this?", says yes for a
+    /// key that the local disk never held.
+    ///
+    /// The result was not one absent section. It was a permanent absence. The coarse key
+    /// stayed out of RemoteOnly. It went to a local store with no such row. It returned null.
+    /// Then it arrived in LoadFailed, which nothing clears.
+    ///
+    /// That terrain can never resolve, at any distance. The symptom was an L5 node with two
+    /// children in the state "load-failed", and an idle pipeline.
     /// </summary>
     static void SynthesisedAncestors(Check c)
     {
         var world = new LodWorld();
         var remote = new LodRemoteKeySet(world);
 
-        // A fine key from local disk. Registering it synthesises its whole ancestor chain.
+        // A fine key from the local disk. Its registration makes its full chain of
+        // ancestors.
         long fine = LodWorld.SectionKey(0, 8, 8);
         remote.AddLocalKey(fine);
         world.InstallStoredKey(0, 8, 8, applyToParent: false);
@@ -49,14 +55,14 @@ public static class RemoteKeyChecks
             "registering a fine key synthesises its ancestors into HasDataSet");
         c.True(LodWorld.KeyLevel(coarse) > 0, "the synthesised ancestor is genuinely coarser");
 
-        // The server offers that same coarse key, which it really does hold.
+        // The server offers that same coarse key, and the server really holds it.
         int added = remote.AddRemoteKeys(new[] { coarse });
 
         c.Eq(1, added, "a server-held coarse key is accepted even though HasDataSet contains it");
         c.True(remote.RemoteOnly.Contains(coarse), "the coarse key is routed to the network, not local disk");
         c.True(remote.WantFromRemote(coarse), "asking to reload it goes to the network");
 
-        // And a key already poisoned by the old bug must get its chance back.
+        // A key that the old defect damaged must also get another opportunity.
         long poisoned = LodWorld.SectionKey(2, 30, 30);
         world.LoadFailed.Add(poisoned);
         world.LoadsInFlight.Add(poisoned);
@@ -68,8 +74,9 @@ public static class RemoteKeyChecks
     }
 
     /// <summary>
-    /// A key local disk really holds must stay a local read. The client's own capture is
-    /// what it actually observed, including edits it witnessed, so it beats the server's.
+    /// A key that the local disk really holds must stay a local read. The capture of the
+    /// client is what the client observed, and it includes the edits that the client saw.
+    /// Thus it wins against the copy of the server.
     /// </summary>
     static void LocalWins(Check c)
     {
@@ -83,7 +90,7 @@ public static class RemoteKeyChecks
         c.False(remote.RemoteOnly.Contains(key), "a locally-held key never becomes remote-only");
         c.False(remote.WantFromRemote(key), "reloading a locally-held key goes to disk");
 
-        // Offering the same key twice must not count it twice.
+        // An offer of the same key two times must not count it two times.
         long fresh = LodWorld.SectionKey(0, 9, 9);
         c.Eq(1, remote.AddRemoteKeys(new[] { fresh }), "a new key counts once");
         c.Eq(0, remote.AddRemoteKeys(new[] { fresh }), "the same key offered again counts zero");
@@ -104,8 +111,8 @@ public static class RemoteKeyChecks
         remote.WantFromRemote(a);
         c.SeqEq(new[] { a }, remote.Wanted(), "only what the view asked for is wanted");
 
-        // Wanted() must not clear: a key still in flight has to stay wanted, or it is
-        // dropped between the request and the reply.
+        // Wanted() must not clear the set. A key that is still in flight must stay wanted.
+        // Without that, the mod loses it between the request and the answer.
         c.SeqEq(new[] { a }, remote.Wanted(), "reading the wanted set does not consume it");
 
         remote.WantFromRemote(b);
@@ -113,9 +120,12 @@ public static class RemoteKeyChecks
     }
 
     /// <summary>
-    /// The in-flight cap holds keys back, and only the ones actually sent may be forgotten.
-    /// Forgetting the rest strands them: the render path has already put them in
-    /// LoadsInFlight, where the mesh scheduler skips them, and nothing would ever re-ask.
+    /// The in-flight limit holds some keys back. The mod can forget only the keys that it
+    /// sent.
+    ///
+    /// If the mod forgets the others, those keys stop. The render path put them in
+    /// LoadsInFlight already, where the mesh scheduler skips them, and nothing asks for them
+    /// again.
     /// </summary>
     static void OnlyForgetWhatWasSent(Check c)
     {
@@ -126,7 +136,7 @@ public static class RemoteKeyChecks
         remote.AddRemoteKeys(keys);
         foreach (long key in keys) remote.WantFromRemote(key);
 
-        // The transport sent only the first two.
+        // The transport sent the first two keys only.
         remote.MarkRequested(keys.Take(2));
 
         long[] stillWanted = remote.Wanted();
@@ -156,8 +166,8 @@ public static class RemoteKeyChecks
         c.False(world.LoadsInFlight.Contains(key), "a declined key stops being in flight");
         c.True(world.LoadFailed.Contains(key), "a declined key is recorded as failed so it is not re-asked forever");
 
-        // But if a local capture won the race and the section is already resident, recording
-        // a failure would block reloading it after a future RAM eviction.
+        // But a local capture can win the race, and then the section is resident already. A
+        // record of a failure then stops a load after a later eviction from RAM.
         var raced = new LodWorld();
         var racedRemote = new LodRemoteKeySet(raced);
         long resident = LodWorld.SectionKey(0, 3, 3);

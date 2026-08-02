@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# The standing test regimen. Run this before committing.
+# The full test regimen. Run this before you commit.
 #
 #   scripts/check.sh              all three tiers, in order (~25 min)
 #   scripts/check.sh fast         pure logic and static assets, no game (~30 s)
 #   scripts/check.sh smoke        one end-to-end sandbox run (~5 min)
 #   scripts/check.sh matrix       install combinations and admin controls (~20 min)
 #
-# There is no CI, and there cannot be: building this repo requires the Vintage Story
-# assemblies from a local game install, which are not redistributable. So this script
-# is the whole safety net - nothing else re-checks any of it.
+# There is no CI, and there cannot be one. A build of this repository needs the Vintage
+# Story assemblies from a local game installation, and Anego Studios does not permit
+# redistribution of them.
 #
-# Tiers run in order and stop at the first failure, cheapest first, so a broken build
-# costs thirty seconds rather than half an hour.
+# Thus this script is the only safety net. Nothing else examines any of this again.
+#
+# The tiers run in order, with the cheapest first, and the script stops at the first
+# failure. Thus a build that does not compile costs thirty seconds, and not half an
+# hour.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export DOTNET_ROOT="${DOTNET_ROOT:-/usr/share/dotnet}"
@@ -43,15 +46,17 @@ build() {
 run_fast() {
     rule "fast - pure logic and static assets"
 
-    # Nothing else enforces that either project still compiles; there is no CI to catch
-    # it, and the bench harness in particular is easy to break without noticing because
-    # no normal workflow touches it.
+    # Nothing else makes sure that both projects still compile. There is no CI to find
+    # that. The bench harness is easy to break with no notice, because no normal workflow
+    # uses it.
     build "$ROOT/VintageHorizons" "mod" || return 1
     build "$ROOT/bench/VintageHorizonsBench" "bench" || return 1
 
-    # No --nologo here: dotnet run forwards it to the program rather than consuming it,
-    # where it would be read as a suite filter. Program.cs ignores dash-prefixed args for
-    # exactly that reason, but not handing it one is better than relying on the catch.
+    # Do not use --nologo here. `dotnet run` sends it to the program, and it does not use
+    # it. Then the program reads it as a suite filter.
+    #
+    # Program.cs ignores an argument that starts with a dash, for exactly that reason. But
+    # it is better to send no such argument than to depend on that guard.
     dotnet run --project "$ROOT/tests/VintageHorizons.Checks" -v quiet -- "$@"
 }
 

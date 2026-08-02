@@ -3,11 +3,13 @@ using Vintagestory.API.Common;
 namespace VintageHorizons;
 
 /// <summary>
-/// How a block is drawn, or whether it is drawn at all. Shared by both sides: a section
-/// captured by a server and one captured by a client have to agree about what counts as
-/// terrain, or the same ground would come out differently depending on who saw it first.
+/// How the mod draws a block, or whether it draws that block at all.
 ///
-/// Which tint applies is a separate question, answered client-side by LodTintRegistry.
+/// Both sides use this class. A section that a server captured and a section that a client
+/// captured must agree about what is terrain. Without that agreement, the same ground looks
+/// different, and the result depends on which side saw it first.
+///
+/// The tint is a separate question. LodTintRegistry answers it, on the client.
 /// </summary>
 public static class LodBlockPolicy
 {
@@ -18,17 +20,22 @@ public static class LodBlockPolicy
             return LodPaletteEntry.FlagWater;
         }
 
-        // Sparse, mostly-transparent ground cover. As solid LOD cubes these come out as
-        // pale grey blobs, because their textures average toward the transparent pixels.
-        // Not all of EnumBlockMaterial.Plant: skipping every plant was tried and
-        // flattened the landscape, and dense cover like grass reads fine as solid colour.
-        // The Plant guard also keeps ferntree (material Wood, an actual tree) opaque.
+        // Ground cover that is sparse and mostly transparent. As solid LOD cubes, these
+        // blocks look like pale grey shapes, because the average of their textures moves
+        // toward the transparent pixels.
+        //
+        // This is not each block of EnumBlockMaterial.Plant. A test skipped each plant, and
+        // that made the landscape flat. Dense cover such as grass looks correct as a solid
+        // color.
+        //
+        // The Plant guard also keeps ferntree opaque. Its material is Wood, and it is a real
+        // tree.
         if (block.BlockMaterial == EnumBlockMaterial.Plant && IsThinGroundCover(block))
         {
             return LodPaletteEntry.FlagThin;
         }
 
-        // Not terrain at all, so it never becomes geometry.
+        // This block is not terrain, thus it never becomes geometry.
         if (block.BlockMaterial is EnumBlockMaterial.Fire or EnumBlockMaterial.Meta)
         {
             return LodPaletteEntry.FlagSkip;

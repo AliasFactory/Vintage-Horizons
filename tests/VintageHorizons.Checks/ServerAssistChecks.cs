@@ -3,9 +3,11 @@ using VintageHorizons.Net;
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// The server assist: what gets pre-generated, what gets served, and what a client makes
-/// of the server's answer. These are the admin-facing behaviours, so getting them wrong is
-/// visible to someone other than the player running the mod.
+/// The server assist. These checks cover what the mod pre-generates, what the server gives,
+/// and what a client concludes from the answer of the server.
+///
+/// An admin sees these behaviours. Thus an error here is visible to a person other than the
+/// player who runs the mod.
 /// </summary>
 public static class ServerAssistChecks
 {
@@ -18,13 +20,13 @@ public static class ServerAssistChecks
     }
 
     /// <summary>
-    /// Pre-generation walks a square spiral so that any prefix of the sequence is a filled
-    /// square around spawn - stopping early, or being stopped early, still leaves a
-    /// complete horizon rather than a partial arm sticking out in one direction.
+    /// Pre-generation walks a square spiral. Thus any prefix of the sequence is a full
+    /// square around the spawn point. A run that stops early, or that a person stops, still
+    /// leaves a complete horizon. It does not leave a partial arm in one direction.
     ///
-    /// Walked exhaustively out to the configured maximum radius, because "covers every
-    /// column exactly once" is the kind of property a spot check passes and a real run
-    /// fails at one specific ring corner.
+    /// This check walks the full sequence, out to the maximum radius that the config permits.
+    /// The property "covers each column exactly one time" is a property that a small sample
+    /// passes, and that a real run fails at one specific corner of a ring.
     /// </summary>
     static void SpiralIsAnExactCover(Check c)
     {
@@ -48,8 +50,8 @@ public static class ServerAssistChecks
             c.True(inRange, $"radius {radius}: nothing falls outside the square");
         }
 
-        // Every prefix is a filled square. This is the property that makes an interrupted
-        // pre-generation still useful, and it is the one a naive spiral gets wrong.
+        // Each prefix is a full square. This property makes a pre-generation that stops
+        // early still useful. A simple spiral gets this property wrong.
         for (int ring = 0; ring <= 6; ring++)
         {
             int side = 2 * ring + 1;
@@ -67,7 +69,7 @@ public static class ServerAssistChecks
             c.True(filled, $"the first {side * side} steps form a filled {side}x{side} square");
         }
 
-        // The maximum the config allows, walked in full: 263,169 columns.
+        // The maximum that the config permits, walked in full. That is 263,169 columns.
         const int max = 256;
         int maxTotal = (2 * max + 1) * (2 * max + 1);
         var all = new HashSet<(int, int)>(maxTotal);
@@ -76,8 +78,9 @@ public static class ServerAssistChecks
     }
 
     /// <summary>
-    /// Nearest-edge, not centre-to-centre. An L6 section spans 4096 blocks, so a centre
-    /// measurement would refuse to serve a section the player is standing in the middle of.
+    /// The distance is to the nearest edge, and not from center to center. An L6 section
+    /// covers 4096 blocks. Thus a center measurement refuses a section that has the player at
+    /// its middle.
     /// </summary>
     static void ServeRadiusIsNearestEdge(Check c)
     {
@@ -98,15 +101,15 @@ public static class ServerAssistChecks
         c.False(LodAssistServerSystem.WithinServeRadius(far, 6400 - 600, 6400, 512),
             "a section just outside the radius is refused");
 
-        // Zero means unlimited, which is what the config's Sanitize maps a negative to.
+        // Zero means unlimited. Sanitize in the config turns a negative value into zero.
         c.True(LodAssistServerSystem.WithinServeRadius(far, 0, 0, 0),
             "a radius of zero serves everything");
         c.True(LodAssistServerSystem.WithinServeRadius(far, 1e9, 1e9, 0),
             "a radius of zero serves everything however far away");
 
-        // The boundary is measured on the square, so a diagonal approach is further than an
-        // axis-aligned one at the same coordinate delta. Getting this backwards would make
-        // the served region a diamond rather than a disc.
+        // The mod measures the boundary on the square. Thus a diagonal approach is further
+        // than an approach along an axis, at the same difference in the coordinates. The
+        // opposite makes the served region a diamond, and not a disc.
         long origin = LodWorld.SectionKey(0, 10, 10); // [640,704)
         c.True(LodAssistServerSystem.WithinServeRadius(origin, 640 - 70, 640, 100),
             "70 blocks away on one axis is inside a 100 radius");
@@ -115,9 +118,11 @@ public static class ServerAssistChecks
     }
 
     /// <summary>
-    /// What a client concludes from the server's welcome. Every branch has to leave Status
-    /// set to something a player can act on, because .vhinfo prints it verbatim and it is
-    /// the only feedback anyone gets about why distant terrain is or is not arriving.
+    /// What a client concludes from the welcome message of the server.
+    ///
+    /// Each branch must leave Status with text that helps a player decide. `.vhinfo` prints
+    /// that text without a change. It is the only information that a player gets about why
+    /// distant terrain arrives, or does not arrive.
     /// </summary>
     static void ProtocolNegotiation(Check c)
     {
@@ -136,15 +141,15 @@ public static class ServerAssistChecks
         c.Eq(1234, client.ManifestExpected, "the announced key count is remembered for comparison");
         c.True(client.Status.Contains("connected"), "a working assist says so");
 
-        // A newer server: take the lower of the two, so neither side needs to know what the
-        // other added.
+        // The server is newer. Take the lower of the two values. Thus neither side must know
+        // what the other side added.
         client.Reset();
         client.OnWelcome(new AssistWelcome { Protocol = 99, ModVersion = "9.9", Enabled = true });
         c.Eq(LodAssist.Protocol, client.NegotiatedProtocol, "a newer server negotiates down to ours");
         c.True(client.Available, "a newer server is still usable");
 
-        // Serving switched off. Note Enabled is set from whether the server has keys, so an
-        // empty cache lands here too.
+        // The admin turned the serving off. Note that Enabled comes from whether the server
+        // holds keys. Thus an empty cache also arrives here.
         client.Reset();
         client.OnWelcome(new AssistWelcome
         {
@@ -156,14 +161,15 @@ public static class ServerAssistChecks
         c.Eq(0, client.NegotiatedProtocol, "a disabled assist negotiates nothing");
         c.True(client.Status.Contains("not sharing"), "the server's own reason is passed through to the player");
 
-        // An unusable protocol must leave the assist off rather than half on.
+        // A protocol that the mod cannot use must leave the assist off. It must not leave it
+        // partly on.
         client.Reset();
         client.OnWelcome(new AssistWelcome { Protocol = 0, Enabled = true });
         c.False(client.Available, "a protocol of zero is unusable");
         c.True(client.Status.Contains("unusable"), "an unusable protocol says so");
 
-        // Everything on the wire is nullable after deserialization, and a null must not
-        // take down the join.
+        // Each field from the wire can be null after the deserialize. A null must not stop
+        // the join.
         client.Reset();
         c.NoThrow(() => client.OnWelcome(new AssistWelcome
         {
@@ -171,21 +177,28 @@ public static class ServerAssistChecks
         }), "a welcome with null strings does not throw");
         c.True(client.Status.Contains("unknown"), "a null version reads as unknown rather than blank");
 
-        // The empty-string case is NOT the null case. Both AssistWelcome string fields carry
-        // a "" initializer, and protobuf-net runs initializers before filling in what the
-        // wire actually sent - so a server that simply omits the field yields "", which
-        // sails past the ?? guard and renders a blank in the middle of the status line.
-        // Harmless today, since our own server always sets it. Recorded rather than fixed
-        // so the guard's real coverage is not overstated.
+        // The case of an empty string is NOT the case of a null.
+        //
+        // Both string fields of AssistWelcome have a "" initializer. protobuf-net runs the
+        // initializers before it fills in what the wire sent.
+        //
+        // Thus a server that does not send the field gives "". That value passes the ??
+        // guard, and the status line shows an empty space in its middle.
+        //
+        // This is harmless today, because the server of this mod always sets the field. This
+        // check records the behaviour, and it does not correct it. Thus nobody states the
+        // coverage of the guard as larger than it is.
         client.Reset();
         client.OnWelcome(new AssistWelcome { Protocol = LodAssist.Protocol, Enabled = true });
         c.False(client.Status.Contains("unknown"), "an empty version does not reach the unknown fallback");
     }
 
     /// <summary>
-    /// Handlers run on the network thread and may only enqueue; everything that touches
-    /// shared state happens on the tick, in Pump. A manifest read straight from the handler
-    /// is what made the announced and applied key counts disagree once.
+    /// A handler runs on the network thread, and it can only put an item into a queue. Each
+    /// step that touches shared state occurs on the tick, in Pump.
+    ///
+    /// A read of the manifest directly from a handler made the announced key count and the
+    /// applied key count disagree one time.
     /// </summary>
     static void ManifestAndArrivals(Check c)
     {
@@ -219,10 +232,11 @@ public static class ServerAssistChecks
             client.Pump((_, _) => true);
         }, "a manifest chunk with no keys does not throw");
 
-        // An empty blob means the server declined. The installer is still called, because
-        // it is the one place that can release the render path's wait on the key -
-        // short-circuiting here left declined keys stuck in flight and pinned their parents
-        // coarse for the whole session.
+        // An empty blob means that the server declined the key. The mod still calls the
+        // installer, because that is the one place that can stop the wait of the render path.
+        //
+        // An early exit here left a declined key in flight, and that key kept its parent
+        // coarse for the full session.
         var offered = new List<long>();
         long declined = LodWorld.SectionKey(0, 1, 1);
         client.OnSection(new AssistSection { Key = declined, Blob = Array.Empty<byte>() });

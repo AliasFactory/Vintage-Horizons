@@ -6,33 +6,44 @@ using Vintagestory.Client.NoObf;
 namespace VintageHorizons;
 
 /// <summary>
-/// Renders the LodWorld section pyramid beyond the vanilla view distance. Meshes are
-/// built off-thread by the LodWorker from section snapshots; this class schedules
-/// mesh jobs (nearest-first), uploads finished vertex data on the render thread, and
-/// walks the quadtree each frame picking detail by distance - a parent renders until
-/// all four child slots are covered, so level swaps never open holes (DH's rule).
+/// Draws the section pyramid of the LodWorld, past the vanilla view distance.
 ///
-/// Rendering techniques (render order/stage, ZFar extension, camera-relative model
-/// matrices, fog + transition handling in the shaders) adapted from Farseer
-/// (https://github.com/ViciousBadger/VSMod-Farseer, MIT, (c) Badgerson).
+/// The LodWorker builds the meshes on another thread, from section snapshots. This class
+/// schedules the mesh jobs, with the nearest first. It uploads the finished vertex data on
+/// the render thread. In each frame it walks the quadtree and selects the detail by the
+/// distance.
+///
+/// A parent draws until all four child slots have cover. Thus a change of level never opens a
+/// hole. This is the rule of Distant Horizons.
+///
+/// The rendering methods come from Farseer
+/// (https://github.com/ViciousBadger/VSMod-Farseer, MIT, (c) Badgerson). Those are the render
+/// order and stage, the ZFar extension, the camera-relative model matrices, and the fog and
+/// transition in the shaders.
 /// </summary>
 public class LodTerrainRenderer : IRenderer
 {
-    public double RenderOrder => 0.36; // just before opaque terrain → occluded by real chunks
+    public double RenderOrder => 0.36; // Immediately before the opaque terrain, thus the real chunks hide it.
     public int RenderRange => 9999;
 
     const int MeshSchedulesPerFrame = 4;
     const int MeshUploadsPerFrame = 4;
     /// <summary>
-    /// Queue depth allowed at the mesh workers. Per thread, not absolute: a fixed 12 was
-    /// sized for one builder and would leave a four-thread pool idling three quarters of
-    /// the time. Deep enough that a thread finishing a job always has another waiting,
-    /// shallow enough that the queue does not outlive the view that asked for it.
+    /// The depth of the queue at the mesh workers. This value is for each thread, and it is
+    /// not a total.
+    ///
+    /// A fixed value of 12 was correct for one builder. It leaves a pool of four threads idle
+    /// for three quarters of the time.
+    ///
+    /// The depth is large enough that a thread which completes a job always has another job.
+    /// It is small enough that the queue does not continue after the view that asked for
+    /// it.
     /// </summary>
     const int MeshBacklogPerThread = 4;
     int maxWorkerMeshBacklog;
 
-    /// <summary>Reload requests per frame; only enqueues a key, so it can far exceed the mesh budget.</summary>
+    /// <summary>The number of load requests in each frame. A request only puts a key into a
+    /// queue. Thus this value can be much larger than the mesh budget.</summary>
     const int MeshLoadRequestsPerFrame = 32;
 
     readonly ICoreClientAPI capi;
@@ -45,7 +56,9 @@ public class LodTerrainRenderer : IRenderer
     readonly List<long> evictBatch = new();
     long frameCounter;
 
-    /// <summary>Meshes unselected for this many frames (~1 min) get evicted; the quadtree re-requests on demand.</summary>
+    /// <summary>The mod removes a mesh that the walk did not select for this number of
+    /// frames, which is approximately 1 minute. The quadtree asks for it again when it needs
+    /// it.</summary>
     const int EvictAfterFrames = 3600;
     const int EvictSweepInterval = 300;
 
@@ -57,24 +70,29 @@ public class LodTerrainRenderer : IRenderer
     float appliedZFar;
     Vec3d camPos = new();
 
-    /// <summary>Dev/testing: keep the game unpaused even without window focus.</summary>
+    /// <summary>For development and testing. It keeps the game running when the window has
+    /// no focus.</summary>
     public bool AutoUnpause;
 
-    // Live seasonal state, refreshed periodically and fed to the shader as uniforms.
+    // The live state of the season. The mod refreshes it from time to time, and gives it to
+    // the shader as uniforms.
     float snowLineY = 99999;
     long lastSeasonRefreshFrame = -99999;
     readonly BlockPos climatePos = new(0, 0, 0);
 
-    /// <summary>Optional hard cap in blocks; 0 = unlimited (render every cached section).</summary>
+    /// <summary>An optional limit in blocks. A value of 0 is unlimited, and then the mod
+    /// draws each cached section.</summary>
     public int FarViewDistanceCap = 0;
 
-    /// <summary>Current far edge in blocks: the farthest loaded LOD data, independent of the vanilla view distance.</summary>
+    /// <summary>The current far edge in blocks. This is the most distant LOD data that the
+    /// mod loaded. The vanilla view distance does not affect it.</summary>
     public float EffectiveFarDistance { get; private set; } = 3000;
 
     public int MeshCount => sectionMeshes.Count;
     public int LastDrawCount { get; private set; }
 
-    /// <summary>Sections selected by the walk but skipped this frame as off-screen.</summary>
+    /// <summary>The sections that the walk selected, and that the mod skipped in this frame
+    /// because they are off the screen.</summary>
     public int LastCulledCount { get; private set; }
 
     readonly LodFrustum frustum = new();
@@ -82,10 +100,13 @@ public class LodTerrainRenderer : IRenderer
 
 
     /// <summary>
-    /// Why each coarse node in the current draw list is not descending. Written for one
-    /// specific failure: a node drawn far below its wanted level, with the pipeline idle, so
-    /// no amount of waiting changes it. Reports each child's actual state rather than an
-    /// inference - which is what three wrong diagnoses in a row cost.
+    /// The reason why each coarse node in the current draw list does not descend.
+    ///
+    /// This exists for one failure: a node that the mod draws far below its wanted level,
+    /// with an idle pipeline. Then no quantity of waiting changes the picture.
+    ///
+    /// This reports the real state of each child. It does not infer that state. Three wrong
+    /// diagnoses in sequence are the cost of an inference.
     /// </summary>
     public string ExplainCoarseDraws(double px, double pz, int maxNodes = 6)
     {
@@ -161,13 +182,16 @@ public class LodTerrainRenderer : IRenderer
 
         capi.Shader.RegisterFileShaderProgram("lodterrain", prog);
 
-        // The shaders carry their own `const int TINT_SLOTS`, because this game version
-        // exposes no way to inject a #define, and a mismatch decodes water as opaque and
-        // thin plants as water with no compile error. That used to be guarded here by
-        // comparing MaxSlots against a hand-maintained C# mirror of the shader's value -
-        // which is two constants in one file, and so could never notice a shader being
-        // edited. The compiler agreed: the branch raised CS0162, unreachable code.
-        // The check that works reads the shader files, in the fast tier of check.sh.
+        // Each shader carries its own `const int TINT_SLOTS`, because this version of the
+        // game cannot inject a #define. A difference decodes water as opaque, and thin
+        // plants as water, with no compile error.
+        //
+        // A guard here compared MaxSlots against a C# copy of the shader value, maintained
+        // by hand. That is two constants in one file, thus it can never find an edit to a
+        // shader. The compiler agreed, and the branch raised CS0162, unreachable code.
+        //
+        // The check that operates reads the shader files. It is in the fast tier of
+        // check.sh.
 
         uploadedTintVersion = -1; // fresh program object: uniform state is gone
         shaderOk = prog.Compile();
@@ -205,7 +229,7 @@ public class LodTerrainRenderer : IRenderer
         EffectiveFarDistance = GameMath.Max(far, vanillaViewDistance + 1536);
     }
 
-    // ---- Detail selection (quadtree walk) ----
+    // ---- Detail selection, which is the walk over the quadtree ----
 
     double NearestDistanceTo(long key)
     {
@@ -231,12 +255,16 @@ public class LodTerrainRenderer : IRenderer
                 long ck = LodWorld.ChildKey(key, qx, qz);
                 if (!world.HasDataSet.Contains(ck)) continue;
 
-                // A resident section with nothing captured will never get a mesh --
-                // RequestMesh refuses it, by design. Counting it as uncovered pins the
-                // parent at its own level permanently, which is not the transient
-                // wait-for-mesh this gate exists for: it showed up as hard-edged coarse
-                // plates over ground whose finer data was already loaded, with the whole
-                // pipeline idle. Treat it like an absent child instead.
+                // A resident section with no captured column never gets a mesh, because
+                // RequestMesh refuses it by design.
+                //
+                // A count of that section as "not covered" holds the parent at its own level
+                // permanently. This gate exists for a short wait for a mesh, and not for
+                // that.
+                //
+                // The symptom was a coarse plate with a hard edge, above ground whose finer
+                // data was loaded already, with an idle pipeline. Treat such a section as an
+                // absent child.
                 if (world.Sections.TryGetValue(ck, out LodSection? child) && child.CapturedColumns == 0)
                 {
                     continue;
@@ -244,14 +272,15 @@ public class LodTerrainRenderer : IRenderer
 
                 if (HasAnyMesh(ck))
                 {
-                    // Gate meshes are load-bearing even when never drawn (the walk
-                    // descends THROUGH them) - stamp so the evictor spares them.
+                    // A gate mesh is necessary even when the mod never draws it, because
+                    // the walk descends THROUGH it. Stamp it, thus the evictor keeps it.
                     lastSelectedFrame[ck] = frameCounter;
                 }
                 else
                 {
-                    // Missing gate: re-request (evicted, or never built) so descent
-                    // can resume; the parent keeps covering meanwhile.
+                    // The gate is absent, because the mod evicted it or never built it. Ask
+                    // for it again, thus the descent can continue. The parent gives the
+                    // cover until then.
                     RequestMesh(ck);
                     covered = false;
                 }
@@ -266,10 +295,11 @@ public class LodTerrainRenderer : IRenderer
         int level = LodWorld.KeyLevel(key);
         int wanted = WantedLevel(NearestDistanceTo(key));
 
-        // Demand-driven meshing: request ONLY at the level the walk actually wants
-        // here. Descending through meshless parents must not request every leaf the
-        // recursion happens to reach - coarser/finer nodes on the path stay unmeshed
-        // until the wanted level for their own distance says otherwise.
+        // The meshing depends on demand. Ask ONLY at the level that the walk wants here.
+        //
+        // A descent through parents with no mesh must not ask for each leaf that the
+        // recursion reaches. A coarser node or a finer node on that path stays without a
+        // mesh, until the wanted level for its own distance changes.
         if (!hasMesh && level == wanted) RequestMesh(key);
 
         if (level > 0 && ((level > wanted && AllChildrenCovered(key)) || !hasMesh))
@@ -296,10 +326,14 @@ public class LodTerrainRenderer : IRenderer
     }
 
     /// <summary>
-    /// Refresh the live tint table and snow line (~every 4s). Each tint slot is sampled
-    /// at two altitudes and interpolated per vertex, because the climate maps are keyed
-    /// by temperature and temperature falls with height; the snow line extrapolates the
-    /// same lapse rate to where it hits freezing.
+    /// Refresh the live tint table and the snow line, approximately every 4 seconds.
+    ///
+    /// The mod samples each tint slot at two altitudes, and it interpolates for each vertex.
+    /// The climate maps use the temperature as their key, and the temperature decreases with
+    /// the height.
+    ///
+    /// The snow line uses the same lapse rate. It calculates the height at which the
+    /// temperature reaches freezing.
     /// </summary>
     void RefreshSeasonalState()
     {
@@ -309,9 +343,9 @@ public class LodTerrainRenderer : IRenderer
         int px = (int)camPos.X;
         int pz = (int)camPos.Z;
 
-        // Every registered colour-map pair at once: leaves are per species (oak turns
-        // while pine stays green) and water has its own map, so one shared foliage tint
-        // was never going to be right.
+        // Do each registered pair of color maps together. Leaves use a map for each
+        // species, thus an oak changes color and a pine stays green. Water has its own map.
+        // Thus one shared tint for foliage can never be correct.
         tints.Refresh(capi.World, px, pz);
 
         try
@@ -324,7 +358,7 @@ public class LodTerrainRenderer : IRenderer
 
             if (low == null || high == null || low.Temperature <= high.Temperature)
             {
-                snowLineY = 99999; // no usable lapse rate → snow line disabled
+                snowLineY = 99999; // There is no usable lapse rate, thus the snow line is off.
             }
             else
             {
@@ -340,13 +374,15 @@ public class LodTerrainRenderer : IRenderer
     }
 
 
-    /// <summary>Demand-driven (re)meshing: the selection walk is the load queue (Voxy's idea, CPU-side).</summary>
+    /// <summary>Meshing that depends on demand. The selection walk is also the load queue.
+    /// This idea comes from Voxy, and this code does it on the CPU.</summary>
     void RequestMesh(long key)
     {
         if (meshJobInFlight.Contains(key)) return;
 
-        // RAM-evicted sections still count: HasDataSet says whether the subtree has
-        // data at all; the scheduler reloads the row from disk when it picks the job.
+        // A section that the mod evicted from RAM still counts. HasDataSet gives whether
+        // the subtree holds any data. The scheduler loads the row from the disk when it
+        // takes the job.
         if (world.Sections.TryGetValue(key, out LodSection? section))
         {
             if (section.CapturedColumns == 0) return;
@@ -389,17 +425,20 @@ public class LodTerrainRenderer : IRenderer
         }
     }
 
-    // ---- Mesh job scheduling + result upload ----
+    // ---- Schedule the mesh jobs, and upload the results ----
 
     readonly List<long> dirtyPrune = new();
 
     /// <summary>
-    /// Drop meaningless render-dirty entries: no live mesh AND finer than the level
-    /// the walk wants there - meshing those wastes work. Entries at wanted level or
-    /// COARSER must survive: they are draw targets or gate meshes the walk descends
-    /// through (pruning gates stalls descent and freezes approached terrain at the
-    /// coarse level it was first meshed at). Runs every frame regardless of worker
-    /// backlog - pruning must never starve.
+    /// Remove the render-dirty entries that have no use. Such an entry has no live mesh, and
+    /// it is finer than the level that the walk wants there. A mesh for it is wasted work.
+    ///
+    /// An entry at the wanted level, or COARSER, must stay. It is a draw target, or it is a
+    /// gate mesh that the walk descends through. Removal of a gate stops the descent. Then
+    /// terrain that the player approaches stays at the coarse level of its first mesh.
+    ///
+    /// This runs in each frame, whatever the backlog of the workers. The removal must never
+    /// stop.
     /// </summary>
     void PruneRenderDirty()
     {
@@ -420,18 +459,22 @@ public class LodTerrainRenderer : IRenderer
     {
         if (world.RenderDirty.Count == 0 || worker.PendingMeshes >= maxWorkerMeshBacklog) return;
 
-        // Two budgets. Starting a background reload costs this thread almost nothing
-        // (enqueue a key), whereas building a mesh snapshot is real work, so charging a
-        // reload against the mesh budget throttled join fill-in badly: every section
-        // needed two passes to appear and only four could be touched per frame.
+        // There are two budgets. The start of a background load costs this thread almost
+        // nothing, because it only puts a key into a queue. A mesh snapshot is real work.
+        //
+        // One budget for both slowed the fill-in at a join badly. Each section needed two
+        // passes to appear, and the mod touched only four in each frame.
         int meshBudget = MeshSchedulesPerFrame;
         int loadBudget = MeshLoadRequestsPerFrame;
 
-        // Hard cap on iterations, not just on the two budgets: the paths that drop a key
-        // without starting work (a section with no data, or one whose reload already came
-        // back empty) charge neither budget, so without this the loop runs until
-        // RenderDirty drains -- and each iteration rescans the whole set for the nearest
-        // key. A few hundred such keys turned one frame into a six-figure scan.
+        // There is a firm limit on the iterations, and not on the two budgets only.
+        //
+        // Some paths remove a key and start no work. Those are a section with no data, and a
+        // section whose load returned nothing already. They use neither budget.
+        //
+        // Without this limit, the loop runs until RenderDirty is empty. Each iteration also
+        // scans the full set again for the nearest key. A few hundred such keys made one
+        // frame do a six-figure scan.
         int steps = MeshSchedulesPerFrame + MeshLoadRequestsPerFrame;
 
         while (steps-- > 0 && meshBudget > 0 && loadBudget > 0 && world.RenderDirty.Count > 0)
@@ -440,8 +483,8 @@ public class LodTerrainRenderer : IRenderer
             double bestDist = double.MaxValue;
             foreach (long key in world.RenderDirty)
             {
-                // Skip anything already being meshed or reloaded, so the per-frame
-                // budget goes to sections that can actually start work now.
+                // Skip a section that a worker meshes now, or that the mod loads now. Thus
+                // the budget of this frame goes to a section that can start work now.
                 if (meshJobInFlight.Contains(key) || world.LoadsInFlight.Contains(key)) continue;
                 double d = NearestDistanceTo(key);
                 if (d < bestDist)
@@ -454,9 +497,9 @@ public class LodTerrainRenderer : IRenderer
 
             world.RenderDirty.Remove(best);
 
-            // Non-blocking: an evicted section starts a background reload and is
-            // re-requested by the selection walk once it lands, rather than stalling
-            // this frame on a decompress.
+            // This call does not block. An evicted section starts a background load. The
+            // selection walk asks for it again after it arrives. Thus a decompress does not
+            // delay this frame.
             if (!world.TryGetForRender(best, out LodSection section))
             {
                 if (world.LoadsInFlight.Contains(best))
@@ -518,7 +561,8 @@ public class LodTerrainRenderer : IRenderer
                     result.WaterVertexCount, result.WaterIndexCount);
             }
 
-            // Fresh uploads get a grace stamp so they aren't evicted before first selection.
+            // A new upload gets a stamp. Thus the mod does not evict it before the walk
+            // selects it one time.
             lastSelectedFrame[result.Key] = frameCounter;
         }
     }
@@ -576,7 +620,8 @@ public class LodTerrainRenderer : IRenderer
         prog.UniformMatrix("viewMatrix", rapi.CameraMatrixOriginf);
         prog.UniformMatrix("projectionMatrix", rapi.CurrentProjectionMatrix);
 
-        // Same matrices the shader gets, so the cull can never disagree with the draw.
+        // These are the same matrices that the shader gets. Thus the cull can never
+        // disagree with the draw.
         worldHeight = capi.World.BlockAccessor.MapSizeY;
         frustum.Update(rapi.CurrentProjectionMatrix, rapi.CameraMatrixOriginf);
         culledThisFrame = 0;
@@ -593,8 +638,9 @@ public class LodTerrainRenderer : IRenderer
         prog.Uniform("viewDistance", viewDistance);
         prog.Uniform("farViewDistance", EffectiveFarDistance);
 
-        // Uniforms persist in the program between Use() calls, so re-upload only when
-        // the table actually changed (every ~240 frames) rather than every frame.
+        // The uniforms stay in the program between the calls to Use(). Thus upload them
+        // again only when the table changed, which is approximately every 240 frames. Do not
+        // upload them in each frame.
         if (uploadedTintVersion != tints.Version)
         {
             uploadedTintVersion = tints.Version;
@@ -612,7 +658,7 @@ public class LodTerrainRenderer : IRenderer
             cullDistSq = cull * cull;
         }
 
-        // Pass 1: opaque terrain.
+        // Pass 1: the opaque terrain.
         foreach (long key in drawList)
         {
             if (!sectionMeshes.TryGetValue(key, out MeshRef? mesh)) continue;
@@ -622,7 +668,7 @@ public class LodTerrainRenderer : IRenderer
 
         LastCulledCount = culledThisFrame; // opaque pass only: water covers a subset
 
-        // Pass 2: water, alpha-blended over the terrain.
+        // Pass 2: the water, alpha-blended over the terrain.
         rapi.GlToggleBlend(true);
         foreach (long key in drawList)
         {
@@ -646,9 +692,11 @@ public class LodTerrainRenderer : IRenderer
         double dz = originZ + footprint / 2.0 - camPos.Z;
         if (dx * dx + dz * dz > cullDistSq) return false;
 
-        // Camera-relative box, matching the model matrix below. Y spans the whole
-        // world: sections don't track their vertical extent, and the wins that matter
-        // (sections behind or beside the camera) come from the side planes anyway.
+        // The box is relative to the camera, and it matches the model matrix below.
+        //
+        // Y covers the full world, because a section does not record its vertical extent.
+        // The important gains come from the side planes anyway, and those are the sections
+        // behind the camera and beside it.
         double relX = originX - camPos.X;
         double relZ = originZ - camPos.Z;
         if (!frustum.BoxInView(relX, -camPos.Y, relZ, relX + footprint, worldHeight - camPos.Y, relZ + footprint))
@@ -661,8 +709,9 @@ public class LodTerrainRenderer : IRenderer
         prog!.UniformMatrix("modelMatrix", modelMat.Values);
         prog.Uniform("columnBlocks", (float)LodWorld.ColumnStepBlocks(LodWorld.KeyLevel(key)));
 
-        // Sides that border on never-captured area, so the shader can dissolve them
-        // into the horizon instead of leaving a cliff at the edge of what we've seen.
+        // The sides that touch an area that the mod never captured. Thus the shader can
+        // fade them into the horizon, and it does not leave a cliff at the edge of the
+        // explored area.
         prog.Uniform("sectionSize", (float)footprint);
         prog.Uniform("openEdges",
             HasNeighbourData(key, -1, 0) ? 0f : 1f,
@@ -675,9 +724,11 @@ public class LodTerrainRenderer : IRenderer
     int culledThisFrame;
 
     /// <summary>
-    /// Whether the neighbouring section holds (or covers) data. Checked at the drawn
-    /// section's own level: a coarse section's neighbour is coarse too, and its
-    /// presence in HasDataSet means something in that subtree was captured.
+    /// Whether the neighbour section holds data, or covers data.
+    ///
+    /// The test uses the level of the section that the mod draws. The neighbour of a coarse
+    /// section is coarse also. Its presence in HasDataSet means that the mod captured
+    /// something in that subtree.
     /// </summary>
     bool HasNeighbourData(long key, int dx, int dz) =>
         world.HasDataSet.Contains(LodWorld.NeighborKey(key, dx, dz));

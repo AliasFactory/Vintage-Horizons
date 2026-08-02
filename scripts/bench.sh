@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run one benchmark configuration end to end, in the sandbox, and collect its results.
+# Run one benchmark configuration end to end, in the sandbox, and collect the results.
 #
 #   scripts/bench.sh <label> [--mods <dir-or-zip>[,<dir-or-zip>...]] [--server-mods <...>]
 #                            [--route <file>] [--settle <sec>] [--measure <sec>]
@@ -12,18 +12,19 @@ set -euo pipefail
 #   scripts/bench.sh vintagehorizons --mods dist/vintagehorizons_0.1.0.zip
 #   scripts/bench.sh farseer --mods /path/farseer.zip --server-mods /path/farseer.zip
 #
-# The label names the configuration under test and appears in every output filename, so
-# results from different mods sit side by side in one directory:
-#   .testdata/bench/<label>.csv        frame timings per waypoint
-#   .testdata/bench/<label>--<wp>.png  one screenshot per waypoint
+# The label names the configuration under test, and it appears in each output filename.
+# Thus the results of different mods are together in one directory:
+#   .testdata/bench/<label>.csv        the frame timings for each waypoint
+#   .testdata/bench/<label>--<wp>.png  one screenshot for each waypoint
 #
-# Comparisons are only meaningful if the world, route, settle and measure times are
-# identical across runs -- change one of those and previously recorded results no longer
-# compare. The harness mod pins time of day, weather and camera angles for the same
-# reason.
+# CAUTION: A comparison has a meaning only when the world, the route, the settle time and
+# the measure time are identical across the runs. A change to one of those makes the
+# earlier results impossible to compare. The harness mod fixes the time of day, the
+# weather and the camera angles, for the same reason.
 #
-# Server-side mods: Farseer and ChunkLOD are 'Universal' and required on both sides, so
-# they need --server-mods as well as --mods. VintageHorizons never does.
+# Server-side mods: Farseer and ChunkLOD are 'Universal', and a server needs them on both
+# sides. Thus they need --server-mods and --mods. VintageHorizons never needs
+# --server-mods.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/test-lib.sh"
@@ -64,8 +65,8 @@ SERVER_MODS="$VH_SANDBOX/server/Mods"
 
 mkdir -p "$BENCH_OUT" "$CLIENT_MODS" "$SERVER_MODS"
 
-# Start from a known mod set every time: a mod left over from the previous
-# configuration would silently be part of the next one's measurement.
+# Start from a known set of mods each time. A mod from the previous configuration becomes
+# part of the measurement of the next one, and it gives no message.
 install_mods() {
     local dest="$1" list="$2"
     rm -rf "$dest"
@@ -83,12 +84,12 @@ echo "Bench '$label': preparing mods"
 install_mods "$CLIENT_MODS" "$client_mods"
 install_mods "$SERVER_MODS" "$server_mods"
 
-# The harness itself is always present on the client, whatever is under test.
+# The harness itself is always on the client, whatever mod is under test.
 BENCH_MOD="$ROOT/bench/VintageHorizonsBench/bin/Debug/net10.0/Mods/vintagehorizonsbench"
 [[ -d "$BENCH_MOD" ]] || { echo "bench.sh: build the harness first (dotnet build bench/VintageHorizonsBench)" >&2; exit 2; }
 cp -r "$BENCH_MOD" "$CLIENT_MODS/"
 
-# Pre-seed the detail distance when benchmarking our own mod at a given setting.
+# Set the detail distance first, when this run benchmarks this mod at a given value.
 if [[ -n "$detail" ]]; then
     mkdir -p "$VH_SANDBOX/ModConfig"
     printf '{\n  "FarViewDistanceCap": 0,\n  "DetailDistance": %s\n}\n' "$detail" \
@@ -96,18 +97,21 @@ if [[ -n "$detail" ]]; then
     echo "  detail distance pinned to $detail"
 fi
 
-# Uncap the frame rate. With vsync on, every configuration reports the monitor's
-# refresh rate as its average and the comparison says nothing; only the 1% lows would
-# differ. Written into the sandbox settings so it applies whatever mod is under test.
+# Remove the limit on the frame rate. With vsync on, each configuration reports the
+# refresh rate of the monitor as its average, and the comparison gives nothing. Only the
+# 1% low values differ. This goes into the sandbox settings, thus it applies to each mod
+# under test.
 #
-# --watch turns vsync back on so the run is comfortable to sit and watch: rendering
-# hundreds of uncapped frames per second does not present cleanly on a compositor and
-# makes the window look stale or blank. Numbers from a watch run are NOT comparable
-# with measured runs, and are labelled to keep them out of the comparison.
+# The flag --watch turns vsync on again, thus a person can watch the run comfortably.
+# Hundreds of frames each second, with no limit, do not present correctly on a compositor,
+# and the window looks old or empty.
+#
+# CAUTION: The numbers from a watch run are NOT comparable with the numbers from a
+# measured run. This script labels them, thus they stay out of the comparison.
 python3 - "$VH_SANDBOX/clientsettings.json" "$watch" <<'PY'
 import json, os, sys
 path, watch = sys.argv[1], sys.argv[2] == "1"
-# The file only exists once the client has run at least once in this sandbox.
+# This file exists only after the client ran one time or more in this sandbox.
 cfg = {}
 if os.path.exists(path):
     with open(path) as f:
@@ -139,7 +143,8 @@ export VINTAGEHORIZONS_AUTOUNPAUSE=1   # the window is unfocused during unattend
 "$ROOT/scripts/test-client.sh" -c "localhost:${VH_TEST_PORT:-42425}"
 
 waypoints="$(grep -cvE '^\s*(#|$)' "$route")"
-# Generous: every waypoint costs settle + measure, plus world load and teleport waits.
+# This timeout is large. Each waypoint costs the settle time and the measure time. The
+# world load and the waits for a teleport come on top of that.
 budget=$(( waypoints * (settle + measure + 15) + 180 ))
 echo "Bench '$label': $waypoints waypoints, allowing up to ${budget}s"
 

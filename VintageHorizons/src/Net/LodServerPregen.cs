@@ -6,20 +6,24 @@ using Vintagestory.API.Server;
 namespace VintageHorizons.Net;
 
 /// <summary>
-/// Walks an area of the world outward from spawn, asking the server to load each chunk
-/// column so the capture pipeline sees it. Turns a freshly installed assist from "useful
-/// once players have wandered" into "useful on the first join", which is the difference
-/// between this competing with the server-side LOD mods and not.
+/// Walks an area of the world outward from the spawn point. It asks the server to load each
+/// chunk column, thus the capture pipeline sees that column.
 ///
-/// This is the one place the mod generates terrain that nobody has visited, so it is
-/// opt-in (<see cref="LodServerConfig.PregenRadiusChunks"/>, default 0), bounded, and
-/// throttled: chunk columns are requested a few per second and left to unload naturally
-/// rather than pinned, because a radius worth having is far more terrain than a server can
-/// hold in memory at once.
+/// This changes a new installation of the assist. Without it, the assist is useful only
+/// after the players travel. With it, the assist is useful at the first join. That
+/// difference decides whether this mod competes with the server-side LOD mods.
 ///
-/// Spiral order, not row-major: it is the order coverage is actually wanted in if the run
-/// is interrupted - a partial spiral is a usable disc around spawn, a partial raster is a
-/// band across the map.
+/// This is the one place where the mod generates terrain that nobody visited. Thus an admin
+/// must ask for it, through <see cref="LodServerConfig.PregenRadiusChunks"/>, which is 0 by
+/// default. It also has a limit and a rate.
+///
+/// The mod requests a small number of chunk columns each second, and it lets them unload
+/// normally. It does not hold them. A radius that is large enough to be useful holds much
+/// more terrain than a server can hold in memory at one time.
+///
+/// The order is a spiral, and not row by row. A spiral gives the coverage in the order that
+/// a user wants, if the run stops early. A partial spiral is a usable disc around the spawn
+/// point. A partial raster is a band across the map.
 /// </summary>
 public class LodServerPregen
 {
@@ -47,9 +51,9 @@ public class LodServerPregen
     public void Start()
     {
         logger.Notification(
-            "Pre-generating {0} chunk columns ({1} block radius around spawn) to build the LOD "
-            + "cache. This generates terrain nobody has visited; set PregenRadiusChunks to 0 to "
-            + "disable. Progress is logged every 10%.",
+            "Pre-generating {0} chunk columns to build the LOD cache, in a radius of {1} "
+            + "blocks around spawn. This generates terrain that nobody visited. To stop it, "
+            + "set PregenRadiusChunks to 0. Progress follows every 10%.",
             Total, radiusChunks * GlobalConstants.ChunkSize);
 
         listenerId = sapi.Event.RegisterGameTickListener(_ => Step(), 1000);
@@ -65,8 +69,8 @@ public class LodServerPregen
         for (int n = 0; n < perSecond && index < Total; n++, index++)
         {
             (int dx, int dz) = SpiralAt(index);
-            // Not KeepLoaded: the point is to have each column pass through the capture
-            // pipeline once, not to hold a whole region resident.
+            // Do not use KeepLoaded. Each column must go through the capture pipeline one
+            // time. The mod must not hold a full region resident.
             sapi.WorldManager.LoadChunkColumnPriority(spawnCx + dx, spawnCz + dz);
         }
 
@@ -83,19 +87,20 @@ public class LodServerPregen
         Done = true;
         sapi.Event.UnregisterGameTickListener(listenerId);
         logger.Notification(
-            "LOD pre-generation finished: {0} columns requested. Capture continues in the "
-            + "background; the cache is complete once no columns remain queued.", Total);
+            "LOD pre-generation finished: {0} columns requested. The capture continues in "
+            + "the background. The cache is complete when no column remains in the queue.",
+            Total);
     }
 
     /// <summary>
-    /// Index -> offset on a square spiral centred on 0,0. Walks ring by ring, so any
-    /// prefix of the sequence is a filled square around spawn.
+    /// Turns an index into an offset on a square spiral with its center at 0,0. It goes ring
+    /// by ring. Thus any prefix of the sequence is a full square around the spawn point.
     /// </summary>
     public static (int X, int Z) SpiralAt(int i)
     {
         if (i == 0) return (0, 0);
 
-        // Which ring: the k-th ring ends at index (2k+1)^2 - 1.
+        // Find the ring. Ring k ends at the index (2k+1)^2 - 1.
         int ring = (int)Math.Ceiling((Math.Sqrt(i + 1) - 1) / 2);
         int ringStart = (2 * ring - 1) * (2 * ring - 1);
         int offset = i - ringStart;

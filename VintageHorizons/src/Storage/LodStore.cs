@@ -6,17 +6,22 @@ using Vintagestory.API.Common;
 namespace VintageHorizons;
 
 /// <summary>
-/// Per-world SQLite cache for LOD sections, built on the game's own SQLiteDBConnection
-/// (bundled Microsoft.Data.Sqlite - no external dependencies). One row per
-/// (detail level, section). Palettes store block CODES, not ids - ids are savegame-
-/// local and can shift across game/mod updates (DH's lesson). The ApplyToParent flag
-/// persists the mip-propagation queue so pyramid consistency survives crashes.
+/// The SQLite cache of LOD sections, one for each world. It uses the SQLiteDBConnection of
+/// the game, which is the bundled Microsoft.Data.Sqlite. Thus it needs no external
+/// dependency. There is one row for each pair of a detail level and a section.
+///
+/// A palette stores block CODES, and not ids. An id belongs to one savegame, and it can
+/// change when the game or a mod updates. Distant Horizons taught this lesson.
+///
+/// The ApplyToParent flag stores the queue for the mip propagation. Thus the pyramid stays
+/// consistent after a crash.
 /// </summary>
 public class LodStore : SQLiteDBConnection
 {
     const byte BlobFormatVersion = 4;
 
-    /// <summary>Bump when stored data SEMANTICS change; old rows are purged.</summary>
+    /// <summary>Increase this when the MEANING of the stored data changes. The mod then
+    /// deletes the old rows.</summary>
     const string SchemaVersion = "6"; // v6: palette colors are now UNTINTED + tint-class flags (v5: 1-block leaves)
 
     public override string DBTypeCode => "vintagehorizons lod cache";
@@ -68,11 +73,12 @@ public class LodStore : SQLiteDBConnection
         }
         if (existing == SchemaVersion) return;
 
-        // Only say this when a cache really did hold an older format. A brand new
-        // database has no FormatVersion row at all, so the check below is unequal on a
-        // first-ever run too - and announcing that we are discarding someone's data
-        // before they have any is alarming and untrue. The write still happens either
-        // way; it is the claim that is conditional.
+        // Give this message only when a cache held an older format. A new database has no
+        // FormatVersion row at all. Thus the test below is also unequal on a first run.
+        //
+        // A message that says the mod discards the data of a user, before that user has
+        // any data, is alarming and incorrect. The write occurs in both cases. Only the
+        // message has a condition.
         if (existing != null)
         {
             logger.Notification(
@@ -102,9 +108,11 @@ public class LodStore : SQLiteDBConnection
     }
 
     /// <summary>
-    /// Write an already-serialized section. Deflate happens in Serialize (outside any
-    /// lock, on the storage thread); the lock is held only for the row write, so a
-    /// main-thread demand load never waits behind compression.
+    /// Write a section that the mod serialized already.
+    ///
+    /// Serialize does the deflate, on the storage thread, and outside each lock. The mod
+    /// holds the lock for the row write only. Thus a load on the main thread never waits for
+    /// a compression.
     /// </summary>
     public void SaveBlob(int level, int sx, int sz, byte[] data, bool applyToParent)
     {
@@ -123,19 +131,25 @@ public class LodStore : SQLiteDBConnection
     }
 
     /// <summary>
-    /// Block code -> id. Per-store on purpose: block ids are savegame-local, so a
-    /// cache shared between worlds would resolve the previous world's ids. Concurrent
-    /// because sections deserialize on both the main and storage threads.
+    /// A map from a block code to an id.
+    ///
+    /// There is one map for each store, on purpose. A block id belongs to one savegame. Thus
+    /// a map that two worlds share gives the ids of the earlier world.
+    ///
+    /// The map is concurrent, because sections deserialize on the main thread and on the
+    /// storage thread.
     /// </summary>
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> blockIdByCode = new();
 
     SqliteCommand? loadOneCmd;
 
-    /// <summary>Load a single section row, or null if absent/unreadable. Used for demand reload after RAM eviction.</summary>
+    /// <summary>Load one section row. The result is null when the row is absent, or when
+    /// the mod cannot read it. The mod uses this to load a section again after it removed
+    /// that section from RAM.</summary>
     /// <param name="resolveBlockIds">
-    /// False when called from the storage thread: palette codes are kept on the
-    /// section and resolved later on the main thread, so the block registry is never
-    /// read off-thread.
+    /// This is false for a call from the storage thread. Then the section keeps its palette
+    /// codes, and the main thread finds the ids later. Thus no thread other than the main
+    /// thread reads the block registry.
     /// </param>
     public LodSection? LoadSection(int level, int sx, int sz, IWorldAccessor world, bool resolveBlockIds = true)
     {
@@ -161,8 +175,10 @@ public class LodStore : SQLiteDBConnection
             LodSection? section = Deserialize(bytes, resolveBlockIds ? world : null);
             if (section == null)
             {
-                // Unreadable data must never linger to slow down or confuse future
-                // sessions - delete on sight; the area recaptures on exploration.
+                // Data that the mod cannot read must not stay. It makes a later session
+                // slower, and it confuses a person who examines the cache. Delete it
+                // immediately. The mod captures that area again when a player explores
+                // it.
                 logger.Warning("[VintageHorizons] Deleting unreadable cached section L{0} {1},{2}", level, sx, sz);
                 DeleteSection(level, sx, sz);
             }
@@ -171,9 +187,11 @@ public class LodStore : SQLiteDBConnection
     }
 
     /// <summary>
-    /// The stored blob, unparsed. The wire format is the storage format, so serving a
-    /// section over the network is a blob read and nothing else - no deserialize and
-    /// re-serialize round trip on the server, which never needs to look inside.
+    /// The stored blob, without a parse.
+    ///
+    /// The wire format is the storage format. Thus a section that the server gives over the
+    /// network is a blob read and nothing more. The server does not deserialize it and
+    /// serialize it again, because the server never looks inside it.
     /// </summary>
     public byte[]? LoadBlob(int level, int sx, int sz)
     {
@@ -200,19 +218,22 @@ public class LodStore : SQLiteDBConnection
     SqliteCommand? loadBlobCmd;
 
     /// <summary>
-    /// Parse a blob that did not come from this database - i.e. one off the network.
-    /// Same reader as the disk path, so a section that survives the wire is
-    /// indistinguishable from one that was stored locally.
+    /// Parse a blob from a source other than this database, which is a blob from the
+    /// network. This uses the same reader as the disk path. Thus a section that came over
+    /// the wire is the same as a section from the local disk.
     /// </summary>
     public LodSection? DeserializeForeign(byte[] blob, IWorldAccessor? world) => Deserialize(blob, world);
 
     /// <summary>
-    /// Finish a section that was deserialized off-thread by resolving its palette
-    /// block ids. MUST run on the main thread - it reads the block registry.
+    /// Complete a section that another thread deserialized, by finding the block ids of its
+    /// palette.
+    ///
+    /// CAUTION: This method must run on the main thread, because it reads the block
+    /// registry.
     /// </summary>
     /// <summary>
-    /// Recompute a palette entry's flags and tint slot from the live block. Set by the
-    /// coordinator; runs on the main thread only.
+    /// Calculate the flags and the tint slot of a palette entry again, from the live block.
+    /// The coordinator sets this delegate. It runs on the main thread only.
     /// </summary>
     public System.Func<int, (byte Flags, byte TintSlot)>? ClassifyBlock;
 
@@ -264,9 +285,11 @@ public class LodStore : SQLiteDBConnection
     }
 
     /// <summary>
-    /// Enumerate stored section KEYS only - no blob parsing. Join-time cost stays
-    /// proportional to explored area count, not data size; section data itself is
-    /// demand-loaded when the renderer or pipeline first needs it.
+    /// Give the KEYS of the stored sections only. This parses no blob.
+    ///
+    /// Thus the cost at join increases with the count of the explored areas, and not with
+    /// the size of the data. The mod loads the data of a section when the renderer or the
+    /// pipeline first needs it.
     /// </summary>
     public int LoadAllKeys(Action<int, int, int, bool> onKey)
     {
@@ -285,7 +308,8 @@ public class LodStore : SQLiteDBConnection
         return count;
     }
 
-    /// <summary>Thread-safe: reads only the snapshot's private arrays, never live world state.</summary>
+    /// <summary>This method is safe for more than one thread. It reads the private arrays
+    /// of the snapshot only. It never reads live world state.</summary>
     public static byte[] Serialize(LodSaveSnapshot snap)
     {
         using var ms = new MemoryStream();
@@ -320,7 +344,7 @@ public class LodStore : SQLiteDBConnection
         return ms.ToArray();
     }
 
-    /// <param name="world">Null to defer block-id resolution to the main thread.</param>
+    /// <param name="world">Give null to leave the block ids for the main thread.</param>
     LodSection? Deserialize(byte[] blob, IWorldAccessor? world)
     {
         if (blob.Length < 2 || blob[0] != BlobFormatVersion) return null;
@@ -349,18 +373,19 @@ public class LodStore : SQLiteDBConnection
                 }
                 else if (code.Length > 0 && !blockIdByCode.TryGetValue(code, out blockId))
                 {
-                    // Cached: a session reloads the same few hundred codes across
-                    // thousands of sections, each miss costing an AssetLocation parse
-                    // plus a registry lookup.
+                    // The result is cached. One session loads the same few hundred codes
+                    // again, across thousands of sections. Each miss costs an AssetLocation
+                    // parse and a registry lookup.
                     Block? block = world!.GetBlock(new Vintagestory.API.Common.AssetLocation(code));
                     blockId = block?.BlockId ?? 0;
                     blockIdByCode[code] = blockId;
                 }
                 section.Palette.Add(new LodPaletteEntry { BlockId = blockId, Color = color, Flags = flags });
 
-                // Stored flags predate per-species tint slots (and can go stale if a game
-                // update moves a block to a different colour map), so the live block is
-                // the authority whenever we can resolve it here.
+                // The stored flags are older than the tint slots for each species. A game
+                // update can also move a block to a different color map, and then those
+                // flags become incorrect. Thus the live block is the authority, whenever the
+                // mod can find it here.
                 if (deferredCodes == null) Reclassify(section, section.Palette.Count - 1, blockId);
             }
 

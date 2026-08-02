@@ -4,22 +4,24 @@ using Vintagestory.API.Common;
 namespace VintageHorizons;
 
 /// <summary>
-/// The server side's cache, read by the client side of the same singleplayer world.
+/// The cache of the server side, which the client side of the same singleplayer world reads.
 ///
-/// A savegame sweep can only run on the server side, because only it can ask for chunk
-/// columns the player is nowhere near. But the server has no texture atlas, so what it
-/// captures is geometry with every palette colour left at zero. The client has the atlas
-/// and cannot reach the columns. Each half holds exactly what the other is missing.
+/// A savegame sweep can run only on the server side. Only that side can ask for a chunk
+/// column that the player is far from. But the server has no texture atlas. Thus what it
+/// captures is geometry with each palette color at zero. The client has the atlas, and it
+/// cannot reach those columns. Each half holds exactly what the other half does not have.
 ///
-/// So the swept sections travel the same road as sections fetched from a real server: they
-/// arrive colourless, get recoloured from their block codes on install, and land in the
-/// client's own cache. LodRemoteKeySet does not care whether a blob came off a socket or
-/// off the disk beside it, which is why this is a reader and not a subsystem.
+/// Thus a swept section travels the same road as a section from a real server. It arrives
+/// with no color. The mod gives it a color again from its block codes at install. Then it
+/// goes into the cache of the client.
 ///
-/// Deliberately NOT a LodStore. That class creates tables and can delete rows whose format
-/// version it does not recognise, and pointing it at a file another pipeline has open for
-/// writing is a good way to find out what SQLite does about two writers. This only ever
-/// reads, and says so in the connection string.
+/// LodRemoteKeySet does not care whether a blob arrived over a socket or from the disk beside
+/// it. That is the reason why this class is a reader, and not a subsystem.
+///
+/// CAUTION: This class is deliberately NOT a LodStore. LodStore creates tables, and it can
+/// delete a row whose format version it does not know. Another pipeline has this file open
+/// for writing. Two writers on one SQLite file cause damage. This class only reads, and the
+/// connection string says so.
 /// </summary>
 public sealed class LodLocalOfferSource : IDisposable
 {
@@ -33,9 +35,11 @@ public sealed class LodLocalOfferSource : IDisposable
     }
 
     /// <summary>
-    /// Opens the server-side cache beside a client cache, or returns null when there is
-    /// none - which is the normal case, since only a singleplayer world that has swept has
-    /// one. Never throws: this is an optional extra and must not take a join down with it.
+    /// Opens the cache of the server side, beside a cache of the client. The result is null
+    /// when no such cache exists. That is the normal case, because only a singleplayer world
+    /// that swept has one.
+    ///
+    /// This method never throws. It is an optional extra, and it must not stop a join.
     /// </summary>
     public static LodLocalOfferSource? TryOpen(string clientDbPath, ILogger logger)
     {
@@ -44,8 +48,9 @@ public sealed class LodLocalOfferSource : IDisposable
 
         try
         {
-            // Read-only, and shared: in singleplayer the server side of this same process
-            // has the file open and is very likely still writing to it.
+            // The connection is read-only and shared. In singleplayer, the server side of
+            // this same process has the file open, and it is probably still writing to
+            // it.
             var builder = new SqliteConnectionStringBuilder
             {
                 DataSource = path,
@@ -63,7 +68,7 @@ public sealed class LodLocalOfferSource : IDisposable
         }
     }
 
-    /// <summary>Every section the server side holds, as packed keys.</summary>
+    /// <summary>Each section that the server side holds, as packed keys.</summary>
     public long[] Keys()
     {
         try
@@ -86,8 +91,9 @@ public sealed class LodLocalOfferSource : IDisposable
     }
 
     /// <summary>
-    /// One section's stored blob, or null when it is not there. A miss is ordinary rather
-    /// than exceptional: the sweep is very likely still running and writing more.
+    /// The stored blob of one section, or null when that section is absent. A miss is normal,
+    /// and it is not an error. The sweep is probably still running, and it writes more
+    /// sections.
     /// </summary>
     public byte[]? Blob(long key)
     {
@@ -116,7 +122,7 @@ public sealed class LodLocalOfferSource : IDisposable
         }
         catch (Exception)
         {
-            // Closing a read-only connection is not worth reporting a failure over.
+            // A failure to close a read-only connection is not worth a message.
         }
     }
 }

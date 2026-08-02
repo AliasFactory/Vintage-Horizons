@@ -3,64 +3,76 @@ using ProtoBuf;
 namespace VintageHorizons.Net;
 
 /// <summary>
-/// Wire contract for the optional server assist (DESIGN.md §10), shared by both sides.
+/// The wire contract for the optional server assist (DESIGN.md section 10). Both sides use
+/// this file.
 ///
-/// The assist is strictly additive: a client with the mod must behave exactly as it did
-/// before this existed when the server has no assist, and a server with the assist must
-/// not change anything for players who do not have the mod. Every message here is
-/// therefore either a request that may go unanswered or an answer that may be ignored.
+/// The assist only adds. Against a server with no assist, a client with the mod must operate
+/// exactly as it did before the assist existed. A server with the assist must change nothing
+/// for a player who does not have the mod.
+///
+/// Thus each message here is either a request that can get no answer, or an answer that the
+/// receiver can ignore.
 /// </summary>
 public static class LodAssist
 {
     /// <summary>
-    /// Channel name, identical on both sides or they do not link up. Registering it is
-    /// safe against a vanilla server: the channel simply never reaches Connected.
+    /// The name of the channel. It must be identical on both sides, or the two sides do not
+    /// connect. The registration is safe against a vanilla server, because the channel never
+    /// reaches the Connected state there.
     /// </summary>
     public const string ChannelName = "vintagehorizons";
 
     /// <summary>
-    /// Wire protocol version, bumped whenever a message changes meaning rather than
-    /// gaining a field -- protobuf already ignores fields it does not know, so adding
-    /// one is not a break. Both sides run <c>min(mine, theirs)</c> so a new server keeps
-    /// working with the 0.1.1-era clients that are already in the wild.
+    /// The version of the wire protocol. Increase it when a message changes its meaning.
+    /// Do not increase it when a message gains a field, because protobuf ignores a field
+    /// that it does not know. Thus a new field is not a break.
+    ///
+    /// Both sides use <c>min(mine, theirs)</c>. Thus a new server continues to operate with
+    /// the clients of version 0.1.1 that users have already.
     /// </summary>
     public const int Protocol = 1;
 
     /// <summary>
-    /// Keys per manifest chunk. 2048 keys is ~16 KB, small enough not to stall a join
-    /// that is already loading a world and large enough that a 5581-key world takes
-    /// three messages rather than dozens.
+    /// The number of keys in one part of the manifest. 2048 keys is approximately 16 KB.
+    /// That size is small enough to not delay a join that loads a world already. It is also
+    /// large enough that a world of 5581 keys takes three messages, and not tens of them.
     /// </summary>
     public const int ManifestKeysPerMessage = 2048;
 
     /// <summary>
-    /// Most sections a client may have outstanding. At a mean 45.9 KB a section, 16 in
-    /// flight is roughly 730 KB - enough to keep a join filling in, small enough that a
-    /// player who sprints across unexplored land cannot ask for a whole world at once.
+    /// The maximum number of sections that one client can have open. At the mean of
+    /// 45.9 KB for a section, 16 open sections are approximately 730 KB. That is enough to
+    /// keep a join filling in. It is also small enough that a player who runs fast across
+    /// unexplored land cannot ask for a full world at one time.
     /// </summary>
     public const int MaxSectionsInFlight = 16;
 
     /// <summary>
-    /// Sections a server will serve one player per second. The cap exists so an admin can
-    /// reason about the cost: 8/s is ~370 KB/s per player at the measured mean.
+    /// The number of sections that a server gives to one player each second. This limit
+    /// exists so that an admin can calculate the cost. At the measured mean, 8 each second
+    /// is approximately 370 KB/s for each player.
     ///
-    /// Enforced server-side rather than trusted to <see cref="MaxSectionsInFlight"/>: a
-    /// modified client ignores its own limit, so the client's is a courtesy and this is
-    /// the actual bound.
+    /// The server enforces this limit. It does not trust
+    /// <see cref="MaxSectionsInFlight"/>, because a modified client ignores its own limit.
+    /// Thus the limit of the client is a courtesy, and this one is the real bound.
     /// </summary>
     public const int MaxSectionsPerSecondPerPlayer = 8;
 
     /// <summary>
-    /// Sections a server will serve per second in total, across every player. The
-    /// per-player cap alone does not bound what the server pays: each section served is a
-    /// main-thread SQLite blob read, so twenty players at 8/s each would be 160 reads a
-    /// second of tick time. This is the number that protects the server, and the
-    /// per-player cap only decides how it is shared.
+    /// The number of sections that a server gives each second, across all players.
+    ///
+    /// The limit for each player does not bound the cost to the server. Each section that
+    /// the server gives is a SQLite blob read on the main thread. Thus twenty players at 8
+    /// each second make 160 reads each second of the tick time.
+    ///
+    /// This value protects the server. The limit for each player decides only how the
+    /// players share it.
     /// </summary>
     public const int MaxSectionsPerSecondTotal = 32;
 }
 
-/// <summary>Client -> server, once per join, only when the channel is Connected.</summary>
+/// <summary>Client to server, one time for each join, and only when the channel is
+/// Connected.</summary>
 [ProtoContract]
 public class AssistHello
 {
@@ -69,10 +81,11 @@ public class AssistHello
 }
 
 /// <summary>
-/// Server -> client, in reply to <see cref="AssistHello"/>. <see cref="Enabled"/> is
-/// separate from the protocol check on purpose: an admin who has turned the assist off
-/// still gets a well-formed answer saying so, which is a diagnosable state, rather than
-/// silence that looks identical to a vanilla server.
+/// Server to client, as the answer to <see cref="AssistHello"/>.
+///
+/// <see cref="Enabled"/> is separate from the protocol test on purpose. When an admin turns
+/// the assist off, the client still gets a correct answer that says so. A person can
+/// diagnose that state. Silence is worse, because it looks the same as a vanilla server.
 /// </summary>
 [ProtoContract]
 public class AssistWelcome
@@ -81,43 +94,49 @@ public class AssistWelcome
     [ProtoMember(2)] public string ModVersion = "";
     [ProtoMember(3)] public bool Enabled;
 
-    /// <summary>Human-readable reason, surfaced verbatim by .vhinfo. Not parsed.</summary>
+    /// <summary>A reason for a person to read. `.vhinfo` shows this text without a change.
+    /// Nothing parses it.</summary>
     [ProtoMember(4)] public string Status = "";
 
     /// <summary>
-    /// How many section keys the server is about to send, so a client can report
-    /// progress and size its set once instead of rehashing as chunks arrive. Zero when
-    /// no manifest follows.
+    /// The number of section keys that the server sends next. Thus a client can report the
+    /// progress, and it can size its set one time. Without this count, the client makes the
+    /// hashes again as each part arrives. The value is zero when no manifest follows.
     /// </summary>
     [ProtoMember(5)] public int ManifestKeyCount;
 }
 
 /// <summary>
-/// Server -> client: which sections the server holds, as packed keys and nothing else.
-/// Measured at 8 bytes a key and 5581 keys for a well-travelled world, so ~44 KB total -
-/// cheap enough to send in full at join, which is why there is no spatial query here.
+/// Server to client. This message gives the sections that the server holds, as packed keys
+/// and nothing else.
 ///
-/// Chunked because one 44 KB message is a needless latency spike on a join that is
-/// already busy, not because the reliable channel has a size limit (§10.7).
+/// The measurement is 8 bytes for each key, and 5581 keys for a world that players
+/// travelled. That is approximately 44 KB in total. This is cheap enough to send in full at
+/// a join. That is the reason why there is no spatial query here.
+///
+/// The mod divides the manifest into parts. One message of 44 KB is an unnecessary delay on
+/// a join that is busy already. The reliable channel has no size limit (section 10.7).
 /// </summary>
 [ProtoContract]
 public class AssistKeyManifest
 {
     [ProtoMember(1)] public int Sequence;
 
-    /// <summary>Set on the final chunk, so the client knows the set is complete.</summary>
+    /// <summary>True on the last part. Thus the client knows that the set is
+    /// complete.</summary>
     [ProtoMember(2)] public bool Last;
 
     [ProtoMember(3)] public long[] Keys = Array.Empty<long>();
 }
 
 /// <summary>
-/// Client -> server: send me these sections. Batched, and the client asks only for keys
-/// the manifest offered that it has no local data for, so a request is never a duplicate
-/// of something on disk.
+/// Client to server. This message asks for a group of sections.
 ///
-/// The server is not obliged to answer all of them, or any: it decides what it is willing
-/// to send, and an unanswered key is retried later rather than treated as an error.
+/// The client asks only for a key that the manifest offered and that it has no local data
+/// for. Thus a request is never a duplicate of data on the disk.
+///
+/// The server does not have to answer all of the keys, or any of them. It decides what it
+/// gives. A key with no answer is not an error, and the client asks for it again later.
 /// </summary>
 [ProtoContract]
 public class AssistSectionRequest
@@ -126,16 +145,19 @@ public class AssistSectionRequest
 }
 
 /// <summary>
-/// Server -> client: one section, as the stored blob verbatim.
+/// Server to client. This message gives one section, as the stored blob without a change.
 ///
-/// Not chunked. Sections measure a mean 45.9 KB and a max 154.5 KB on a real world, and
-/// the reliable channel has no size cap (the 508-byte warning is UDP-only, §10.7), so one
-/// message per section is the simpler thing that works. If large messages turn out to
-/// stall a join, chunking goes here - with the sequence/last pattern the manifest already
-/// uses - rather than anywhere else.
+/// The mod does not divide this message into parts. On a real world a section measures a
+/// mean of 45.9 KB and a maximum of 154.5 KB. The reliable channel has no size limit,
+/// because the warning about 508 bytes applies to UDP only (section 10.7). Thus one message
+/// for each section is the simpler solution, and it operates.
 ///
-/// <see cref="Blob"/> empty means "I am not sending this one": either it is gone or the
-/// server declined. The client marks the key so it stops asking every few seconds.
+/// If a large message delays a join, put the division into parts here. Use the sequence and
+/// last pattern that the manifest uses already. Do not put it anywhere else.
+///
+/// An empty <see cref="Blob"/> means "the server does not send this one". The section is
+/// gone, or the server declined it. The client marks the key, thus it stops asking every few
+/// seconds.
 /// </summary>
 [ProtoContract]
 public class AssistSection
