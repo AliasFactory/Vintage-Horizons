@@ -22,6 +22,7 @@ public static class Program
         ("fixture", "frustum", FrustumChecks.Run),
         ("fixture", "block policy", PolicyChecks.Run),
         ("pure", "remote keys", RemoteKeyChecks.Run),
+        ("pure", "chunk generation", GenerateChecks.Run),
         ("fixture", "server assist", ServerAssistChecks.Run),
         ("static", "assets and constants", StaticAssetChecks.Run),
     };

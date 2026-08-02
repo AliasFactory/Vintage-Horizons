@@ -38,6 +38,14 @@ as cliffs, and the picture fills in the more you play.
 | `.vhdetail [blocks]` | Distance before detail starts halving (default 512). Higher is sharper far terrain for more VRAM and CPU; try 1024. No argument reports the current value. |
 | `.vhfar <blocks>` | Cap the LOD render distance; `0` = unlimited (the default) |
 
+Two server commands exist as well (`/`, not `.`). They need the controlserver
+privilege, which every singleplayer host has:
+
+| Command | Purpose |
+| --- | --- |
+| `/vhserver` | Server assist status: settings in force, cache size, transfer counters |
+| `/vhgen start [radius] [x z]` | Build the LOD cache around you (or around `x z`), generating terrain nobody has visited. Also `stop` and `status`. See below. |
+
 Both settings persist in `VintagestoryData/ModConfig/vintagehorizons.json`.
 The per-world cache lives in `VintagestoryData/ModData/vintagehorizons/<savegame-id>.db`
 and is discarded automatically when a mod update changes what the stored data means, so a
@@ -73,6 +81,29 @@ default on because it **generates nothing**: positions that were never visited a
 and so is a border around explored terrain, since loading a column whose surroundings are
 missing would make the engine generate them. That is the opposite trade from
 `PregenRadiusChunks`, which deliberately creates new terrain and stays off unless asked for.
+
+### Generating the horizon (/vhgen)
+
+Sweeping and capture only cover terrain that exists. `/vhgen start [radius] [x z]`
+covers the rest: it generates the LOD picture around you (or around explicit
+coordinates) for land nobody has visited, **without writing anything to the savegame**.
+The engine's `PeekChunkColumn` runs real worldgen from the seed and hands the result
+back transiently; the mod captures it and throws the terrain away. Columns that do
+exist load normally instead, so player builds stay correct.
+
+Every run ends by re-probing a sample of the positions it peeked and reports the
+result on its finish line ("Verified 256/256 sampled absent positions still absent").
+The savegame promise is also asserted byte-for-byte by the check regimen, but only
+against vanilla worldgen - the runtime check is what watches it on modded servers.
+
+Two limits to know. Generated terrain has no trees: trees need a worldgen pass that
+crashes vanilla when run transiently, so generated ground stays bare until a player
+actually visits and real capture replaces it. And clients that are already connected
+learn about new sections at their next join, not live.
+
+The command needs the controlserver privilege. `EnableGenerateCommand`,
+`GenerateMaxRadiusChunks` (ceiling, default 128), `GenerateDefaultRadiusChunks`,
+`GenerateColumnsPerSecond` and `GenerateMaxInFlight` bound it in the server config.
 
 ### Running the checks
 

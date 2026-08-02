@@ -195,6 +195,14 @@ public class VintageHorizonsModSystem : ModSystem
     /// </summary>
     LodLocalOfferSource? localOffers;
     bool loggedLocalOffers;
+    int localOfferProbeTicks;
+
+    /// <summary>
+    /// About 5s at the 50ms tick. The retry usually answers with one failed File.Exists,
+    /// so it stays cheap; anything shorter is pointless for a cache that grows for
+    /// minutes once it appears.
+    /// </summary>
+    const int LocalOfferProbeIntervalTicks = 100;
 
     /// <summary>
     /// Adopt sections the server side swept out of the savegame.
@@ -207,7 +215,19 @@ public class VintageHorizonsModSystem : ModSystem
     /// </summary>
     void PumpLocalOffers()
     {
-        if (localOffers == null) return;
+        if (localOffers == null)
+        {
+            // A null here means "not yet", not "never": the server side can open its
+            // cache long after this client finalized - /vhgen creates one on demand,
+            // and a sweep's file can appear after a slow start. Opening once at
+            // LevelFinalize and never looking again left both invisible for the whole
+            // session.
+            if (++localOfferProbeTicks < LocalOfferProbeIntervalTicks) return;
+            localOfferProbeTicks = 0;
+            if (pipeline.DbPath is not string dbPath) return;
+            localOffers = LodLocalOfferSource.TryOpen(dbPath, Mod.Logger);
+            if (localOffers == null) return;
+        }
 
         // The sweep writes continuously, so re-reading the key list picks up whatever has
         // landed since. AddRemoteKeys ignores anything already known, and anything local
@@ -249,9 +269,10 @@ public class VintageHorizonsModSystem : ModSystem
         if (!loggedLocalOffers && offered.Length > 0)
         {
             loggedLocalOffers = true;
+            // Sweeps and /vhgen both fill the sibling cache; this line covers either.
             Mod.Logger.Notification(
-                "Savegame sweep: {0} sections built from terrain generated in earlier "
-                + "sessions are available; adopting them as the view needs them.", offered.Length);
+                "Server-side cache offers {0} sections locally; adopting them as the view "
+                + "needs them.", offered.Length);
         }
     }
 
@@ -447,6 +468,19 @@ public class VintageHorizonsModSystem : ModSystem
         if (renderer.AutoUnpause || Environment.GetEnvironmentVariable("VINTAGEHORIZONS_STATS") == "1")
         {
             capi.Event.RegisterGameTickListener(_ => LogStats("Stats"), 15000);
+        }
+
+        // A dev hook for the matrix tier: send one chat command shortly after the world
+        // is up. The harness cannot reach a detached server's console, and a second
+        // entry point into the generator would test something other than what players
+        // type. The delay lets the handshake and the privilege grant settle first.
+        if (Environment.GetEnvironmentVariable("VINTAGEHORIZONS_AUTOCMD") is { Length: > 0 } autoCmd)
+        {
+            capi.Event.RegisterCallback(_ =>
+            {
+                Mod.Logger.Notification("Auto-command: {0}", autoCmd);
+                capi.SendChatMessage(autoCmd);
+            }, 15000);
         }
 
         autoExplore = Environment.GetEnvironmentVariable("VINTAGEHORIZONS_AUTOEXPLORE") == "1";

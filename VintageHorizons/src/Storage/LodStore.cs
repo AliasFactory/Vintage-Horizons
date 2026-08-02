@@ -73,11 +73,21 @@ public class LodStore : SQLiteDBConnection
         // first-ever run too - and announcing that we are discarding someone's data
         // before they have any is alarming and untrue. The write still happens either
         // way; it is the claim that is conditional.
+        //
+        // With a count, because this is the one place the mod deletes data a player
+        // accumulated. Deliberate destruction is fine; silent destruction is not.
         if (existing != null)
         {
+            long discarded = 0;
+            using (var count = sqliteConn.CreateCommand())
+            {
+                count.CommandText = "SELECT COUNT(*) FROM Section";
+                discarded = (long)(count.ExecuteScalar() ?? 0L);
+            }
             logger.Notification(
-                "[VintageHorizons] LOD cache format {0} is not ours ({1}); discarding old cached data",
-                existing, SchemaVersion);
+                "[VintageHorizons] LOD cache format {0} is not ours ({1}); discarding {2} cached "
+                + "sections from the old format. They rebuild from capture as you play.",
+                existing, SchemaVersion, discarded);
         }
         using var cmd = sqliteConn.CreateCommand();
         cmd.CommandText = "DELETE FROM Section; INSERT OR REPLACE INTO Meta (Key, Value) VALUES ('FormatVersion', '" + SchemaVersion + "');";

@@ -118,6 +118,44 @@ public class LodPipeline
     }
 
     /// <summary>
+    /// Capture a chunk column the caller already holds, rather than one the world can
+    /// be asked for. <see cref="QueueColumn"/> cannot serve a peeked column: a peek
+    /// puts nothing in the loaded chunk list, so the BlockAccessor lookup in
+    /// ScheduleCaptures finds nothing - or, for a coordinate that also exists on disk,
+    /// finds the savegame's version instead.
+    ///
+    /// Safe from any thread. The chunk array is copied and the rain map is cloned, so
+    /// the caller can drop its references as soon as this returns. Deliberately not
+    /// routed through the queued-column dedup dictionaries: that keeps this lock-free,
+    /// and a duplicate capture of identical data is idempotent at apply time.
+    /// </summary>
+    /// <returns>False when the pipeline is closed or the inputs cannot describe a column.</returns>
+    public bool CaptureColumn(int cx, int cz, IWorldChunk?[] chunks, ushort[] rainMap)
+    {
+        if (!Active) return false;
+        if (chunks.Length == 0 || rainMap.Length < ChunkSize * ChunkSize) return false;
+
+        var refs = new IWorldChunk?[chunks.Length];
+        Array.Copy(chunks, refs, chunks.Length);
+
+        Worker.EnqueueCapture(new CaptureJob
+        {
+            Cx = cx,
+            Cz = cz,
+            Chunks = refs,
+            RainMap = (ushort[])rainMap.Clone(),
+        });
+        return true;
+    }
+
+    /// <summary>
+    /// True when the capture thread is at its backlog. A producer that can throttle
+    /// itself (chunk generation) must stop at the source: every queued job holds a
+    /// whole unpacked chunk column in memory until the capture thread drains it.
+    /// </summary>
+    public bool CaptureBacklogFull => Worker.PendingCaptures >= MaxWorkerCaptureBacklog;
+
+    /// <summary>
     /// Open (or create) the LOD cache for the current world and adopt its key set.
     /// Failing to open is not fatal: capture and rendering work without persistence.
     /// </summary>

@@ -45,14 +45,15 @@ public class LodSavegameSweep
     /// </summary>
     const int MaxProbesInFlight = 256;
 
-    /// <summary>Positions known to hold generated terrain, packed as cz&lt;&lt;32 | cx.</summary>
-    readonly HashSet<long> exists = new();
+    /// <summary>Which positions hold generated terrain, and the safety rule over them.</summary>
+    readonly LodColumnMap exists = new();
 
     int probeIndex;
     int probesInFlight;
     int loadIndex;
     int reported;
     long listenerId;
+    bool verifying;
 
     int spawnCx;
     int spawnCz;
@@ -62,7 +63,7 @@ public class LodSavegameSweep
     /// edge of the sweep still has known neighbours rather than being skipped for want of
     /// information about positions nobody looked at.
     /// </summary>
-    int ProbeRadius => radiusChunks + SafeNeighbourhood;
+    int ProbeRadius => radiusChunks + LodColumnMap.SafeNeighbourhood;
     int ProbeTotal => (2 * ProbeRadius + 1) * (2 * ProbeRadius + 1);
     int LoadTotal => (2 * radiusChunks + 1) * (2 * radiusChunks + 1);
 
@@ -102,11 +103,9 @@ public class LodSavegameSweep
         listenerId = sapi.Event.RegisterGameTickListener(_ => Step(), 1000);
     }
 
-    static long Key(int cx, int cz) => ((long)cz << 32) | (uint)cx;
-
     void Step()
     {
-        if (Done) return;
+        if (Done || verifying) return;
         if (Probing) StepProbe();
         else StepLoad();
     }
@@ -128,7 +127,7 @@ public class LodSavegameSweep
                 sapi.Event.EnqueueMainThreadTask(() =>
                 {
                     probesInFlight--;
-                    if (hit) exists.Add(Key(cx, cz));
+                    if (hit) exists.Add(cx, cz);
                 }, "vh-sweep-probe");
             });
         }
@@ -159,14 +158,19 @@ public class LodSavegameSweep
             int cx = spawnCx + dx;
             int cz = spawnCz + dz;
 
-            if (!exists.Contains(Key(cx, cz))) continue;
-
-            if (!NeighbourhoodComplete(cx, cz))
+            switch (exists.Classify(cx, cz))
             {
-                // On the frontier of explored terrain. Loading it would generate whatever
-                // is missing beside it, which is the one thing this must not do.
-                SkippedEdge++;
-                continue;
+                case EnumColumnAction.Peek:
+                    // Not in the savegame. The sweep indexes what exists and creates
+                    // nothing, so there is no work here. Generation (/vhgen) is the
+                    // feature that acts on this arm.
+                    continue;
+
+                case EnumColumnAction.SkipFrontier:
+                    // On the frontier of explored terrain. A load here would generate
+                    // whatever is missing beside it - the one thing this must not do.
+                    SkippedEdge++;
+                    continue;
             }
 
             // Not KeepLoaded: each column needs to pass through capture once, not stay
@@ -186,52 +190,41 @@ public class LodSavegameSweep
 
         if (loadIndex < LoadTotal) return;
 
-        Done = true;
-        sapi.Event.UnregisterGameTickListener(listenerId);
-        logger.Notification(
-            "Savegame sweep finished: {0} columns loaded from terrain that already existed, "
-            + "{1} skipped on the frontier, nothing generated. Capture continues in the "
-            + "background; the cache is complete once no columns remain queued.",
-            Loaded, SkippedEdge);
+        // The promise gets measured before it gets announced: re-probe a sample of the
+        // positions that did not exist, and report the result on the finish line.
+        verifying = true;
+        new LodAbsenceVerifier(sapi,
+            exists.AbsentSample(spawnCx, spawnCz, ProbeRadius, LodAbsenceVerifier.MaxSample),
+            Finish).Start();
     }
 
-    /// <summary>
-    /// How far the neighbourhood has to be intact before a column is safe to load.
-    ///
-    /// Four, arrived at by measurement rather than reasoning. The dependency reaches much
-    /// further than the intuitive one ring. Sweeping one world at each setting and counting
-    /// the chunk columns the savegame gained:
-    ///
-    ///   no check   1460 generated
-    ///   radius 1    714 generated
-    ///   radius 2    509 generated
-    ///   radius 4      0 generated
-    ///
-    /// 3 was not tested, so this may be one wider than it strictly needs to be. Erring wide
-    /// is the right direction: too narrow silently breaks the one promise this feature
-    /// makes, while too wide costs a slightly thicker border of terrain going uncaptured.
-    /// </summary>
-    const int SafeNeighbourhood = 4;
-
-    /// <summary>
-    /// True when everything within <see cref="SafeNeighbourhood"/> of this column is also on
-    /// disk, so loading it cannot make the engine generate anything to complete it.
-    /// </summary>
-    bool NeighbourhoodComplete(int cx, int cz)
+    void Finish(LodAbsenceVerifier verified)
     {
-        for (int dz = -SafeNeighbourhood; dz <= SafeNeighbourhood; dz++)
+        Done = true;
+        sapi.Event.UnregisterGameTickListener(listenerId);
+
+        if (verified.Regrown > 0)
         {
-            for (int dx = -SafeNeighbourhood; dx <= SafeNeighbourhood; dx++)
-            {
-                if (!exists.Contains(Key(cx + dx, cz + dz))) return false;
-            }
+            logger.Warning(
+                "Savegame sweep: {0} of {1} sampled positions that did not exist before the "
+                + "sweep now exist. The sweep must generate nothing, so worldgen on this "
+                + "server reaches further than the measured safe neighbourhood - a worldgen "
+                + "mod is the likely cause. Consider SweepSavegame: false here, and please "
+                + "report this.", verified.Regrown, verified.Checked);
         }
-        return true;
+
+        logger.Notification(
+            "Savegame sweep finished: {0} columns loaded from terrain that already existed, "
+            + "{1} skipped on the frontier, nothing generated. {2}. Capture continues in the "
+            + "background; the cache is complete once no columns remain queued.",
+            Loaded, SkippedEdge, verified.Describe());
     }
 
     /// <summary>One line for /vhserver; null when no sweep was configured.</summary>
     public string Status => Done
         ? $"savegame sweep complete ({Loaded} columns loaded, {SkippedEdge} skipped on the frontier)"
+        : verifying
+            ? $"savegame sweep verifying: re-probing {Loaded} loads' surroundings"
         : Probing
             ? $"sweeping savegame: examined {probeIndex}/{ProbeTotal}, {exists.Count} hold terrain"
             : $"sweeping savegame: loaded {Loaded}, {SkippedEdge} skipped on the frontier";

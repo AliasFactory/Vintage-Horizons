@@ -26,7 +26,20 @@ public class LodServerCaptureSystem : ModSystem
     LodPipeline? pipeline;
     LodServerPregen? pregen;
     LodSavegameSweep? sweep;
+    LodPlayerPregen? generate;
     long tickListenerId;
+
+    /// <summary>
+    /// Whether chunk loads drive capture on this server. Dedicated: yes, every load.
+    /// Singleplayer: only when a sweep needs it - the client side already captures
+    /// every column this process shows the player, and capturing them again here
+    /// doubles the work and the memory for no gain. Generation never needs this flag:
+    /// it feeds the pipeline directly, so the guard has nothing to predict.
+    /// </summary>
+    bool captureDrivenByLoads;
+
+    /// <summary>Set at RunGame. /vhgen cannot open a cache before the world has a name.</summary>
+    bool worldReady;
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Server;
 
@@ -50,6 +63,9 @@ public class LodServerCaptureSystem : ModSystem
     /// <summary>Progress line for /vhserver, or null when no sweep is running.</summary>
     public string? SweepStatus => sweep?.Status;
 
+    /// <summary>Progress line for /vhserver, or null when /vhgen never ran.</summary>
+    public string? GenerateStatus => generate?.Status;
+
     /// <summary>Main thread only - the capture pipeline mutates this set every tick.</summary>
     public long[] SnapshotKeys() =>
         pipeline == null ? Array.Empty<long>() : pipeline.World.HasDataSet.ToArray();
@@ -67,19 +83,30 @@ public class LodServerCaptureSystem : ModSystem
     {
         sapi = api;
 
+        bool configReadable = true;
         try
         {
             Config = api.LoadModConfig<LodServerConfig>(ConfigFile) ?? new LodServerConfig();
         }
         catch (Exception e)
         {
-            Mod.Logger.Warning("Could not read {0}, using defaults: {1}", ConfigFile, e.Message);
+            // Defaults in memory, and the file stays exactly as the admin wrote it.
+            // Writing defaults back here would destroy every hand-edited setting over
+            // one bad comma.
+            configReadable = false;
+            Mod.Logger.Warning(
+                "Could not parse {0}: {1}. Using defaults for this session. The file was "
+                + "left untouched so you can fix it.", ConfigFile, e.Message);
             Config = new LodServerConfig();
         }
         Config.Sanitize();
-        // Written back every start so a new option appears in the file rather than only in
-        // the source, and so a sanitised value is visible as the one actually in force.
-        api.StoreModConfig(Config, ConfigFile);
+        // Written back after every clean load so a new option appears in the file rather
+        // than only in the source, and so a sanitised value is visible as the one in force.
+        if (configReadable) api.StoreModConfig(Config, ConfigFile);
+
+        // Registered whatever the config says: a command that refuses with the reason
+        // beats "no such command", which reads as a broken mod.
+        RegisterGenerateCommand();
 
         if (!Config.EnableCapture)
         {
@@ -90,35 +117,17 @@ public class LodServerCaptureSystem : ModSystem
         }
 
         // Singleplayer (and LAN-hosted) worlds run client and integrated server in one
-        // process. Ordinarily there is nothing for this side to do there: capture is driven
-        // by chunks loading, and in one process the server loads exactly the chunks the
-        // client is already shown, so running both sides doubles every capture and holds
-        // two copies of the section pyramid for no gain. Observed live before this was
-        // guarded: a manifest of 3851 keys the client already had, every one redundant.
+        // process. Capture from chunk loads has nothing to do there: the server loads
+        // exactly the chunks the client is shown, and the client side already captures
+        // those. Observed live before this was guarded: a manifest of 3851 keys the
+        // client already had, every one redundant. A sweep is the exception - it loads
+        // columns the client is never shown, and this event is the only way to see them.
         //
-        // Sweeping is the exception, and the reason the guard is conditional rather than
-        // absolute. A sweep deliberately loads columns the client will never be shown -
-        // terrain generated in sessions before this mod was installed, or hundreds of
-        // blocks from where the player is standing. That is the one thing this side can do
-        // in singleplayer that the client cannot do for itself.
-        //
-        // The two caches stay separate regardless (the -server suffix below), so the
-        // double-open that caused the original bug cannot recur.
-        if (!api.Server.IsDedicated && !Config.SweepEnabled)
-        {
-            Mod.Logger.Notification(
-                "Singleplayer or LAN-hosted world with sweeping off: skipping server LOD "
-                + "capture. The client side already captures everything this process loads, "
-                + "and running both would duplicate the cache, the work and the memory for "
-                + "no gain. Set SweepSavegame to index terrain from earlier sessions.");
-            return;
-        }
-
-        // A server has no texture atlas, so it cannot compute a palette colour at all
-        // (Block.GetColorWithoutTint takes ICoreClientAPI). Sections are written
-        // colour-unresolved and the receiving client fills colour in, which it can do
-        // from the block code alone. Tint slots are likewise client-only and stay 0.
-        pipeline = new LodPipeline(api, Mod.Logger, (_, _, _, _) => (0, 0));
+        // Generation is deliberately NOT an exception here. It hands peeked columns to
+        // the pipeline itself and routes its loads through an OnLoaded callback, so it
+        // needs the cache open but not this event - which is what lets /vhgen work in
+        // singleplayer hours after startup without re-running this decision.
+        captureDrivenByLoads = api.Server.IsDedicated || Config.SweepEnabled;
 
         // Not at StartServerSide: the savegame identifier that names the cache file is
         // not known until the world is up.
@@ -128,16 +137,23 @@ public class LodServerCaptureSystem : ModSystem
 
     void OnRunGame()
     {
-        pipeline!.Open("ModData/vintagehorizons", "-server");
+        worldReady = true;
+
+        if (!captureDrivenByLoads)
+        {
+            Mod.Logger.Notification(
+                "Singleplayer or LAN-hosted world with sweeping off: the server side stays "
+                + "idle. The client side already captures everything this process loads. "
+                + "Set SweepSavegame to index terrain from earlier sessions; /vhgen opens a "
+                + "server-side cache on demand for terrain the client cannot reach itself.");
+            return;
+        }
+
+        OpenPipeline();
 
         sapi.Event.ChunkColumnLoaded += OnChunkColumnLoaded;
         sapi.Event.DidBreakBlock += (_, _, blockSel) => QueueAt(blockSel?.Position);
         sapi.Event.DidPlaceBlock += (_, _, blockSel, _) => QueueAt(blockSel?.Position);
-
-        tickListenerId = sapi.Event.RegisterGameTickListener(_ => pipeline!.Tick(), 50);
-
-        Mod.Logger.Notification("Server LOD capture active ({0} sections from cache). {1}",
-            pipeline.CachedSectionsLoaded, Config.Describe());
 
         // Sweep before pregen, and not only because it is cheaper. Sweeping loads terrain
         // that already exists; pregen makes more. Doing the free work first means an
@@ -156,6 +172,139 @@ public class LodServerCaptureSystem : ModSystem
                 Config.PregenRadiusChunks, Config.PregenColumnsPerSecond);
             pregen.Start();
         }
+    }
+
+    /// <summary>
+    /// Open the cache and start ticking the pipeline. Idempotent; main thread only.
+    ///
+    /// Split out of OnRunGame because /vhgen can need it at any moment - hours into a
+    /// singleplayer session where this side never opened anything - and because opening
+    /// a second SQLite file in every singleplayer world, in case someone might type a
+    /// command one day, is exactly the cost the startup guard exists to avoid.
+    /// </summary>
+    LodPipeline OpenPipeline()
+    {
+        if (pipeline != null) return pipeline;
+
+        // A server has no texture atlas, so it cannot compute a palette colour at all
+        // (Block.GetColorWithoutTint takes ICoreClientAPI). Sections are written
+        // colour-unresolved and the receiving client fills colour in, which it can do
+        // from the block code alone. Tint slots are likewise client-only and stay 0.
+        pipeline = new LodPipeline(sapi, Mod.Logger, (_, _, _, _) => (0, 0));
+        pipeline.Open("ModData/vintagehorizons", "-server");
+
+        tickListenerId = sapi.Event.RegisterGameTickListener(_ => pipeline!.Tick(), 50);
+
+        Mod.Logger.Notification("Server LOD capture active ({0} sections from cache). {1}",
+            pipeline.CachedSectionsLoaded, Config.Describe());
+        return pipeline;
+    }
+
+    // ---- /vhgen: build the cache around a player, generating what nobody visited ----
+
+    void RegisterGenerateCommand()
+    {
+        var parsers = sapi.ChatCommands.Parsers;
+        sapi.ChatCommands.Create("vhgen")
+            .WithDescription(
+                "Build the VintageHorizons LOD cache around you. Terrain nobody has visited "
+                + "is generated from the world seed and captured, and nothing is written to "
+                + "the savegame.")
+            .RequiresPrivilege(Privilege.controlserver)
+            .HandleWith(_ => TextCommandResult.Success(GenerateStatusLine()))
+            .BeginSubCommand("start")
+                .WithDescription("Start a run centred on you, or on x z when given")
+                .WithArgs(
+                    parsers.OptionalIntRange("radius",
+                        1, Math.Max(1, Config.GenerateMaxRadiusChunks), Config.GenerateDefaultRadiusChunks),
+                    parsers.OptionalInt("x", -1),
+                    parsers.OptionalInt("z", -1))
+                .HandleWith(OnGenerateStart)
+            .EndSubCommand()
+            .BeginSubCommand("stop")
+                .WithDescription("Cancel the run in progress")
+                .HandleWith(OnGenerateStop)
+            .EndSubCommand()
+            .BeginSubCommand("status")
+                .WithDescription("Progress of the current or last run")
+                .HandleWith(_ => TextCommandResult.Success(GenerateStatusLine()))
+            .EndSubCommand();
+    }
+
+    string GenerateStatusLine() => generate != null
+        ? "[VintageHorizons] " + generate.Status
+        : "[VintageHorizons] No generation running. /vhgen start [radius] - default "
+          + $"{Config.GenerateDefaultRadiusChunks} chunks, max {Config.GenerateMaxRadiusChunks}.";
+
+    TextCommandResult OnGenerateStart(TextCommandCallingArgs args)
+    {
+        if (!Config.EnableCapture)
+        {
+            return TextCommandResult.Error(
+                "[VintageHorizons] Server LOD capture is switched off (EnableCapture in "
+                + $"ModConfig/{ConfigFile}), so there is nothing to generate into.");
+        }
+        if (!Config.GenerateEnabled)
+        {
+            return TextCommandResult.Error(
+                "[VintageHorizons] Generation is switched off on this server "
+                + $"(EnableGenerateCommand or GenerateMaxRadiusChunks in ModConfig/{ConfigFile}).");
+        }
+        if (!worldReady)
+        {
+            return TextCommandResult.Error("[VintageHorizons] The world is still starting; try again shortly.");
+        }
+        if (generate is { Done: false })
+        {
+            return TextCommandResult.Error(
+                $"[VintageHorizons] A run started by {generate.StartedBy} is already going: "
+                + generate.Status + ". Use /vhgen stop first.");
+        }
+
+        int radius = (int)args.Parsers[0].GetValue();
+        int argX = (int)args.Parsers[1].GetValue();
+        int argZ = (int)args.Parsers[2].GetValue();
+
+        // Centre precedence: explicit x z beats the caller's position beats spawn.
+        // World coordinates are never negative, so -1 means "not given". The console
+        // has no position, so spawn is its only honest fallback, and the reply says
+        // which centre was used.
+        var pos = args.Caller.Pos;
+        bool aimed = argX >= 0 && argZ >= 0;
+        bool fromSpawn = !aimed && pos == null;
+        double bx = aimed ? argX : pos?.X ?? sapi.World.DefaultSpawnPosition.X;
+        double bz = aimed ? argZ : pos?.Z ?? sapi.World.DefaultSpawnPosition.Z;
+        int cs = GlobalConstants.ChunkSize;
+        int centreCx = (int)bx / cs;
+        int centreCz = (int)bz / cs;
+        string startedBy = args.Caller.Player?.PlayerName ?? "the console";
+
+        generate = new LodPlayerPregen(sapi, Mod.Logger, OpenPipeline(),
+            centreCx, centreCz, radius, Config, startedBy);
+        generate.Start();
+
+        int columns = LodPlayerPregen.ColumnsFor(radius);
+        int seconds = LodPlayerPregen.EstimateSeconds(columns, Config.GenerateColumnsPerSecond);
+        string time = seconds >= 120 ? seconds / 60 + " minutes" : seconds + " seconds";
+        return TextCommandResult.Success(
+            $"[VintageHorizons] Generating LOD around {(fromSpawn ? "spawn " : "")}{(int)bx},{(int)bz} "
+            + $"out to {radius} chunks ({radius * cs} blocks): {columns} columns, roughly {time} if "
+            + "the server keeps up. Terrain nobody has visited is generated from the seed and "
+            + "thrown away - nothing is written to the savegame, and no chunk is loaded for any "
+            + "player. /vhgen status shows progress; /vhgen stop cancels.");
+    }
+
+    TextCommandResult OnGenerateStop(TextCommandCallingArgs args)
+    {
+        if (generate is not { Done: false })
+        {
+            return TextCommandResult.Success("[VintageHorizons] No generation is running.");
+        }
+        generate.Cancel();
+        return TextCommandResult.Success(
+            "[VintageHorizons] Generation stopping. Peeks already issued still get captured - "
+            + "that worldgen time is spent either way. The finish line in the server log "
+            + "reports what was done and verifies the savegame gained nothing.");
     }
 
     void OnChunkColumnLoaded(Vec2i chunkCoord, IWorldChunk[] chunks)
@@ -184,6 +333,11 @@ public class LodServerCaptureSystem : ModSystem
 
     public override void Dispose()
     {
+        // Before the pipeline closes, or a peek landing during shutdown would enqueue a
+        // capture into a closed pipeline. CaptureColumn also refuses once Active drops,
+        // as the second layer of the same guard.
+        generate?.Cancel();
+
         if (sapi != null)
         {
             sapi.Event.ChunkColumnLoaded -= OnChunkColumnLoaded;

@@ -192,6 +192,10 @@ VintageHorizons is **MIT**. DH (LGPL), Voxy (ARR) and Algernon's Terrain Sampler
 LICENSE shipped, so ARR) inform concepts only - no code is copied from any of them;
 `reference/` clones are gitignored and never redistributed. Farseer (MIT) code may be
 adapted with attribution (will be credited in README and source headers where used).
+TopoHorizon (MIT, (c) 2026 Jack Brown) gets the same rule as Farseer: adaptable with
+attribution. Section 14 uses its measured PeekChunkColumn constants, credited in
+`LodPlayerPregen`. ChunkLOD ships as a binary with no license: treat it as ARR, copy
+nothing.
 
 ## 10. Optional server assist (M7)
 
@@ -760,3 +764,102 @@ absolute. Running both sides in one process is still pointless for ordinary play
 server loads exactly the chunks the client is shown - but a sweep deliberately loads
 columns the client will never be shown, which is the one thing that side can do there that
 the client cannot do for itself.
+
+## 14. Chunk generation on request (/vhgen)
+
+The last gap against the server-side mods: everything above can only capture terrain
+that exists. `/vhgen start [radius] [x z]` closes it, on request. A person with the
+controlserver privilege (any singleplayer host, or an admin on a dedicated server)
+generates the LOD picture around themselves - or around explicit coordinates - without
+adding one byte to the savegame.
+
+Section 10.9 ruled worldgen-on-demand out because generation is the expensive half of
+what Farseer and ChunkLOD do. That reasoning still holds for anything automatic, which
+is why nothing here runs on its own. What changed is the discovery that the engine
+ships `PeekChunkColumn`: real worldgen from the seed, to a configurable pass, that
+neither reads nor writes the savegame ("it won't save it or load it into the loaded
+map region list"). Farseer and TopoHorizon both build on it.
+
+### The decision rule
+
+The sweep's probe already sorts every position with `TestMapChunkExists`. The sweep
+acts on the columns that exist; generation acts on the rest. One rule covers both,
+extracted to `LodColumnMap.Classify` so the fast tier can test it:
+
+  does not exist                      -> PEEK it (safe anywhere: touches nothing)
+  exists, 9x9 neighbourhood intact    -> LOAD it (the sweep's measured rule)
+  exists, on the frontier             -> touch nothing
+
+The asymmetry carries the two promises. A peek of a column that EXISTS would
+regenerate it from the seed and cache the terrain as it was before anyone built there,
+so an existing column is never peeked. A load of a frontier column would make the
+engine generate its missing neighbours, so the frontier is never loaded.
+
+### What a run does
+
+Probe the square (radius + 4 for edge information), then walk the same spiral acting
+on the rule, then verify. Peeked columns come back as `IServerChunk[]` with the rain
+height map populated (confirmed on this build - the spike measured heights 113-135,
+zero sentinel values, at the Terrain pass), and go through `LodPipeline.CaptureColumn`
+- the BlockAccessor cannot see a peeked column, so the ChunkColumnLoaded path does not
+apply. Loaded columns queue through `OnLoaded` rather than the ChunkColumnLoaded
+event, so generation works where nothing subscribes that event (singleplayer with
+sweeping off).
+
+Rate and memory are bounded twice: `GenerateColumnsPerSecond` (default 16) and
+`GenerateMaxInFlight` (default 64) plus the capture backlog gate. The in-flight cap is
+a memory ceiling, not only a contention control - each landed peek is a whole unpacked
+chunk column (1-2 MB) held until the capture thread drains it. TopoHorizon measured
+the contention side: unbounded peeking reached ~520 in flight and slowed every peek.
+
+Peeks run to the TERRAIN pass, as a constant. Terrain includes the block layers, so
+LOD colour is right; it excludes trees. The Vegetation pass would add them at 2-3x the
+cost, a neighbour-generation cascade, and two NullReferenceExceptions inside vanilla
+worldgen that TopoHorizon suppresses with a Harmony finalizer this mod does not ship.
+Generated terrain is therefore bare of trees, and real capture overwrites it the first
+time a player actually visits (InstallForeignBlob precedence, section 10.5, needs no
+new bookkeeping for this).
+
+A peek's callback sometimes never fires (TopoHorizon: raced ring chunks near the
+sent-radius edge). A 300s timeout sweep gives up on those, counts them, and never
+retries - a command-driven run must terminate. The same timeout is the only detector
+for a worldgen handler that throws inside the engine's own thread.
+
+### Verified
+
+On this build, over the console: a radius-12 run into terrain 225-of-289 existing
+loaded 49 columns, skipped 176 as frontier, peeked 400, built 212 sections, and left
+`mapchunk`/`chunk`/`mapregion` at exactly 225/1800/16 rows before and after. The
+matrix scenario `nondestructive` re-proves the strict form on every run: an all-peek
+run far from spawn must leave the three terrain tables byte-identical - row key sets
+and content hash, not counts.
+
+### The promise is measured at runtime, not assumed
+
+The matrix tier tests against vanilla worldgen on one machine. Every run therefore
+ends by re-probing up to 256 sampled positions that did not exist before it, and the
+finish line carries the result: "Verified 256/256 sampled absent positions still
+absent". A regrown position logs a warning naming worldgen mods as the likely cause.
+The sweep ends the same way, which also watches whether the measured SafeNeighbourhood
+of 4 holds under modded worldgen - nothing checked that before. Positions within a
+player's view radius are excluded from the sample: the engine generates terrain around
+players as normal play, and counting that against the promise would train admins to
+ignore the warning.
+
+### What the mod writes
+
+The full list, kept short deliberately:
+
+| Surface | When | Notes |
+|---|---|---|
+| `ModData/vintagehorizons/<world>.db` | continuously | the client LOD cache |
+| `ModData/vintagehorizons/<world>-server.db` | capture on | the server LOD cache |
+| `ModConfig/vintagehorizons.json` | on settings change | client settings |
+| `ModConfig/vintagehorizons-server.json` | on clean load only | never overwritten when it fails to parse |
+
+The savegame is reached only through engine APIs, never as a file. One honest caveat:
+a sweep or a generation run LOADS existing columns, and the game ticks a loaded column
+exactly as when a player walks past - snow settles, grass grows. That is vanilla
+simulation, not mod data, but the savegame's content can change because of it. This is
+why the sweep's scenario asserts row counts while only generation's all-peek scenario
+can assert byte equality.
