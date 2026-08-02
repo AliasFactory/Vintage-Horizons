@@ -5,6 +5,8 @@ Written when a version is released, not when a commit lands - see
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-02
+
 **Chunk generation on request** (`/vhgen start [radius] [x z]`). Generates the LOD
 picture around a player, or around given coordinates, for terrain nobody has visited -
 without writing anything to the savegame. Real worldgen runs transiently from the seed
