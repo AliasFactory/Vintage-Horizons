@@ -84,7 +84,8 @@ public class VintageHorizonsModSystem : ModSystem
             deferringTo = modid;
             Mod.Logger.Notification(
                 "'{0}' is loaded, so VintageHorizons is staying idle to avoid drawing over it "
-                + "and fighting it for the camera far plane. Remove '{0}' to use VintageHorizons instead.",
+                + "and setting the camera far plane against it. To use VintageHorizons "
+                + "instead, remove '{0}'.",
                 modid);
             RegisterCommands();
             return;
@@ -197,8 +198,9 @@ public class VintageHorizonsModSystem : ModSystem
         {
             loggedRemoteKeys = true;
             Mod.Logger.Notification(
-                "Server assist: {0} sections offered that this client has never captured; "
-                + "fetching them as the view needs them.", pipeline.RemoteOnly.Count);
+                "Server assist: the server offers {0} sections that this client never "
+                + "captured. The client fetches each one when the view needs it.",
+                pipeline.RemoteOnly.Count);
         }
     }
 
@@ -273,8 +275,9 @@ public class VintageHorizonsModSystem : ModSystem
         {
             loggedLocalOffers = true;
             Mod.Logger.Notification(
-                "Savegame sweep: {0} sections built from terrain generated in earlier "
-                + "sessions are available; adopting them as the view needs them.", offered.Length);
+                "Savegame sweep: {0} sections are available, built from terrain that earlier "
+                + "sessions generated. The client takes each one when the view needs it.",
+                offered.Length);
         }
     }
 
@@ -410,8 +413,9 @@ public class VintageHorizonsModSystem : ModSystem
         {
             loggedMissingTexture = true;
             Mod.Logger.Notification(
-                "Block '{0}' has no usable block-colour texture (vanilla resolved it to unknown.png); "
-                + "using another of its own textures instead so it does not render wrong at distance.",
+                "Block '{0}' has no usable block-colour texture, because vanilla resolved it "
+                + "to unknown.png. This mod uses another texture of that same block instead. "
+                + "Thus the block does not draw with a wrong colour at a distance.",
                 block.Code);
         }
         return found;
@@ -601,7 +605,7 @@ public class VintageHorizonsModSystem : ModSystem
     void RegisterCommands()
     {
         capi.ChatCommands.Create("vhinfo")
-            .WithDescription("VintageHorizons status")
+            .WithDescription("Show the status of VintageHorizons")
             .HandleWith(_ => deferringTo != null
                 ? TextCommandResult.Success(
                     $"[VintageHorizons] idle: '{deferringTo}' is also installed and is drawing the "
@@ -629,7 +633,7 @@ public class VintageHorizonsModSystem : ModSystem
         if (deferringTo != null) return;
 
         capi.ChatCommands.Create("vhwhy")
-            .WithDescription("Explain why nearby LOD terrain is drawn coarser than it should be")
+            .WithDescription("Give the reason why near LOD terrain is coarser than its wanted level")
             .HandleWith(_ =>
             {
                 var at = capi.World.Player.Entity.Pos;
@@ -638,7 +642,7 @@ public class VintageHorizonsModSystem : ModSystem
             });
 
         capi.ChatCommands.Create("vhfar")
-            .WithDescription("Cap VintageHorizons render distance in blocks (0 = unlimited)")
+            .WithDescription("Limit the render distance of VintageHorizons, in blocks. 0 is unlimited.")
             .WithArgs(capi.ChatCommands.Parsers.Int("blocks"))
             .HandleWith(args =>
             {
@@ -651,7 +655,7 @@ public class VintageHorizonsModSystem : ModSystem
             });
 
         capi.ChatCommands.Create("vhdetail")
-            .WithDescription("Distance in blocks before LOD detail starts halving (default 512; higher = sharper far terrain, more VRAM/CPU)")
+            .WithDescription("Distance in blocks before the LOD detail decreases. The default is 512. A larger value gives sharper far terrain, and it uses more VRAM and CPU.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalInt("blocks"))
             .HandleWith(args =>
             {

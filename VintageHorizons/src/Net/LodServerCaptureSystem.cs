@@ -96,8 +96,9 @@ public class LodServerCaptureSystem : ModSystem
         if (!Config.EnableCapture)
         {
             Mod.Logger.Notification(
-                "Server LOD capture disabled in {0}. Clients are unaffected and keep using "
-                + "their own captures, exactly as on a server without this mod.", ConfigFile);
+                "Server LOD capture disabled in {0}. This does not affect any client. Each "
+                + "client continues to use its own captures, exactly as on a server without "
+                + "this mod.", ConfigFile);
             return;
         }
 
@@ -123,10 +124,11 @@ public class LodServerCaptureSystem : ModSystem
         if (!api.Server.IsDedicated && !Config.SweepEnabled)
         {
             Mod.Logger.Notification(
-                "Singleplayer or LAN-hosted world with sweeping off: skipping server LOD "
-                + "capture. The client side already captures everything this process loads, "
-                + "and running both would duplicate the cache, the work and the memory for "
-                + "no gain. Set SweepSavegame to index terrain from earlier sessions.");
+                "This is a singleplayer world, or a world hosted on a LAN, and sweeping is "
+                + "off. Thus the server LOD capture does not start. The client side already "
+                + "captures each chunk that this process loads. Two sides would duplicate the "
+                + "cache, the work and the memory, for no gain. To index the terrain from "
+                + "earlier sessions, set SweepSavegame to true.");
             return;
         }
 

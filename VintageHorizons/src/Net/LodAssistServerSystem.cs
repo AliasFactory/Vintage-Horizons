@@ -39,7 +39,7 @@ public class LodAssistServerSystem : ModSystem
         api.Event.RegisterGameTickListener(_ => ServePending(), 1000);
 
         api.ChatCommands.Create("vhserver")
-            .WithDescription("VintageHorizons server assist status")
+            .WithDescription("Show the status of the VintageHorizons server assist")
             .RequiresPrivilege(Privilege.controlserver)
             .HandleWith(_ =>
             {
@@ -56,8 +56,8 @@ public class LodAssistServerSystem : ModSystem
             });
 
         Mod.Logger.Notification(
-            "VintageHorizons {0} server assist listening. Players without the mod are "
-            + "unaffected and do not need to install anything.",
+            "VintageHorizons {0} server assist listening. This does not affect a player "
+            + "without the mod. Such a player installs nothing.",
             Mod.Info.Version);
     }
 

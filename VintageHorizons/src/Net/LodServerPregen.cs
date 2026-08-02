@@ -51,9 +51,9 @@ public class LodServerPregen
     public void Start()
     {
         logger.Notification(
-            "Pre-generating {0} chunk columns ({1} block radius around spawn) to build the LOD "
-            + "cache. This generates terrain nobody has visited; set PregenRadiusChunks to 0 to "
-            + "disable. Progress is logged every 10%.",
+            "Pre-generating {0} chunk columns to build the LOD cache, in a radius of {1} "
+            + "blocks around spawn. This generates terrain that nobody visited. To stop it, "
+            + "set PregenRadiusChunks to 0. Progress follows every 10%.",
             Total, radiusChunks * GlobalConstants.ChunkSize);
 
         listenerId = sapi.Event.RegisterGameTickListener(_ => Step(), 1000);
@@ -87,8 +87,9 @@ public class LodServerPregen
         Done = true;
         sapi.Event.UnregisterGameTickListener(listenerId);
         logger.Notification(
-            "LOD pre-generation finished: {0} columns requested. Capture continues in the "
-            + "background; the cache is complete once no columns remain queued.", Total);
+            "LOD pre-generation finished: {0} columns requested. The capture continues in "
+            + "the background. The cache is complete when no column remains in the queue.",
+            Total);
     }
 
     /// <summary>

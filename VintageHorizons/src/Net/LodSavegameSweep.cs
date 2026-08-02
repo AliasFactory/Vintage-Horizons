@@ -102,11 +102,12 @@ public class LodSavegameSweep
         spawnCz = (int)sapi.World.DefaultSpawnPosition.Z / GlobalConstants.ChunkSize;
 
         logger.Notification(
-            "Sweeping the savegame for terrain that already exists, out to {0} blocks around "
-            + "spawn ({1} positions to examine). Nothing is generated: columns that were never "
-            + "visited are skipped, and so are columns on the edge of explored terrain, "
-            + "because loading those would make the engine generate their missing neighbours. "
-            + "Set SweepSavegame to false to disable. Progress every 10%.",
+            "Sweeping the savegame for terrain that exists already, out to {0} blocks around "
+            + "spawn. There are {1} positions to examine. This generates nothing. The sweep "
+            + "skips each position that nobody visited. It also skips a column at the edge of "
+            + "the explored terrain, because a load of that column would make the engine "
+            + "generate its absent neighbours. To stop the sweep, set SweepSavegame to false. "
+            + "Progress follows every 10%.",
             radiusChunks * GlobalConstants.ChunkSize, ProbeTotal);
 
         listenerId = sapi.Event.RegisterGameTickListener(_ => Step(), 1000);
@@ -158,8 +159,8 @@ public class LodSavegameSweep
         Probing = false;
         reported = 0;
         logger.Notification(
-            "Savegame sweep: {0} of {1} positions hold generated terrain. Loading those with a "
-            + "complete neighbourhood.", exists.Count, ProbeTotal);
+            "Savegame sweep: {0} of {1} positions hold generated terrain. The sweep now loads "
+            + "each of those that has a complete neighbourhood.", exists.Count, ProbeTotal);
     }
 
     void StepLoad()
@@ -203,9 +204,9 @@ public class LodSavegameSweep
         Done = true;
         sapi.Event.UnregisterGameTickListener(listenerId);
         logger.Notification(
-            "Savegame sweep finished: {0} columns loaded from terrain that already existed, "
-            + "{1} skipped on the frontier, nothing generated. Capture continues in the "
-            + "background; the cache is complete once no columns remain queued.",
+            "Savegame sweep finished: {0} columns loaded from terrain that existed already, "
+            + "{1} skipped on the frontier, nothing generated. The capture continues in the "
+            + "background. The cache is complete when no column remains in the queue.",
             Loaded, SkippedEdge);
     }
 
