@@ -3,10 +3,14 @@ using VintageHorizons.Net;
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// The server-side admin knobs. Sanitize is the boundary between a config file an admin
-/// typed and the values that reach the serve loop, and its ceilings come from measurement
-/// rather than taste - a served section costs about 0.9ms of main-thread blob read, so the
-/// total cap is what decides how much of a core an admin can hand over by editing a file.
+/// The settings for an admin on the server side.
+///
+/// Sanitize is the boundary between a config file that an admin wrote and the values that
+/// reach the serve loop. Its limits come from measurement, and not from opinion.
+///
+/// One section that the server gives costs approximately 0.9 ms of blob read on the main
+/// thread. Thus the total limit decides how much of one core an admin can give to this, with
+/// an edit of a file.
 /// </summary>
 public static class ConfigChecks
 {
@@ -21,21 +25,22 @@ public static class ConfigChecks
     {
         var config = new LodServerConfig();
 
-        // Installing the mod on a server IS the opt-in; a mod that silently does nothing
-        // until a file is edited reads as broken.
+        // The installation of the mod on a server IS the decision to opt in. A mod that does
+        // nothing until a person edits a file appears to be broken.
         c.True(config.EnableCapture, "capture is on by default");
         c.True(config.EnableServing, "serving is on by default");
 
-        // But the radius is deliberately bounded rather than unlimited: sections come from
-        // wherever players have collectively been, so an uncapped default would let a new
-        // player pull a survey of the whole explored world without travelling.
+        // But the radius has a limit on purpose, and it is not unlimited. Sections come from
+        // wherever the players went together. Thus a default with no limit lets a new player
+        // take a survey of the full explored world, with no travel.
         c.Eq(8192, config.ServeRadiusBlocks, "the default radius is bounded, not unlimited");
 
-        // Generating terrain nobody has visited is opt-in.
+        // An admin must ask for the generation of terrain that nobody visited.
         c.Eq(0, config.PregenRadiusChunks, "pre-generation is off by default");
 
-        // Sweeping is not, and the asymmetry is the point: it loads terrain that already
-        // exists, so it costs no worldgen and reveals nowhere a player has not been.
+        // A sweep is on by default, and that difference is the point. A sweep loads terrain
+        // that exists already. Thus it costs no worldgen time, and it reveals no place where
+        // a player did not go.
         c.True(config.SweepSavegame, "savegame sweeping is on by default");
         c.True(config.SweepRadiusChunks > 0, "the default sweep radius actually sweeps something");
         c.True(config.SweepEnabled, "the defaults leave sweeping enabled");
@@ -58,15 +63,16 @@ public static class ConfigChecks
 
     static void Clamps(Check c)
     {
-        // The measured ceilings. 128/s is roughly 115ms per second of blob reads, about 11%
-        // of a core. An earlier 1024 would have been ~920ms per second: a server wedged by
-        // its own config file.
+        // The limits from the measurement. 128 each second is approximately 115 ms each
+        // second of blob reads, which is approximately 11% of one core. An earlier value of
+        // 1024 is approximately 920 ms each second, which stops the server through its own
+        // config file.
         c.Eq(128, Sanitized(cfg => cfg.MaxSectionsPerSecondTotal = 100000).MaxSectionsPerSecondTotal,
             "the total rate is capped at the measured ceiling");
         c.Eq(64, Sanitized(cfg => cfg.MaxSectionsPerSecondPerPlayer = 100000).MaxSectionsPerSecondPerPlayer,
             "the per-player rate is capped");
 
-        // Zero would stall the serve loop outright rather than slow it.
+        // Zero stops the serve loop fully. It does not make the loop slower.
         c.Eq(1, Sanitized(cfg => cfg.MaxSectionsPerSecondTotal = 0).MaxSectionsPerSecondTotal,
             "a zero total rate becomes one, not a stall");
         c.Eq(1, Sanitized(cfg => cfg.MaxSectionsPerSecondPerPlayer = -5).MaxSectionsPerSecondPerPlayer,
@@ -81,9 +87,10 @@ public static class ConfigChecks
         c.Eq(1, Sanitized(cfg => cfg.PregenColumnsPerSecond = 0).PregenColumnsPerSecond,
             "a zero pre-generation rate becomes one");
 
-        // A wider sweep ceiling than pregen's, because the cost tracks terrain that exists
-        // rather than the radius: examining a position that was never generated is an index
-        // lookup, so a large radius over a small world is nearly free.
+        // The sweep limit is wider than the pre-generation limit. The cost follows the
+        // terrain that exists, and not the radius. An examination of a position that nothing
+        // generated is an index lookup. Thus a large radius over a small world is almost
+        // free.
         c.Eq(512, Sanitized(cfg => cfg.SweepRadiusChunks = 99999).SweepRadiusChunks,
             "sweep radius is capped at 512 chunks");
         c.Eq(0, Sanitized(cfg => cfg.SweepRadiusChunks = -1).SweepRadiusChunks,

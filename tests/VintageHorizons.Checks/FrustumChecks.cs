@@ -3,15 +3,15 @@ using Vintagestory.API.MathTools;
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// View-frustum plane extraction and the p-vertex box test.
+/// The extraction of the view-frustum planes, and the p-vertex box test.
 ///
-/// docs/STATUS.md has claimed since the performance pass that this has a standalone
-/// harness. It did not - nothing matching it exists in the tree or anywhere in the history.
-/// This is that harness, written for real.
+/// From the performance work, docs/STATUS.md said that this code had its own harness. It did
+/// not. Nothing that matches that claim is in the tree, or anywhere in the history. This file
+/// is that harness.
 ///
-/// Matrices are built with the game's own Mat4f rather than by hand, which is what keeps
-/// the extraction's column-major assumption honest: an assumption tested against a matrix
-/// laid out to match it will pass no matter which convention the game actually uses.
+/// The matrices come from Mat4f of the game, and not from code here. That keeps the
+/// column-major assumption of the extraction honest. A test against a matrix that this file
+/// arranged to match the assumption passes, whatever convention the game uses.
 /// </summary>
 public static class FrustumChecks
 {
@@ -26,7 +26,8 @@ public static class FrustumChecks
         Conservative(c, frustum);
     }
 
-    /// <summary>Looking down -Z, the OpenGL convention, from a camera at the origin.</summary>
+    /// <summary>The view goes along -Z, which is the OpenGL convention, from a camera at the
+    /// origin.</summary>
     static float[] View() =>
         Mat4f.LookAt(Mat4f.Create(),
             eye: new[] { 0f, 0f, 0f },
@@ -43,8 +44,8 @@ public static class FrustumChecks
         c.True(Box(f, 0, 0, -10, 2), "a box close ahead is visible");
         c.True(Box(f, 0, 0, -900, 20), "a box near the far plane is visible");
 
-        // Off-axis but inside the cone: at 100 blocks out a ~60 degree vertical fov and
-        // 16:9 leaves plenty of room sideways.
+        // This point is off the axis, but inside the cone. At 100 blocks, a vertical field
+        // of view of approximately 60 degrees, at 16:9, leaves much space to the sides.
         c.True(Box(f, 30, 0, -100, 5), "a box off to the right but inside the cone is visible");
         c.True(Box(f, -30, 0, -100, 5), "a box off to the left but inside the cone is visible");
         c.True(Box(f, 0, 20, -100, 5), "a box above centre but inside the cone is visible");
@@ -52,8 +53,8 @@ public static class FrustumChecks
 
     static void Rejects(Check c, LodFrustum f)
     {
-        // Behind the camera is the case that matters most: without it, every section
-        // behind the player is drawn, which is roughly half of them.
+        // The case behind the camera is the most important one. Without it, the mod draws
+        // each section behind the player, which is approximately half of them.
         c.False(Box(f, 0, 0, 100, 10), "a box behind the camera is rejected");
         c.False(Box(f, 0, 0, 500, 50), "a box far behind the camera is rejected");
 
@@ -65,27 +66,29 @@ public static class FrustumChecks
 
     static void NearAndFar(Check c, LodFrustum f)
     {
-        // Beyond the far plane. This is the one that ties culling to our extended ZFar:
-        // if the projection's far distance and the LOD render distance disagree, terrain
-        // is either culled while still drawn or drawn while invisible.
+        // This point is past the far plane. This case connects the culling to the extended
+        // ZFar of this mod. If the far distance of the projection and the LOD render distance
+        // disagree, the mod culls terrain that it still draws, or it draws terrain that
+        // nobody can see.
         c.False(Box(f, 0, 0, -5000, 10), "a box beyond the far plane is rejected");
         c.True(Box(f, 0, 0, -5000, 4500), "a box straddling the far plane is kept");
     }
 
     /// <summary>
-    /// The p-vertex test rejects only boxes fully outside a plane. Erring toward keeping
-    /// a box is correct - a false accept costs one draw call, a false reject punches a
-    /// hole in the terrain.
+    /// The p-vertex test rejects a box only when that box is fully outside a plane. An error
+    /// toward keeping a box is the correct direction. A wrong accept costs one draw call. A
+    /// wrong reject makes a hole in the terrain.
     /// </summary>
     static void Conservative(Check c, LodFrustum f)
     {
         c.True(Box(f, 0, 0, 0, 50), "a box containing the camera is kept");
 
-        // A section-sized box straddling the left edge must be kept, not rejected.
+        // A box the size of a section, across the left edge, must stay. The mod must not
+        // reject it.
         c.True(Box(f, -100, 0, -100, 64), "a box straddling the frustum edge is kept");
 
-        // Sweeping across the boundary, acceptance must be contiguous: no visible box may
-        // sit between two rejected ones, which is what a sign error in one plane produces.
+        // Across the boundary, the accepted boxes must be next to each other. No visible box
+        // can be between two rejected boxes. A sign error in one plane gives that result.
         bool seenVisible = false, seenGapAfter = false;
         for (int x = -400; x <= 400; x += 10)
         {
@@ -98,7 +101,8 @@ public static class FrustumChecks
         c.True(seenGapAfter, "the sweep leaves the frustum at its edge");
     }
 
-    /// <summary>An axis-aligned cube of the given half-extent, centred on the point.</summary>
+    /// <summary>A cube that lines up with the axes, with the given half extent, and with its
+    /// center at the point.</summary>
     static bool Box(LodFrustum f, double x, double y, double z, double half) =>
         f.BoxInView(x - half, y - half, z - half, x + half, y + half, z + half);
 }

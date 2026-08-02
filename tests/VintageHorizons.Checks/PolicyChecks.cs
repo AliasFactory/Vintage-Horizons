@@ -3,9 +3,11 @@ using Vintagestory.API.Common;
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// How a block is classified for LOD. Shared by both sides deliberately: a section
-/// captured by a server and one captured by a client must agree about what counts as
-/// terrain, or the same ground looks different depending on who saw it first.
+/// How the mod classifies a block for the LOD.
+///
+/// Both sides use this code, on purpose. A section that a server captured and a section that
+/// a client captured must agree about what is terrain. Without that, the same ground looks
+/// different, and the result depends on which side saw it first.
 /// </summary>
 public static class PolicyChecks
 {
@@ -23,7 +25,7 @@ public static class PolicyChecks
         c.Eq(LodPaletteEntry.FlagWater, Flags(EnumBlockMaterial.Lava, "lava-still-7"), "lava uses the water path");
         c.Eq(LodPaletteEntry.FlagWater, Flags(EnumBlockMaterial.Ice, "lakeice"), "ice uses the water path");
 
-        // Not terrain at all, so it never becomes geometry.
+        // This block is not terrain, thus it never becomes geometry.
         c.Eq(LodPaletteEntry.FlagSkip, Flags(EnumBlockMaterial.Fire, "fire"), "fire is skipped");
         c.Eq(LodPaletteEntry.FlagSkip, Flags(EnumBlockMaterial.Meta, "meta-invisible"), "meta blocks are skipped");
 
@@ -33,10 +35,11 @@ public static class PolicyChecks
     }
 
     /// <summary>
-    /// Sparse ground cover renders as a pale grey blob when drawn as a solid cube, because
-    /// its texture averages toward its transparent pixels. Not all plants qualify: skipping
-    /// every plant was tried and flattened the landscape, and dense cover like grass reads
-    /// fine as solid colour.
+    /// Sparse ground cover, as a solid cube, looks like a pale grey shape. The average of
+    /// its texture moves toward its transparent pixels.
+    ///
+    /// Not each plant is in this class. A test skipped each plant, and that made the
+    /// landscape flat. Dense cover such as grass looks correct as a solid color.
     /// </summary>
     static void GroundCover(Check c)
     {
@@ -49,9 +52,11 @@ public static class PolicyChecks
     }
 
     /// <summary>
-    /// "fern" is a prefix of "ferntree", and a ferntree is an actual tree. The material
-    /// guard is the only thing that stops the prefix match from turning every ferntree
-    /// trunk into a quarter-block mat - the prefix list alone would classify it as cover.
+    /// "fern" is a prefix of "ferntree", and a ferntree is a real tree.
+    ///
+    /// The guard on the material is the only thing that stops the prefix match from turning
+    /// each ferntree trunk into a mat of a quarter block. The prefix list alone classifies it
+    /// as ground cover.
     /// </summary>
     static void FernTree(Check c)
     {

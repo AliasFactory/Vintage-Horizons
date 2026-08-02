@@ -1,12 +1,13 @@
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// The on-disk blob format, round-tripped with no database.
+/// The blob format on the disk, written and read again, with no database.
 ///
-/// LodStore extends the game's SQLite base class, but Serialize is static and the base
-/// constructor only stores its logger - so the format can be exercised without opening a
-/// file, and DeserializeForeign explicitly accepts a null world to defer block-id lookup
-/// to the main thread. That same door is what the network path uses for foreign sections.
+/// LodStore extends the SQLite base class of the game. But Serialize is static, and the base
+/// constructor only stores its logger. Thus a check can exercise the format without a file.
+///
+/// DeserializeForeign accepts a null world, and then the main thread finds the block ids
+/// later. The network path uses that same entry for a section from a server.
 /// </summary>
 public static class StoreChecks
 {
@@ -43,20 +44,23 @@ public static class StoreChecks
             c.Eq(section.Palette[i].Flags, back.Palette[i].Flags, $"palette[{i}] flags survive");
         }
 
-        // The last column is the one an off-by-one in the 4096 run counts or the 512-byte
-        // captured bitmask would lose, and losing it is invisible until terrain has a seam.
+        // An error of one, in the 4096 run counts or in the captured bitmask of 512 bytes,
+        // loses the last column. Nobody sees that loss until the terrain shows a seam.
         c.True(back.Captured[Fixtures.Total - 1], "the final column survives the bitmask");
         c.SeqEq(section.ColumnRuns(Fixtures.Total - 1).ToArray(),
             back.ColumnRuns(Fixtures.Total - 1).ToArray(), "the final column's runs survive");
     }
 
     /// <summary>
-    /// Two fields deliberately do NOT round-trip, and asserting full equality would lock in
-    /// the wrong thing:
-    ///   - TintSlot is never written, so an existing cache picks up corrected per-species
-    ///     tints without re-capturing, and stays right when a game update remaps them.
-    ///   - BlockId cannot be resolved off the main thread, so a null world defers the codes
-    ///     into PendingPaletteCodes for the main thread to resolve on install.
+    /// Two fields deliberately do NOT survive the round trip. A test of full equality makes
+    /// the wrong behaviour permanent.
+    ///
+    ///   - The mod never writes TintSlot. Thus a cache that exists already gets the corrected
+    ///     tint for each species, with no new capture. It also stays correct when a game
+    ///     update changes the maps.
+    ///   - The mod cannot find a BlockId on a thread other than the main thread. Thus a null
+    ///     world puts the codes into PendingPaletteCodes, and the main thread finds the ids at
+    ///     install.
     /// </summary>
     static void DeferredPalette(Check c)
     {
@@ -76,9 +80,11 @@ public static class StoreChecks
     }
 
     /// <summary>
-    /// Bad input must come back null, never throw. The storage thread deserializes rows off
-    /// the main thread and the network path deserializes whatever a server sent; an
-    /// exception on either takes down more than the one bad section.
+    /// Bad input must return null. It must never throw.
+    ///
+    /// The storage thread deserializes rows away from the main thread. The network path
+    /// deserializes what a server sent. An exception on either one stops more than the one
+    /// bad section.
     /// </summary>
     static void Rejection(Check c)
     {
@@ -94,8 +100,8 @@ public static class StoreChecks
         wrongVersion[0] = 99;
         c.Eq(null, store.DeserializeForeign(wrongVersion, null), "a blob from a future format returns null");
 
-        // Truncation is the realistic corruption: a partial write, or a section cut short
-        // in transit.
+        // A cut is the realistic damage. It comes from a partial write, or from a section
+        // that the network cut short.
         byte[] truncated = good[..(good.Length / 2)];
         c.NoThrow(() => store.DeserializeForeign(truncated, null), "a truncated blob does not throw");
         c.Eq(null, store.DeserializeForeign(truncated, null), "a truncated blob returns null");

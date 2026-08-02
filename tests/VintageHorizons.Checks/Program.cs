@@ -3,10 +3,11 @@ using System.Diagnostics;
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// The fast tier of scripts/check.sh: everything that can be proven without a game process.
-/// Runs sequentially and in-process, which is not a limitation to work around - LodWorld
-/// carries mutable static state (DetailDistance) that several checks set, so sequential is
-/// the only correct order anyway.
+/// The fast tier of scripts/check.sh. It holds each check that needs no game process.
+///
+/// The suites run one after the other, in this process. That is not a limitation to remove.
+/// LodWorld holds mutable static state, which is DetailDistance, and more than one check sets
+/// it. Thus one suite at a time is the only correct order.
 /// </summary>
 public static class Program
 {
@@ -28,10 +29,11 @@ public static class Program
 
     public static int Main(string[] args)
     {
-        // Only a bare word filters; anything dash-prefixed is a host flag that leaked
-        // through `dotnet run` rather than something a caller meant for us. Treating one
-        // as a suite filter silently runs nothing and still exits zero, which is the
-        // worst possible failure mode for a check runner.
+        // A word with no dash is a filter. A word that starts with a dash is a flag of the
+        // host, which came through `dotnet run`. A caller did not mean it for this program.
+        //
+        // A flag that this program uses as a suite filter runs nothing, and it still exits
+        // with 0. That is the worst possible failure for a program that runs checks.
         string? only = args.FirstOrDefault(a => !a.StartsWith('-'));
 
         Console.WriteLine();
@@ -60,8 +62,9 @@ public static class Program
             }
             catch (Exception e)
             {
-                // A suite that throws is itself a failure, not a reason to abandon the run:
-                // one unloadable game type must not hide every check that needs no game type.
+                // A suite that throws is a failure. It is not a reason to stop the run. One
+                // game type that the runtime cannot load must not hide each check that needs
+                // no game type.
                 crash = e.ToString();
             }
             watch.Stop();
@@ -87,8 +90,8 @@ public static class Program
 
         Console.WriteLine();
 
-        // A filter that matched nothing must not look like success. Exiting zero on an
-        // empty run is how a check suite quietly stops checking.
+        // A filter that matched nothing must not appear to be a success. An exit with 0
+        // after an empty run is how a check suite stops checking, with no message.
         if (ran == 0)
         {
             Console.WriteLine($"  no suite matched '{only}' - nothing ran");

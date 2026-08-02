@@ -1,17 +1,19 @@
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// Builders for the plain data the LOD types operate on. Everything here is constructible
-/// without a world, a chunk or an API - that property is what makes the fast tier possible,
-/// so these helpers deliberately never reach for a game object.
+/// The builders for the plain data that the LOD types use.
+///
+/// A caller can construct each item here without a world, a chunk or an API. That property is
+/// what makes the fast tier possible. Thus these helpers never use a game object.
 /// </summary>
 public static class Fixtures
 {
     public const int Total = LodSection.GridSize * LodSection.GridSize;
 
     /// <summary>
-    /// A section with one palette entry per supplied colour and the given columns filled.
-    /// Column runs reference palette ids, exactly as a captured section's do after remap.
+    /// A section with one palette entry for each color that the caller gives, and with the
+    /// given columns filled. A run in a column points at a palette id, exactly as a run in a
+    /// captured section does after the remap.
     /// </summary>
     public static LodSection Section(params (int Col, ulong[] Runs)[] columns)
     {
@@ -20,7 +22,8 @@ public static class Fixtures
         return s;
     }
 
-    /// <summary>A section whose every column carries one full-height run of palette id 0.</summary>
+    /// <summary>A section in which each column holds one run of palette id 0, at the full
+    /// height.</summary>
     public static LodSection SolidSection(int paletteId = 0, int yTop = 8, int yBottom = 0)
     {
         var s = new LodSection();
@@ -31,8 +34,9 @@ public static class Fixtures
     }
 
     /// <summary>
-    /// The snapshot LodSaveSnapshot.Of would build, minus the world lookup that turns
-    /// palette BlockIds into codes. Codes are supplied directly so no registry is needed.
+    /// The snapshot that LodSaveSnapshot.Of builds, without the world lookup that turns a
+    /// palette BlockId into a code. The caller gives the codes directly, thus this needs no
+    /// registry.
     /// </summary>
     public static LodSaveSnapshot Snapshot(LodSection section, int level = 0, int sx = 0, int sz = 0,
         bool applyToParent = false, string[]? codes = null)
@@ -61,7 +65,8 @@ public static class Fixtures
         };
     }
 
-    /// <summary>Snapshot for meshing. Palette arrays are per-entry, matching SectionSnapshot.Of.</summary>
+    /// <summary>A snapshot for the meshing. There is one palette array for each entry, which
+    /// matches SectionSnapshot.Of.</summary>
     public static SectionSnapshot Snap(LodSection s)
     {
         var colors = new int[s.Palette.Count];

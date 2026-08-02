@@ -1,13 +1,15 @@
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// Assertion tally for one suite. Deliberately tiny: this repo has no NuGet dependencies
-/// at all and no test framework in the local package cache, so a framework would turn the
-/// fast tier into something that needs a network before it can tell you anything.
+/// The count of the assertions for one suite.
 ///
-/// Assertions never throw. A suite that fails its third assertion should still report the
-/// fourth - when a shared invariant breaks, the shape of the whole failure set is what
-/// points at the cause, and stopping at the first one hides it.
+/// This class is very small on purpose. This repository has no NuGet dependency at all, and
+/// the local package cache holds no test framework. Thus a framework makes the fast tier need
+/// a network before it can report anything.
+///
+/// An assertion never throws. A suite whose third assertion fails must still report the
+/// fourth one. When a shared rule breaks, the shape of the full set of failures points at the
+/// cause. A stop at the first failure hides that shape.
 /// </summary>
 public sealed class Check
 {
@@ -60,9 +62,11 @@ public sealed class Check
     }
 
     /// <summary>
-    /// Asserts the call does not throw. Used where the contract is "returns null on bad
-    /// input" rather than "throws": a deserializer that throws instead of returning null
-    /// takes down the storage thread, so the distinction is the point.
+    /// Asserts that the call does not throw.
+    ///
+    /// Use this where the contract is "return null for bad input", and not "throw". A
+    /// deserializer that throws, instead of a return of null, stops the storage thread. That
+    /// difference is the reason for this method.
     /// </summary>
     public void NoThrow(Action action, string what)
     {

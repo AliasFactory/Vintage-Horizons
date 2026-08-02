@@ -7,16 +7,17 @@ using Vintagestory.API.Config;
 namespace VintageHorizonsBench;
 
 /// <summary>
-/// Drives a fixed route and records what each LOD mod does with it.
+/// Drives a fixed route, and records what each LOD mod does with it.
 ///
-/// The point is like-for-like comparison: the same world, the same waypoints, the same
-/// camera angles, the same time of day and weather, with only the mod under test
-/// changed. Anything that varies run to run makes the numbers and the screenshots
-/// incomparable, so this harness pins all of it.
+/// The purpose is a comparison of equals. The world, the waypoints, the camera angles, the
+/// time of day and the weather all stay the same. Only the mod under test changes.
 ///
-/// It deliberately does NOT judge image quality. It produces frame-time statistics for
-/// the numbers, and one screenshot per waypoint per mod for a human to compare
-/// side by side.
+/// Anything that changes between runs makes the numbers and the screenshots impossible to
+/// compare. Thus this harness fixes all of it.
+///
+/// This harness deliberately does NOT judge the quality of an image. It gives frame-time
+/// statistics for the numbers, and one screenshot for each waypoint and each mod. A person
+/// compares those images side by side.
 ///
 /// Enabled only when VHBENCH_ROUTE is set:
 ///   VHBENCH_ROUTE   path to a route file (see routes/*.txt)
@@ -91,8 +92,8 @@ public class BenchModSystem : ModSystem, IRenderer
 
     void OnLevelFinalize()
     {
-        // Fix everything that would otherwise differ between runs. Creative first so
-        // the teleports are permitted at all.
+        // Fix each item that is different between runs without this code. Set creative mode
+        // first, or the game does not permit the teleports at all.
         capi.SendChatMessage("/gamemode creative");
         capi.Event.RegisterCallback(_ => capi.SendChatMessage("/time set 12:00"), 1500);
         capi.Event.RegisterCallback(_ => capi.SendChatMessage("/weather setprecip 0"), 2500);
@@ -122,10 +123,11 @@ public class BenchModSystem : ModSystem, IRenderer
     }
 
     /// <summary>
-    /// Dismiss any open dialog. An unattended run has no window focus, so the client
-    /// puts up its "Game is still running" menu and sits there - the first benchmark
-    /// measured frame times with that overlay covering the view, which is not the
-    /// gameplay it was supposed to measure.
+    /// Close each open dialog.
+    ///
+    /// An unattended run has no window focus. Thus the client shows its "Game is still
+    /// running" menu and waits. The first benchmark measured the frame times with that menu
+    /// above the view. That is not the gameplay that it must measure.
     /// </summary>
     void CloseBlockingDialogs()
     {
@@ -138,7 +140,8 @@ public class BenchModSystem : ModSystem, IRenderer
         }
     }
 
-    /// <summary>Camera is re-pinned every frame: mouse input and physics both fight it.</summary>
+    /// <summary>This code sets the camera again in each frame, because the mouse input and
+    /// the physics both move it.</summary>
     void PinCamera(BenchWaypoint wp)
     {
         IClientPlayer player = capi.World.Player;
@@ -165,8 +168,9 @@ public class BenchModSystem : ModSystem, IRenderer
 
         if (phase == Phase.Settling)
         {
-            // Give the mod under test time to stream, build and upload its terrain, so
-            // the measurement reflects steady state rather than the load burst.
+            // Give the mod under test the time to stream, build and upload its terrain.
+            // Thus the measurement gives the stable state, and not the load at the
+            // start.
             if (elapsed >= settleSec)
             {
                 frameMs.Clear();
@@ -197,8 +201,8 @@ public class BenchModSystem : ModSystem, IRenderer
         foreach (double ms in frameMs) total += ms;
         double mean = total / frameMs.Count;
 
-        // "1% low FPS" the way benchmarks usually mean it: the mean of the worst 1% of
-        // frames, which is what stutter actually feels like.
+        // This is "1% low FPS" with the usual meaning of a benchmark. It is the mean of the
+        // worst 1% of the frames. That value is what a player feels as a stutter.
         int worstCount = Math.Max(1, sorted.Count / 100);
         double worstTotal = 0;
         for (int i = sorted.Count - worstCount; i < sorted.Count; i++) worstTotal += sorted[i];
@@ -235,8 +239,9 @@ public class BenchModSystem : ModSystem, IRenderer
     {
         try
         {
-            // Full framebuffer resolution: these are for a human to compare, and
-            // downscaling would hide exactly the detail differences under test.
+            // Use the full resolution of the framebuffer. A person compares these images,
+            // and a smaller image hides exactly the differences in detail that the test
+            // examines.
             using BitmapRef bmp = capi.Render.GrabScreenshot(
                 capi.Render.FrameWidth, capi.Render.FrameHeight, false, true);
             bmp.Save(Path.Combine(outDir, $"{Sanitize(label)}--{Sanitize(wp.Name)}.png"));
@@ -264,14 +269,15 @@ public class BenchModSystem : ModSystem, IRenderer
         foreach (string row in csvRows) sb.AppendLine(row);
         File.WriteAllText(csvPath, sb.ToString());
 
-        // The orchestration script watches for this file, then stops the client through
-        // its pidfile. Writing a marker beats having the mod try to close the game.
+        // The script that drives the run watches for this file. Then it stops the client
+        // through the pidfile. A marker file is better than an attempt by the mod to close
+        // the game.
         File.WriteAllText(Path.Combine(outDir, $"{Sanitize(label)}.done"), csvPath + "\n");
 
         Mod.Logger.Notification("Bench '{0}' complete: {1} waypoints written to {2}", label, csvRows.Count, csvPath);
     }
 
-    // Satisfies both ModSystem.Dispose and the IDisposable that IRenderer requires;
-    // there is nothing of our own to release.
+    // This method satisfies ModSystem.Dispose, and the IDisposable that IRenderer needs.
+    // This class holds nothing of its own to release.
     public override void Dispose() { }
 }

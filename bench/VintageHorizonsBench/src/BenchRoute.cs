@@ -13,14 +13,17 @@ public class BenchWaypoint
 }
 
 /// <summary>
-/// A route is a plain text file so it can be written by hand or by a script, and so a
-/// diff shows exactly what changed between benchmark runs:
+/// A route is a plain text file. Thus a person or a script can write it, and a diff gives
+/// exactly what changed between two benchmark runs.
 ///
 ///   # name           x       y     z       yawDeg  pitchDeg
 ///   ridge-north      512400  180   512400  0       -10
 ///
-/// Yaw/pitch are degrees for legibility and converted to the engine's radians here.
-/// Yaw 0 faces north, increasing counter-clockwise; pitch is negative looking down.
+/// The yaw and the pitch are in degrees, because a person reads them. This code converts them
+/// to the radians that the engine uses.
+///
+/// A yaw of 0 faces north, and the value increases counter-clockwise. A negative pitch looks
+/// down.
 /// </summary>
 public class BenchRoute
 {

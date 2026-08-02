@@ -3,14 +3,16 @@ using Vintagestory.API.Common;
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// An ILogger that records what it was told, so a check can assert on the message a player
-/// or admin would actually see.
+/// An ILogger that records each message that it receives. Thus a check can test the message
+/// that a player or an admin sees.
 ///
-/// Implements the interface directly rather than extending LoggerBase, deliberately:
-/// LoggerBase's static constructor throws on purpose and then reads a filename out of the
-/// stack trace to find the source root. Without a PDB beside the DLL that filename is null,
-/// so the NRE happens inside the catch and escapes as a TypeInitializationException - a
-/// confusing failure a long way from its cause.
+/// This class implements the interface directly, and it does not extend LoggerBase. That is
+/// deliberate.
+///
+/// The static constructor of LoggerBase throws on purpose. Then it reads a filename from the
+/// stack trace, to find the root of the source. Without a PDB beside the DLL, that filename
+/// is null. Thus a NullReferenceException occurs inside the catch, and it leaves as a
+/// TypeInitializationException. That failure is confusing, and it is far from its cause.
 /// </summary>
 public sealed class CaptureLogger : ILogger
 {
@@ -26,8 +28,8 @@ public sealed class CaptureLogger : ILogger
 
     public bool TraceLog { get; set; }
 
-    // Required by the interface; nothing here subscribes. The explicit add/remove keeps the
-    // compiler from warning about a field-like event that is never raised.
+    // The interface needs this event. Nothing here subscribes to it. The explicit add and
+    // remove stop a compiler warning about an event that nothing raises.
     public event LogEntryDelegate EntryAdded { add { } remove { } }
 
     public void ClearWatchers() { }

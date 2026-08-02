@@ -3,8 +3,9 @@ using System.Text.RegularExpressions;
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// Invariants that live across file boundaries, where no compiler or runtime check can
-/// reach. Everything here reads committed files off disk and touches no game type at all.
+/// The rules that apply across more than one file, where no compiler and no runtime check
+/// can reach. Each check here reads a committed file from the disk, and it touches no game
+/// type.
 /// </summary>
 public static class StaticAssetChecks
 {
@@ -17,13 +18,15 @@ public static class StaticAssetChecks
     }
 
     /// <summary>
-    /// Shader source must be pure ASCII. OpenTK passes managed strings to GL by handing
-    /// over a char count where the driver reads utf8 bytes, so a single non-ASCII
-    /// character silently truncates the source by (utf8 bytes - chars) characters. The
-    /// tail of the shader just disappears; there is no error, only wrong output.
+    /// The source of a shader must hold ASCII characters only.
     ///
-    /// Scans the whole asset tree rather than a list of known shaders, so a file added
-    /// later is covered without anyone remembering to add it here.
+    /// OpenTK gives a managed string to GL with a character count, and the driver reads UTF-8
+    /// bytes. Thus one character that is not ASCII cuts the source by (UTF-8 bytes minus
+    /// characters) characters. The end of the shader is gone. There is no error, and the
+    /// output is wrong.
+    ///
+    /// This check scans the full asset tree, and not a list of known shaders. Thus it covers
+    /// a file that someone adds later, and nobody must remember to add it here.
     /// </summary>
     static void AsciiOnly(Check c)
     {
@@ -35,7 +38,7 @@ public static class StaticAssetChecks
 
         foreach (string path in Directory.EnumerateFiles(assets, "*", SearchOption.AllDirectories))
         {
-            // Binary assets are exempt: a PNG is full of high bytes by definition.
+            // This check skips a binary asset. A PNG holds high bytes by definition.
             if (Path.GetExtension(path) is ".png" or ".jpg" or ".ogg" or ".wav") continue;
 
             scanned++;
@@ -55,17 +58,17 @@ public static class StaticAssetChecks
     }
 
     /// <summary>
-    /// The shaders carry their own `const int TINT_SLOTS` because this game version offers
-    /// no way to inject a #define, and a mismatch decodes water as opaque and thin plants
-    /// as water with no compile error.
+    /// Each shader carries its own `const int TINT_SLOTS`, because this version of the game
+    /// cannot inject a #define. A difference decodes water as opaque, and thin plants as
+    /// water, with no compile error.
     ///
-    /// This used to be guarded at shader load by comparing MaxSlots against a second C#
-    /// constant that mirrored the shader's value by hand - two constants in the same file,
-    /// which cannot detect a shader being edited at all. The compiler said as much: that
-    /// branch raised CS0162, unreachable code. Both the mirror and the dead guard are gone.
+    /// A guard at shader load compared MaxSlots against a second C# constant. A person
+    /// maintained that constant as a copy of the shader value. That is two constants in one
+    /// file, and it cannot find an edit to a shader at all. The compiler said the same, and
+    /// the branch raised CS0162, unreachable code. The copy and the dead guard are both gone.
     ///
-    /// Reading the shader files is the only check that can actually close it, and it also
-    /// catches the .vsh and .fsh disagreeing with each other, which nothing did before.
+    /// A read of the shader files is the only check that closes this hole. It also finds a
+    /// disagreement between the .vsh and the .fsh, which nothing did before.
     /// </summary>
     static void TintSlotAgreement(Check c)
     {
@@ -91,11 +94,12 @@ public static class StaticAssetChecks
     }
 
     /// <summary>
-    /// LodMesher packs the tint slot into a vertex alpha byte in three bands: opaque at
-    /// slot, water at MaxSlots + slot, thin at MaxSlots * 2 + slot. Alpha is a byte, so the
-    /// largest encodable value is MaxSlots * 3 - 1. Raise MaxSlots past 85 and the thin band
-    /// wraps into the opaque band with no error anywhere - thin plants would render as solid
-    /// terrain of an arbitrary tint.
+    /// LodMesher packs the tint slot into the alpha byte of a vertex, in three bands. Opaque
+    /// is at slot. Water is at MaxSlots + slot. Thin is at MaxSlots * 2 + slot.
+    ///
+    /// Alpha is one byte. Thus the largest value that it holds is MaxSlots * 3 - 1. A
+    /// MaxSlots value above 85 moves the thin band into the opaque band, with no error. Then
+    /// a thin plant draws as solid terrain, with an arbitrary tint.
     /// </summary>
     static void AlphaPacking(Check c)
     {
@@ -104,9 +108,9 @@ public static class StaticAssetChecks
     }
 
     /// <summary>
-    /// scripts/package.sh names the release zip from modinfo.json, while the assembly
-    /// identity comes from the csproj. Drift between them ships an artifact whose filename
-    /// disagrees with the version the game reports.
+    /// The script scripts/package.sh takes the name of the release zip from modinfo.json.
+    /// The identity of the assembly comes from the csproj. A difference between the two ships
+    /// a file whose name disagrees with the version that the game reports.
     /// </summary>
     static void VersionAgreement(Check c)
     {

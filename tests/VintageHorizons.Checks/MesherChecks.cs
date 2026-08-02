@@ -1,10 +1,13 @@
 namespace VintageHorizons.Checks;
 
 /// <summary>
-/// Section snapshot to vertex data. Two things are worth pinning here: the greedy merge,
-/// which is the difference between five quads and four thousand for the same terrain, and
-/// the coverage rules, which are deliberately asymmetric and were each arrived at by
-/// finding the artefact the symmetric version produced.
+/// From a section snapshot to vertex data. Two things need a test here.
+///
+/// The first is the greedy merge. For the same terrain it is the difference between five
+/// quads and four thousand.
+///
+/// The second is the coverage rules. They are asymmetric on purpose. A person found each one
+/// after the symmetric version made a visible defect.
 /// </summary>
 public static class MesherChecks
 {
@@ -31,22 +34,23 @@ public static class MesherChecks
     }
 
     /// <summary>
-    /// The reason the mesher exists in this shape. A flat plain is 4096 columns with
-    /// identical tops; naively that is 4096 quads for the surface plus a wall per column
-    /// edge. Merged it is one rectangle and four frontier ribbons.
+    /// This is the reason for the shape of the mesher. A flat plain is 4096 columns with
+    /// identical tops. Without a merge that is 4096 quads for the surface, and one wall for
+    /// each column edge. After the merge it is one rectangle and four frontier shapes.
     /// </summary>
     static void GreedyMerge(Check c)
     {
         LodSection flat = Solid(yTop: 10, yBottom: 0);
         MeshResult mesh = LodMesher.BuildMesh(Fixtures.Job(flat));
 
-        // 1 top rectangle + 4 frontier walls. No bottom faces: yBottom is 0, and the mesher
-        // skips floors at or below y=1 because nothing can ever see under the world.
+        // There is 1 top rectangle and 4 frontier walls. There is no bottom face, because
+        // yBottom is 0. The mesher skips a floor at y=1 or below, because nothing can see
+        // below the world.
         c.Eq(5, Quads(mesh.VertexCount), "a flat 64x64 plain collapses to five quads");
         c.Eq(20, mesh.VertexCount, "five quads is twenty vertices");
         c.Eq(30, mesh.IndexCount, "five quads is thirty indices (two triangles each)");
 
-        // The merged top must actually span the section, not just claim to.
+        // The merged top must cover the section. A claim alone is not sufficient.
         float[] xs = Every3rd(mesh.Xyz, 0);
         float[] zs = Every3rd(mesh.Xyz, 2);
         c.Eq(0f, xs.Min(), "the merged surface starts at the section's near edge");
@@ -54,13 +58,14 @@ public static class MesherChecks
         c.Eq(0f, zs.Min(), "the merged surface starts at the near z edge");
         c.Eq((float)Gs, zs.Max(), "the merged surface reaches the far z edge");
 
-        // A hole must break the merge, or the rectangle would pave over missing terrain.
+        // A hole must stop the merge. Without that, the rectangle covers terrain that is
+        // absent.
         LodSection holed = Solid(yTop: 10, yBottom: 0);
         holed.SetColumn(LodSection.ColumnIndex(32, 32), Array.Empty<ulong>());
         MeshResult holedMesh = LodMesher.BuildMesh(Fixtures.Job(holed));
         c.True(Quads(holedMesh.VertexCount) > 5, "a hole in the plain prevents a single-rectangle merge");
 
-        // Differing heights cannot merge into one plane either.
+        // Two different heights also cannot merge into one plane.
         LodSection stepped = Solid(yTop: 10, yBottom: 0);
         stepped.SetColumn(LodSection.ColumnIndex(32, 32), new[] { LodSection.PackRun(0, 11, 0) });
         MeshResult steppedMesh = LodMesher.BuildMesh(Fixtures.Job(stepped));
@@ -68,9 +73,9 @@ public static class MesherChecks
     }
 
     /// <summary>
-    /// Horizontal extent scales with the level's block step, but Y does not: y values are
-    /// absolute world blocks at every level. Scaling Y too would sink coarse terrain into
-    /// the ground, progressively further at each level out.
+    /// The horizontal extent scales with the block step of the level. Y does not scale,
+    /// because a y value is in absolute world blocks at each level. A scale on Y moves coarse
+    /// terrain into the ground, and it moves further at each level outward.
     /// </summary>
     static void LevelScaling(Check c)
     {
@@ -86,10 +91,11 @@ public static class MesherChecks
     }
 
     /// <summary>
-    /// The tint slot rides in the vertex alpha byte in three bands, because the vertex
-    /// format is position plus colour and there is nowhere else to put it. The shader
-    /// divides by TINT_SLOTS to recover which band it is - so the band boundaries here and
-    /// the constant in the GLSL are the same number seen from two sides.
+    /// The tint slot travels in the alpha byte of the vertex, in three bands. The vertex
+    /// format is a position and a color, thus there is no other place for it.
+    ///
+    /// The shader divides by TINT_SLOTS to find the band. Thus the band boundaries here and
+    /// the constant in the GLSL are the same number, from two sides.
     /// </summary>
     static void AlphaBands(Check c)
     {
@@ -99,8 +105,8 @@ public static class MesherChecks
         c.Eq((byte)(LodTintRegistry.MaxSlots * 2 + 5),
             AlphaOf(Column(LodPaletteEntry.FlagThin, tintSlot: 5)), "thin cover sits in the third band");
 
-        // An out-of-range slot must fall back to the identity tint rather than wrap into
-        // the next band and repaint the block as water.
+        // A slot that is out of range must use the tint that changes nothing. It must not
+        // move into the next band and give the block the appearance of water.
         c.Eq((byte)LodTintRegistry.SlotNone,
             AlphaOf(Column(flags: 0, tintSlot: (byte)LodTintRegistry.MaxSlots)),
             "a slot at the limit falls back to no tint");
@@ -117,20 +123,20 @@ public static class MesherChecks
         c.True(mesh.WaterVertexCount > 0, "water geometry lands in the blended pass");
         c.True(mesh.WaterXyz != null && mesh.WaterIndices != null, "the water pass carries its own buffers");
 
-        // Water has no floor quads: they would z-fight with the seabed below.
+        // Water has no floor quad. Such a quad z-fights with the sea floor below it.
         LodSection land = Solid(yTop: 10, yBottom: 0);
         MeshResult landMesh = LodMesher.BuildMesh(Fixtures.Job(land));
         c.Eq(0, landMesh.WaterVertexCount, "an all-solid section contributes nothing to the water pass");
     }
 
     /// <summary>
-    /// Ground cover is a few centimetres of plant in a one-block cell. Drawn as a cube it
-    /// turned meadows into fields of solid colour, so it is drawn as a mat instead: top face
-    /// only, no walls, lifted a quarter block off the soil.
+    /// Ground cover is a few centimetres of plant inside a cell of one block. As a cube it
+    /// turned a meadow into a field of solid color. Thus the mesher draws it as a mat: a top
+    /// face only, no walls, and a quarter of a block above the soil.
     ///
-    /// The offset is measured UP from the run's bottom, never down from its top. Mip merging
-    /// fuses adjacent thin runs, so at coarse levels one run can span several blocks, and a
-    /// fixed drop from the top left the mat floating in mid-air.
+    /// The offset goes UP from the bottom of the run. It never goes down from the top. The
+    /// mip merge joins adjacent thin runs. Thus at a coarse level one run covers several
+    /// blocks, and a fixed distance from the top left the mat in the air.
     /// </summary>
     static void ThinMats(Check c)
     {
@@ -140,44 +146,49 @@ public static class MesherChecks
         c.Eq(1, Quads(mesh.WaterVertexCount), "thin cover is a single quad: a top face and no walls");
         c.Eq(4.25f, Every3rd(mesh.WaterXyz!, 1).Max(), "the mat sits a quarter block above its own base");
 
-        // A tall run left by mip merging must still sit on the ground, not at its top.
+        // A tall run from the mip merge must still be on the ground, and not at its top.
         MeshResult tall = LodMesher.BuildMesh(Fixtures.Job(Column(LodPaletteEntry.FlagThin, yTop: 40, yBottom: 4)));
         c.Eq(4.25f, Every3rd(tall.WaterXyz!, 1).Max(), "a mip-merged tall thin run still sits on its base");
 
-        // Clamped so the mat can never rise above the run it stands for.
+        // The clamp stops the mat from going above the run that it represents.
         MeshResult flat = LodMesher.BuildMesh(Fixtures.Job(Column(LodPaletteEntry.FlagThin, yTop: 5, yBottom: 5)));
         c.Eq(5f, Every3rd(flat.WaterXyz!, 1).Max(), "a zero-height thin run is clamped to its own top");
     }
 
     /// <summary>
-    /// Three deliberately asymmetric rules, each one the fix for a specific artefact:
-    ///   - solid is culled only by solid, so a seabed stays visible through the water;
-    ///   - water is culled by anything, so a submerged cliff does not double up;
-    ///   - thin cover never culls anything, because a fern on a shoreline was deleting the
-    ///     wall of the pond beside it and letting you see through the water's edge.
+    /// Three rules that are asymmetric on purpose. Each one corrects a specific defect.
+    ///
+    ///   - A solid neighbour culls a solid face, and nothing else does. Thus a sea floor
+    ///     stays visible through the water.
+    ///   - Any coverage culls a water face. Thus a cliff under water does not appear two
+    ///     times.
+    ///   - Thin cover never culls anything. A fern on a shoreline removed the wall of the
+    ///     pond beside it, and a player could see through the edge of the water.
     /// </summary>
     static void CoverageRules(Check c)
     {
-        // Solid beside water: the solid wall survives.
+        // A solid face beside water: the solid wall stays.
         c.True(WallsBetween(c, LodPaletteEntry.FlagWater, 0) > 0,
             "a solid wall is not culled by water beside it");
 
-        // Water beside solid: the water wall is culled.
+        // A water face beside a solid: the mesher culls the water wall.
         c.Eq(0, WallsBetween(c, 0, LodPaletteEntry.FlagWater),
             "a water wall is culled by solid beside it");
 
-        // Solid beside solid: culled, the ordinary case.
+        // A solid face beside a solid: the mesher culls it. This is the normal case.
         c.Eq(0, WallsBetween(c, 0, 0), "a solid wall is culled by solid beside it");
 
-        // Solid beside thin: the wall survives, because a mat covers nothing.
+        // A solid face beside thin cover: the wall stays, because a mat covers nothing.
         c.True(WallsBetween(c, LodPaletteEntry.FlagThin, 0) > 0,
             "a solid wall is not culled by thin cover beside it");
     }
 
     /// <summary>
-    /// A missing neighbour section is the edge of explored space, and renders as a wall.
-    /// Treating it as covered would open the world at every frontier; treating a present
-    /// but empty neighbour as a wall would build one down the middle of every plain.
+    /// A neighbour section that is absent is the edge of the explored space, and the mesher
+    /// draws it as a wall.
+    ///
+    /// A treatment of that neighbour as cover opens the world at each frontier. A treatment
+    /// of a present but empty neighbour as a wall builds a wall across each plain.
     /// </summary>
     static void Frontier(Check c)
     {
@@ -186,19 +197,19 @@ public static class MesherChecks
         MeshResult alone = LodMesher.BuildMesh(Fixtures.Job(flat));
         c.Eq(5, Quads(alone.VertexCount), "with no neighbours, all four frontier walls are drawn");
 
-        // West neighbour present and matching: that wall goes away.
+        // The west neighbour is present and it matches. Thus that wall goes away.
         var withWest = new SectionSnapshot?[4];
         withWest[0] = Fixtures.Snap(flat);
         MeshResult joined = LodMesher.BuildMesh(Fixtures.Job(flat, 0, withWest));
         c.Eq(4, Quads(joined.VertexCount), "a matching west neighbour removes the west wall");
 
-        // All four present: only the surface remains.
+        // All four neighbours are present. Thus only the surface stays.
         var allFour = new SectionSnapshot?[4];
         for (int i = 0; i < 4; i++) allFour[i] = Fixtures.Snap(flat);
         MeshResult surrounded = LodMesher.BuildMesh(Fixtures.Job(flat, 0, allFour));
         c.Eq(1, Quads(surrounded.VertexCount), "fully surrounded terrain is just its surface");
 
-        // A neighbour that is present but shorter leaves the exposed part of the wall.
+        // A neighbour that is present but shorter leaves the visible part of the wall.
         LodSection shorter = Solid(yTop: 4, yBottom: 0);
         var withShort = new SectionSnapshot?[4];
         for (int i = 0; i < 4; i++) withShort[i] = Fixtures.Snap(shorter);
@@ -206,15 +217,19 @@ public static class MesherChecks
         c.Eq(5, Quads(stepped.VertexCount), "a shorter neighbour leaves the exposed wall above it");
     }
 
-    // ---- helpers ----
+    // ---- The helpers ----
 
     /// <summary>
-    /// Walls the subject column emits on the edge it shares with its neighbour.
+    /// The walls that the subject column writes on the edge that it shares with its
+    /// neighbour.
     ///
-    /// Both columns' walls land on the same plane - the subject's east face and the
-    /// neighbour's west face are both at x = 11 - so the plane alone cannot tell them
-    /// apart. The pass does: a translucent column writes to the water buffer and an opaque
-    /// one to the opaque buffer, and the two columns here always differ in exactly that.
+    /// The walls of both columns are on the same plane. The east face of the subject and the
+    /// west face of the neighbour are both at x = 11. Thus the plane alone cannot separate
+    /// them.
+    ///
+    /// The pass can separate them. A translucent column writes to the water buffer, and an
+    /// opaque column writes to the opaque buffer. The two columns here always differ in
+    /// exactly that.
     /// </summary>
     static int WallsBetween(Check c, byte neighborFlags, byte subjectFlags)
     {
