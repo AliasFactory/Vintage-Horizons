@@ -1,31 +1,36 @@
 namespace VintageHorizons;
 
 /// <summary>
-/// Turns a section snapshot into raw vertex data (worker thread). Every run is a box;
-/// faces are collected first, then greedy-merged before emission:
+/// Turns a section snapshot into raw vertex data, on a worker thread. Each run is a box. The
+/// mesher collects the faces first. Then it merges them greedily, and only then does it write
+/// them.
 ///
-/// - Horizontal faces (tops/bottoms) group into Y-planes per (y, palette, side) and
-///   merge into maximal rectangles with a standard 2D greedy sweep - ocean surfaces
-///   and plains collapse from thousands of quads to a handful.
-/// - Vertical faces (walls) merge along their strip axis where adjacent columns
-///   expose identical (span, palette) segments - cliffs and frontier walls collapse
-///   into long ribbons.
+/// - A horizontal face, which is a top or a bottom, goes into a Y plane for each combination
+///   of y, palette and side. Then a standard 2D greedy sweep merges the faces into the
+///   largest possible rectangles. Thus an ocean surface or a plain goes from thousands of
+///   quads to a small number.
+/// - A vertical face, which is a wall, merges along its strip axis. This occurs where the
+///   adjacent columns show identical segments of span and palette. Thus a cliff or a
+///   frontier wall becomes one long shape.
 ///
-/// Coverage rules (unchanged from the non-greedy mesher): solid faces are only
-/// culled by solid neighbors so terrain shows through translucent water; water
-/// faces are culled by any coverage. A missing neighbor section is the frontier
-/// of explored space and renders as a wall.
+/// The coverage rules are the same as the rules of the mesher without the greedy merge. A
+/// solid neighbour culls a solid face, and nothing else does. Thus terrain is visible through
+/// translucent water. Any coverage culls a water face.
+///
+/// A neighbour section that is absent is the frontier of the explored space, and the mesher
+/// draws it as a wall.
 /// </summary>
 public static class LodMesher
 {
     const int W = 0, E = 1, N = 2, S = 3;
 
-    // The tint slot rides in the alpha byte, so the vertex format stays position+colour:
+    // The tint slot travels in the alpha byte. Thus the vertex format stays position and
+    // color:
     //   0..63    opaque,     tint slot = alpha
     //   64..127  water,      tint slot = alpha - 64
     //   128..191 thin plant, tint slot = alpha - 128
-    // Slot 0 is the identity tint. The band picks the blend factor in the shader, so
-    // water and flowers can be see-through by different amounts.
+    // Slot 0 is the tint that changes nothing. The band selects the blend factor in the
+    // shader. Thus water and a flower can have different quantities of transparency.
     const byte WaterBase = LodTintRegistry.MaxSlots;
     const byte ThinBase = LodTintRegistry.MaxSlots * 2;
 
@@ -44,10 +49,11 @@ public static class LodMesher
         public readonly List<int> Indices = new(12288);
     }
 
-    /// <summary>One exposed horizontal face: column cell + plane y + palette.</summary>
+    /// <summary>One horizontal face that is visible. It holds the column cell, the y of the
+    /// plane, and the palette.</summary>
     readonly record struct HFace(short Cx, short Cz, short Y, short Pid, bool Bottom, bool Water, bool Thin, short YBottom);
 
-    /// <summary>One exposed wall segment on a column edge.</summary>
+    /// <summary>One wall segment that is visible, on the edge of a column.</summary>
     readonly record struct VFace(byte Dir, short Fixed, short Along, short YTop, short YBottom, short Pid, bool Water);
 
     [ThreadStatic] static List<HFace>? hFaces;
@@ -67,7 +73,7 @@ public static class LodMesher
         hf.Clear();
         vf.Clear();
 
-        // ---- Phase 1: collect exposed faces ----
+        // ---- Phase 1: collect the faces that are visible ----
 
         for (int cz = 0; cz < gs; cz++)
         {
@@ -88,11 +94,12 @@ public static class LodMesher
 
                     bool isThin = (self.PaletteFlags[pid] & LodPaletteEntry.FlagThin) != 0;
 
-                    // Ground cover is a few centimetres of plant in a one-block cell, so
-                    // it is drawn as a low mat: top face only, dropped to just above the
-                    // soil. Rendering it as a full cube turned meadows into fields of
-                    // solid blocks, which was the real problem -- most flowers store
-                    // perfectly good colour.
+                    // Ground cover is a few centimetres of plant inside a cell of one
+                    // block. Thus the mesher draws it as a low mat, with a top face only,
+                    // immediately above the soil.
+                    //
+                    // A full cube turned a meadow into a field of solid blocks. That was the
+                    // real problem. Most flowers hold a correct color.
                     if (isThin)
                     {
                         hf.Add(new HFace((short)cx, (short)cz, (short)yTop, (short)pid, false, true, true, (short)yBottom));
@@ -123,7 +130,7 @@ public static class LodMesher
             }
         }
 
-        // ---- Phase 2: greedy-merge and emit ----
+        // ---- Phase 2: merge greedily, then write ----
 
         EmitHorizontalGreedy(hf, self, opaque, water, step);
         EmitVerticalMerged(vf, self, opaque, water, step);
@@ -144,7 +151,7 @@ public static class LodMesher
         };
     }
 
-    // ---- Horizontal faces: per-plane 2D greedy rectangles ----
+    // ---- Horizontal faces: 2D greedy rectangles in each plane ----
 
     [ThreadStatic] static int[]? planeGrid;
     [ThreadStatic] static int planeGridStamp;
@@ -154,8 +161,8 @@ public static class LodMesher
         if (faces.Count == 0) return;
         int gs = LodSection.GridSize;
 
-        // Group faces into planes by (y, pid, side, phase); grid cells hold a stamp so
-        // we never clear the array between planes.
+        // Group the faces into planes, by y, pid, side and phase. A grid cell holds a
+        // stamp. Thus the mod never clears the array between two planes.
         faces.Sort((a, b) =>
         {
             int c = a.Y.CompareTo(b.Y);
@@ -201,7 +208,8 @@ public static class LodMesher
                 int cz = faces[i].Cz;
                 if (grid[cz * gs + cx] != stamp) continue; // already consumed
 
-                // Extend width along +X, then height along +Z while the full row matches.
+                // Increase the width along +X. Then increase the height along +Z, while the
+                // full row is the same.
                 int wRect = 1;
                 while (cx + wRect < gs && grid[cz * gs + cx + wRect] == stamp) wRect++;
 
@@ -229,13 +237,19 @@ public static class LodMesher
                 float x1 = (cx + wRect) * step;
                 float z0 = cz * step;
                 float z1 = (cz + hRect) * step;
-                // Ground cover sits a quarter block above the soil it stands on: clear
-                // of z-fighting, invisible as a step. Measured UP from the run's bottom,
-                // never down from its top -- mip merging fuses adjacent thin runs, so at
-                // coarse levels one run spans several blocks and a fixed drop from the
-                // top left the mat floating in mid-air. Clamped so it can never rise
-                // above the run it represents.
-                // Y is absolute blocks and is NOT scaled by step, so neither is the offset.
+                // Ground cover is a quarter of a block above the soil below it. That
+                // distance prevents z-fighting, and a player cannot see it as a step.
+                //
+                // Measure UP from the bottom of the run. Never measure down from its top.
+                // The mip merge joins adjacent thin runs. Thus at a coarse level one run
+                // covers several blocks, and a fixed distance down from the top left the mat
+                // in the air.
+                //
+                // The value has a clamp, thus the mat can never go above the run that it
+                // represents.
+                //
+                // Y is in absolute blocks, and step does NOT scale it. Thus step does not
+                // scale the offset either.
                 float y = first.Thin ? Math.Min(first.YBottom + 0.25f, first.Y) : first.Y;
 
                 if (first.Bottom)
@@ -252,7 +266,7 @@ public static class LodMesher
         }
     }
 
-    // ---- Vertical faces: merge along the strip axis ----
+    // ---- Vertical faces: merge along the axis of the strip ----
 
     static void EmitVerticalMerged(List<VFace> faces, SectionSnapshot self, Buffers opaque, Buffers water, int step)
     {
@@ -294,7 +308,8 @@ public static class LodMesher
             int color = self.PaletteColors[seg.Pid];
             byte alpha = AlphaFor(self.PaletteFlags[seg.Pid], self.PaletteTintSlots[seg.Pid]);
 
-            // W/E walls run along Z at fixed X; N/S walls run along X at fixed Z.
+            // A west or east wall goes along Z, at a fixed X. A north or south wall goes
+            // along X, at a fixed Z.
             bool xWall = seg.Dir is W or E;
             float fixedCoord = seg.Dir switch
             {
@@ -323,7 +338,7 @@ public static class LodMesher
         }
     }
 
-    // ---- Face collection helpers ----
+    // ---- Helpers that collect the faces ----
 
     static bool IsTranslucent(byte flags) =>
         (flags & (LodPaletteEntry.FlagWater | LodPaletteEntry.FlagThin)) != 0;
@@ -332,10 +347,12 @@ public static class LodMesher
         IsTranslucent(s.PaletteFlags[LodSection.RunPaletteId(run)]);
 
     /// <summary>
-    /// Thin ground cover is drawn as a mat a quarter block tall, so it fills almost none
-    /// of its cell and must never occlude anything. Without this a fern on a shoreline
-    /// counted as cover for the water beside it and deleted the water's wall, letting you
-    /// see through the edge of the pond.
+    /// The mesher draws thin ground cover as a mat that is a quarter of a block high. Thus
+    /// it fills almost none of its cell, and it must never hide anything.
+    ///
+    /// Without this rule, a fern on a shoreline counted as cover for the water beside it.
+    /// That removed the wall of the water, and a player could see through the edge of the
+    /// pond.
     /// </summary>
     static bool IsThinRun(SectionSnapshot s, ulong run) =>
         (s.PaletteFlags[LodSection.RunPaletteId(run)] & LodPaletteEntry.FlagThin) != 0;
@@ -359,14 +376,16 @@ public static class LodMesher
         return (nb, nb == null ? 0 : LodSection.ColumnIndex(ncx, ncz));
     }
 
-    /// <summary>Collect exposed wall segments for [yBottom, yTop) minus the neighbor's covered intervals.</summary>
+    /// <summary>Collect the wall segments that are visible for [yBottom, yTop), and remove
+    /// the intervals that the neighbour covers.</summary>
     static void CollectSide(List<VFace> vf, MeshJob job, int dir, int cx, int cz, int ncx, int ncz,
         int yTop, int yBottom, int pid, bool isTranslucent, bool solidCoverOnly)
     {
         var (nb, ncol) = NeighborColumn(job, ncx, ncz);
         Span<ulong> neighborRuns = nb != null && nb.Captured[ncol] ? nb.ColumnRuns(ncol) : Span<ulong>.Empty;
 
-        // For W/E walls the strip axis is Z (fixed = cx); for N/S it's X (fixed = cz).
+        // For a west or east wall, the axis of the strip is Z, and the fixed value is cx.
+        // For a north or south wall, the axis is X, and the fixed value is cz.
         short fix = (short)(dir is W or E ? cx : cz);
         short along = (short)(dir is W or E ? cz : cx);
 
@@ -374,8 +393,8 @@ public static class LodMesher
 
         for (int i = 0; i < neighborRuns.Length && cur > yBottom; i++)
         {
-            // A mat never covers anything; beyond that, solid faces are only culled by
-            // solid neighbours so terrain stays visible through water.
+            // A mat never covers anything. Then, a solid neighbour culls a solid face, and
+            // nothing else does. Thus terrain stays visible through water.
             if (IsThinRun(nb!, neighborRuns[i])) continue;
             if (solidCoverOnly && IsTranslucentRun(nb!, neighborRuns[i])) continue;
 
@@ -398,7 +417,7 @@ public static class LodMesher
         }
     }
 
-    // ---- Emission primitives ----
+    // ---- The primitives that write the vertices ----
 
     static void AddQuad(Buffers buf, int color, byte alpha,
         float x0, float y0, float z0, float x1, float y1, float z1,

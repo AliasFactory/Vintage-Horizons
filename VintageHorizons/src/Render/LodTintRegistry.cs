@@ -4,59 +4,73 @@ using Vintagestory.API.Common;
 namespace VintageHorizons;
 
 /// <summary>
-/// Maps each block to a tint SLOT, and keeps every slot's live colour up to date.
+/// Maps each block to a tint SLOT, and keeps the live color of each slot current.
 ///
-/// Vintage Story does not have one foliage tint: leaves pick a seasonal map per
-/// species (seasonalOak, seasonalNeedles, seasonalBirch, seasonalMaple, ...) on top of
-/// one of several climate maps, and water has its own climateWaterTint. Collapsing all
-/// of that into a single "foliage" tint meant every leaf in the LOD took whichever
-/// block the registry scan happened to hit first - a conifer, so nothing ever turned
-/// for autumn - and water was left untinted grey.
+/// Vintage Story has no single tint for foliage. Leaves take a season map for each species,
+/// such as seasonalOak, seasonalNeedles, seasonalBirch or seasonalMaple. That map goes on top
+/// of one of several climate maps. Water has its own climateWaterTint.
 ///
-/// A slot is one distinct (climate map, season map) pair. The captured colour stays
-/// untinted and the slot's colour is recomputed from the game's own colour maps every
-/// few seconds, so distant terrain follows the calendar without re-capturing anything.
+/// One "foliage" tint for all of that gave each leaf in the LOD the map of the block that the
+/// registry scan found first. That block was a conifer, thus nothing changed color in autumn.
+/// Water also stayed grey, with no tint.
 ///
-/// Slots are derived from the live Block, never persisted: an existing cache picks up
-/// correct per-species tints with no re-exploration, and the mapping stays right if a
-/// game or mod update changes which map a block uses.
+/// A slot is one distinct pair of a climate map and a season map. The captured color keeps no
+/// tint. The mod calculates the color of a slot again from the color maps of the game, every
+/// few seconds. Thus distant terrain follows the calendar, and the mod captures nothing
+/// again.
+///
+/// The mod calculates a slot from the live Block, and it never stores a slot. Thus a cache
+/// that exists already gets the correct tint for each species, and a player does not explore
+/// again. The map also stays correct when a game update or a mod update changes the map that
+/// a block uses.
 /// </summary>
 public class LodTintRegistry
 {
-    /// <summary>Slot 0 is the identity tint, used by everything with no colour map.</summary>
+    /// <summary>Slot 0 is the tint that changes nothing. Each block with no color map uses
+    /// it.</summary>
     public const int SlotNone = 0;
 
     /// <summary>
-    /// Kept small on purpose: the alpha byte carries the slot, and the shader holds one
-    /// vec3 per slot. 64 covers every map pair in the base game with room to spare.
+    /// This value is small on purpose. The alpha byte carries the slot, and the shader holds
+    /// one vec3 for each slot. A value of 64 covers each map pair in the base game, and it
+    /// leaves space.
     /// </summary>
     public const int MaxSlots = 64;
 
-    // MaxSlots is also hardcoded as `const int TINT_SLOTS` in lodterrain.vsh/.fsh, because
-    // this game version offers no way to inject a #define. There used to be a second C#
-    // constant mirroring that number by hand, compared against MaxSlots at shader load -
-    // but comparing two constants in the same file cannot detect a shader being edited,
-    // and the compiler said so, flagging the branch as unreachable. The real check reads
-    // the shader files: see StaticAssetChecks in the fast tier of scripts/check.sh.
+    // MaxSlots is also written as `const int TINT_SLOTS` in lodterrain.vsh and
+    // lodterrain.fsh, because this version of the game cannot inject a #define.
+    //
+    // A second C# constant held a copy of that number, maintained by hand. The mod compared
+    // it against MaxSlots at shader load. But a comparison of two constants in one file
+    // cannot find an edit to a shader. The compiler said so, and it marked the branch as
+    // unreachable.
+    //
+    // The real check reads the shader files. Read StaticAssetChecks, in the fast tier of
+    // scripts/check.sh.
 
     readonly Dictionary<(string?, string?), int> slotByMaps = new();
     readonly List<Block?> representative = new();
 
-    // vec4 per slot: the uniform upload path takes 4 components per element.
-    // Two altitude samples per slot, because the climate maps are indexed by
-    // temperature and temperature falls with height - the same lapse rate the snow
-    // line uses. Sampling once at the player's feet painted mountaintops with valley
-    // green instead of the colder, redder grass that actually grows up there. The
-    // shader interpolates between these by vertex height.
+    // There is one vec4 for each slot, because the upload path for a uniform takes 4
+    // components for each element.
+    //
+    // There are two samples of altitude for each slot. The climate maps use the temperature
+    // as their index, and the temperature decreases with the height. This is the same lapse
+    // rate that the snow line uses.
+    //
+    // One sample at the feet of the player gave a mountain top the green of a valley. The
+    // real grass up there is colder and more red. The shader interpolates between the two
+    // samples, by the height of the vertex.
     readonly float[] tintsLow = new float[MaxSlots * 4];
     readonly float[] tintsHigh = new float[MaxSlots * 4];
 
-    /// <summary>Bumped by Refresh; lets the renderer skip re-uploading unchanged tints.</summary>
+    /// <summary>Refresh increases this value. Thus the renderer can skip an upload of tints
+    /// that did not change.</summary>
     public int Version { get; private set; }
     public float[] TintsLow => tintsLow;
     public float[] TintsHigh => tintsHigh;
 
-    /// <summary>World Y the two tint tables were sampled at.</summary>
+    /// <summary>The world Y at which the mod sampled the two tint tables.</summary>
     public float SampleYLow { get; private set; }
     public float SampleYHigh { get; private set; }
 
@@ -68,14 +82,17 @@ public class LodTintRegistry
     }
 
     /// <summary>
-    /// A block carrying climatePlantTint, used for plants that declare no colour map of
-    /// their own. Ferns are the case that forced this: their textures ship greyscale
-    /// (stored colour is exactly RGB 148,148,148) and vanilla greens them from its block
-    /// class rather than from JSON, so an untinted LOD cube came out grey.
+    /// A block that carries climatePlantTint. Plants that declare no color map of their own
+    /// use it.
+    ///
+    /// A fern is the case that made this necessary. The textures of a fern are greyscale, and
+    /// the stored color is exactly RGB 148,148,148. Vanilla makes it green from its block
+    /// class, and not from JSON. Thus an LOD cube with no tint was grey.
     /// </summary>
     public Block? PlantTintFallback;
 
-    /// <summary>Slot for this block, registering a new one if this map pair is unseen.</summary>
+    /// <summary>The slot for this block. The mod registers a new slot when it did not see
+    /// this map pair before.</summary>
     public int SlotFor(Block? block)
     {
         if (block == null) return SlotNone;
@@ -101,13 +118,14 @@ public class LodTintRegistry
     }
 
     /// <summary>
-    /// Recompute every slot's colour for the current season and climate, by applying the
-    /// game's own maps to white at the given position.
+    /// Calculate the color of each slot again, for the current season and climate. The mod
+    /// applies the color maps of the game to white, at the given position.
     /// </summary>
     public void Refresh(IClientWorldAccessor world, int x, int z)
     {
-        // Span the height range terrain actually occupies around the viewer, so the
-        // interpolation covers valley floor to peak rather than extrapolating.
+        // Cover the range of heights that the terrain around the viewer occupies. Thus the
+        // interpolation goes from the valley floor to the peak, and it does not go past the
+        // samples.
         Version++;
         SampleYLow = world.SeaLevel;
         SampleYHigh = world.SeaLevel + 320;
@@ -128,12 +146,12 @@ public class LodTintRegistry
             block.ClimateColorMapResolved, block.SeasonColorMapResolved,
             unchecked((int)0xFFFFFFFF), x, y, z);
 
-        // ApplyColorMapOnRgba flips red and blue by default, so red is the high byte -
-        // which is exactly what ColorUtil.ToRGBAFloats unpacks, rather than restating
-        // the engine's channel order here.
-        // ToRGBAFloats[0] is the HIGH byte, which is where ApplyColorMapOnRgba puts red
-        // (it flips red and blue by default). Wiring [2] to red swapped R and B and
-        // turned every grass tint teal.
+        // ApplyColorMapOnRgba exchanges red and blue by default. Thus red is the high byte.
+        // ColorUtil.ToRGBAFloats unpacks exactly that. This code uses it, and it does not
+        // state the channel order of the engine again.
+        //
+        // ToRGBAFloats[0] is the HIGH byte, and ApplyColorMapOnRgba puts red there. A
+        // connection from [2] to red exchanged R and B, and each grass tint became teal.
         float[] rgbaf = Vintagestory.API.MathTools.ColorUtil.ToRGBAFloats(rgba);
         into[slot * 4 + 0] = rgbaf[0];
         into[slot * 4 + 1] = rgbaf[1];
