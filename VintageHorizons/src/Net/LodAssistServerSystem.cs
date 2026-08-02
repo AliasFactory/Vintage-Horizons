@@ -47,7 +47,8 @@ public class LodAssistServerSystem : ModSystem
                     $"[VintageHorizons] {config.Describe()}. Cache: {capture?.SectionCount ?? 0} sections, "
                     + $"{capture?.ColumnsCaptured ?? 0} columns captured. Served {sectionsServed} sections "
                     + $"({bytesServed / 1e6:0.0} MB, {(sectionsServed > 0 ? blobReadMs / sectionsServed : 0):0.00}ms avg read), "
-                    + $"{sectionsOutsideRadius} refused as out of radius, {pendingByPlayer.Count} players waiting. "
+                    + $"{sectionsOutsideRadius} refused as out of radius, {sectionsRefused} refused unserved, "
+                    + $"{pendingByPlayer.Count} players waiting. "
                     + (capture?.SweepStatus is string sw ? sw + ". " : "")
                     + (capture?.PregenStatus is string pg ? pg + ". " : "")
                     + (capture?.GenerateStatus is string gn ? gn + ". " : "")
@@ -125,14 +126,34 @@ public class LodAssistServerSystem : ModSystem
             }
 
             // Bounded: the client is supposed to limit itself, but a server must not
-            // depend on a client behaving. Past the cap the newest asks are dropped and
-            // the client re-asks later.
+            // depend on a client behaving.
             int room = Math.Max(0, MaxQueuedPerPlayer - queue.Count);
             foreach (long key in keys.Take(room)) queue.Enqueue(key);
+
+            // Anything past the cap is refused OUT LOUD. This used to drop silently,
+            // with a comment saying the client would re-ask - it cannot. A client marks
+            // a key in flight when it sends it and only forgets it when a reply comes
+            // back, so a dropped key is stranded for the session. With a 16-key in-flight
+            // cap that is the whole client, permanently stuck. Same rule as M7 stage 4:
+            // only keys actually answered may be forgotten.
+            foreach (long key in keys.Skip(room)) Refuse(fromPlayer, key);
         }, "vintagehorizons-request");
     }
 
     const int MaxQueuedPerPlayer = 256;
+
+    /// <summary>
+    /// Tell a client we will not serve this key. An empty blob is the refusal, and the
+    /// client needs it: silence is indistinguishable from a lost packet, and it leaves
+    /// the key in flight forever.
+    /// </summary>
+    void Refuse(IServerPlayer player, long key)
+    {
+        channel.SendPacket(new AssistSection { Key = key }, player);
+        sectionsRefused++;
+    }
+
+    int sectionsRefused;
 
     /// <summary>
     /// Serve at most the per-second cap to each waiting player. Called once a second, so
@@ -145,6 +166,21 @@ public class LodAssistServerSystem : ModSystem
         LodServerCaptureSystem? capture = sapi.ModLoader.GetModSystem<LodServerCaptureSystem>();
         if (capture?.Capturing != true || !capture.Config.EnableServing)
         {
+            // Refuse every queued key rather than dropping them. This path runs when the
+            // cache is not open yet, or when serving is off, and it used to clear the
+            // queues in silence. A client whose keys vanish here never asks again: it
+            // holds them in flight waiting for a reply that will never come, and its
+            // in-flight cap then blocks every later request for the whole session.
+            //
+            // A race at join time makes that reachable in ordinary play - the client can
+            // ask before the server's pipeline is open. It fits the intermittent stall
+            // seen on 2026-08-02, though that was never caught with logging in place, so
+            // this is a defect fixed on its own merits rather than a proven diagnosis.
+            foreach ((string uid, Queue<long> queue) in pendingByPlayer)
+            {
+                if (sapi.World.PlayerByUid(uid) is not IServerPlayer waiting) continue;
+                foreach (long key in queue) Refuse(waiting, key);
+            }
             pendingByPlayer.Clear();
             return;
         }

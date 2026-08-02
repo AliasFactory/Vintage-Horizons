@@ -20,6 +20,15 @@ worldgen mod that breaks the promise is detected on the server where it happens,
 only in this repo's test matrix. The check regimen additionally asserts, byte for
 byte, that an all-peek run leaves the savegame's terrain tables identical.
 
+**Fixed: a client could stop receiving terrain for the rest of a session.** A server
+dropped queued section requests without answering them, in two places: when its cache
+was not open yet, and when a client asked for more than the queue holds. A client marks
+a key in flight when it asks and only forgets it when a reply arrives, so a dropped key
+was stranded, and sixteen of them filled the in-flight cap and blocked every later
+request. The server now refuses out loud in both cases, and `/vhserver` counts the
+refusals. This fits an intermittent stall seen in testing, but was never caught with
+logging in place, so treat it as a defect fixed rather than a diagnosis confirmed.
+
 **Fixed:** a config file that failed to parse was overwritten with defaults, deleting
 every hand-edited setting over one bad comma. Now the file is left untouched, the
 error names the line, and defaults apply for the session only. Also: the client now
