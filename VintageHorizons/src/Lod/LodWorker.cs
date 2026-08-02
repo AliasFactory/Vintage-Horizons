@@ -54,7 +54,7 @@ public class CaptureResult
 {
     public long SectionKey;
     public int Cx, Cz;
-    public required ulong[]?[] RunsByColumn; // GridSize² entries, only this chunk column's 16×16 filled
+    public required ulong[]?[] RunsByColumn; // GridSize squared entries. Only the 16 x 16 of this chunk column hold data.
 }
 
 public class MeshJob
