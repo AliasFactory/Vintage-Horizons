@@ -51,12 +51,13 @@ integrated server) now loads terrain the world has already generated in past ses
 the cache can be built from it immediately, instead of only from terrain a player walks
 past again. It never generates new terrain to do this.
 
-**Pre-generation**, separate and off by default. `PregenRadiusChunks` generates a square
-of chunk columns around spawn - terrain nobody has visited yet - so a server can offer a
-horizon on the first join rather than one that appears over weeks of play. It is the one
-setting that makes the mod create terrain, which is why it is opt-in and why the radius is
-capped at 256 chunks (a 4096-block radius): the cost is worldgen time and disk, on the
-order of a few hundred MB at radius 64.
+**Pre-generation**, separate and off by default. `PregenRadiusChunks` builds the cache
+around spawn at startup - terrain nobody has visited yet - so a server can offer a
+horizon on the first join rather than one that appears over weeks of play. It now runs
+the same transient generation `/vhgen` does, so it costs worldgen time but **no disk**:
+the terrain is captured and thrown away rather than written to your savegame. Earlier in
+this release it loaded columns instead, which cost a few hundred MB at radius 64. It
+stays opt-in because it still reveals map nobody has explored.
 
 **Faster terrain fill-in.** Meshing runs on a thread pool instead of one thread doing
 capture and meshing in lockstep, so exploring new terrain no longer starves the mesher -

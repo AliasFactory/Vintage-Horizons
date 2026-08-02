@@ -14,10 +14,10 @@ namespace VintageHorizons.Net;
 /// test world at 12,632 generated columns against 620 captured sections, and a world played
 /// for weeks skews far harder than that. All of it is already on disk, already paid for.
 ///
-/// The distinction from <see cref="LodServerPregen"/> is the whole point: pregen *creates*
-/// terrain nobody has visited, which costs worldgen time and disk and reveals places no
-/// player has been. Sweeping creates nothing. It indexes what exists, so it is safe to
-/// default on where pregen is not.
+/// The distinction from pre-generation (<see cref="LodPlayerPregen"/>) is the whole
+/// point: that creates terrain nobody has visited, and reveals places no player has
+/// been. Sweeping creates nothing. It indexes what exists, so it is safe to default on
+/// where pre-generation is not.
 ///
 /// Keeping that promise takes more than checking the target column, which is what the first
 /// version did and why this does two passes now. Loading a column whose surroundings are
@@ -116,7 +116,7 @@ public class LodSavegameSweep
         // at whatever rate the engine answers, without ever having more outstanding.
         while (probeIndex < ProbeTotal && probesInFlight < MaxProbesInFlight)
         {
-            (int dx, int dz) = LodServerPregen.SpiralAt(probeIndex++);
+            (int dx, int dz) = LodColumnMap.SpiralAt(probeIndex++);
             int cx = spawnCx + dx;
             int cz = spawnCz + dz;
 
@@ -154,7 +154,7 @@ public class LodSavegameSweep
         int loaded = 0;
         while (loadIndex < LoadTotal && loaded < perSecond)
         {
-            (int dx, int dz) = LodServerPregen.SpiralAt(loadIndex++);
+            (int dx, int dz) = LodColumnMap.SpiralAt(loadIndex++);
             int cx = spawnCx + dx;
             int cz = spawnCz + dz;
 

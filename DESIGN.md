@@ -704,9 +704,13 @@ mod. The savegame holds everything anyone has ever generated. On a test world th
 skews far harder. All of it is already on disk, already paid for.
 
 Sweeping loads those columns so capture sees them. It is the cheap half of pre-generation
-and the half worth defaulting on: pregen *creates* terrain nobody has visited, costing
-worldgen time and disk and revealing places no player has been, while a sweep creates
+and the half worth defaulting on: pre-generation *creates* terrain nobody has visited,
+costing worldgen time and revealing places no player has been, while a sweep creates
 nothing and reveals nowhere new.
+
+(Since section 14, pre-generation no longer costs disk either. `PregenRadiusChunks` runs
+the peek generator rather than loading columns, so it writes nothing to the savegame. It
+stays off by default for the revealing-the-map reason alone.)
 
 ### 13.1 Keeping the "generates nothing" promise
 

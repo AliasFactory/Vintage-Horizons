@@ -95,8 +95,14 @@ public class LodPlayerPregen
     public static int EstimateSeconds(int columns, int perSecond) =>
         columns / Math.Max(1, Math.Min(perSecond, 23));
 
+    /// <param name="columnsPerSecond">
+    /// Overrides the command's rate. The startup pre-generation passes
+    /// PregenColumnsPerSecond, so that setting keeps meaning what it always meant even
+    /// though the mechanism under it changed from loading to peeking.
+    /// </param>
     public LodPlayerPregen(ICoreServerAPI sapi, ILogger logger, LodPipeline pipeline,
-        int centreCx, int centreCz, int radiusChunks, LodServerConfig config, string startedBy)
+        int centreCx, int centreCz, int radiusChunks, LodServerConfig config, string startedBy,
+        int? columnsPerSecond = null)
     {
         this.sapi = sapi;
         this.logger = logger;
@@ -104,7 +110,7 @@ public class LodPlayerPregen
         this.centreCx = centreCx;
         this.centreCz = centreCz;
         this.radiusChunks = radiusChunks;
-        perSecond = Math.Max(1, config.GenerateColumnsPerSecond);
+        perSecond = Math.Max(1, columnsPerSecond ?? config.GenerateColumnsPerSecond);
         maxInFlight = Math.Max(1, config.GenerateMaxInFlight);
         StartedBy = startedBy;
     }
@@ -140,7 +146,7 @@ public class LodPlayerPregen
         // Refill to a cap rather than issuing a fixed number per tick, as the sweep does.
         while (probeIndex < ProbeTotal && probesInFlight < MaxProbesInFlight)
         {
-            (int dx, int dz) = LodServerPregen.SpiralAt(probeIndex++);
+            (int dx, int dz) = LodColumnMap.SpiralAt(probeIndex++);
             int cx = centreCx + dx;
             int cz = centreCz + dz;
 
@@ -174,7 +180,7 @@ public class LodPlayerPregen
         bool gated = false;
         while (!Cancelled && !gated && workIndex < WorkTotal && started < perSecond)
         {
-            (int dx, int dz) = LodServerPregen.SpiralAt(workIndex);
+            (int dx, int dz) = LodColumnMap.SpiralAt(workIndex);
             int cx = centreCx + dx;
             int cz = centreCz + dz;
 

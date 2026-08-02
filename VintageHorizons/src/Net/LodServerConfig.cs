@@ -112,8 +112,15 @@ public class LodServerConfig
     public int GenerateMaxInFlight = 64;
 
     /// <summary>
-    /// Pre-build the cache by generating a square of chunk columns around spawn, in chunks
-    /// of radius. 0 (default) means never; the cache then fills only as players travel.
+    /// Pre-build the cache around spawn at startup, in chunks of radius. 0 (default)
+    /// means never, and the cache then fills only as players travel or an admin runs
+    /// /vhgen.
+    ///
+    /// This runs the same peek generator /vhgen uses. It generates terrain nobody has
+    /// visited and captures it, and it writes NOTHING to the savegame - the first
+    /// version loaded columns instead, which cost worldgen time and disk for terrain no
+    /// player had seen. The setting still reveals map that nobody has explored, which is
+    /// why it stays off unless an admin asks for it.
     ///
     /// This is the one setting that makes the mod generate terrain nobody has visited, so
     /// it is off unless an admin asks for it. Worth asking for: it is the difference

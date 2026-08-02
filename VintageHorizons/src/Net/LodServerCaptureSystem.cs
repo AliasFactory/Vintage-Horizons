@@ -24,7 +24,7 @@ public class LodServerCaptureSystem : ModSystem
 
     ICoreServerAPI sapi = null!;
     LodPipeline? pipeline;
-    LodServerPregen? pregen;
+    LodPlayerPregen? pregen;
     LodSavegameSweep? sweep;
     LodPlayerPregen? generate;
     long tickListenerId;
@@ -56,9 +56,7 @@ public class LodServerCaptureSystem : ModSystem
     public int ColumnsCaptured => pipeline?.ColumnsCaptured ?? 0;
 
     /// <summary>Progress line for /vhserver, or null when no pre-generation is running.</summary>
-    public string? PregenStatus => pregen == null ? null
-        : pregen.Done ? $"pre-generation complete ({pregen.Total} columns)"
-        : $"pre-generating {pregen.Requested}/{pregen.Total} columns";
+    public string? PregenStatus => pregen?.Status;
 
     /// <summary>Progress line for /vhserver, or null when no sweep is running.</summary>
     public string? SweepStatus => sweep?.Status;
@@ -168,8 +166,18 @@ public class LodServerCaptureSystem : ModSystem
 
         if (Config.PregenRadiusChunks > 0)
         {
-            pregen = new LodServerPregen(sapi, Mod.Logger,
-                Config.PregenRadiusChunks, Config.PregenColumnsPerSecond);
+            // Pre-generation now runs the same peek generator /vhgen uses, rather than
+            // loading columns into the world. The purpose is unchanged - build the LOD
+            // cache around spawn without waiting for players - but it no longer writes
+            // the terrain it generates to the savegame. That was never the point of the
+            // setting, only how the first version happened to work, and it cost worldgen
+            // time and disk for terrain nobody had visited.
+            var spawn = sapi.World.DefaultSpawnPosition;
+            int cs = GlobalConstants.ChunkSize;
+            pregen = new LodPlayerPregen(sapi, Mod.Logger, pipeline!,
+                (int)spawn.X / cs, (int)spawn.Z / cs,
+                Config.PregenRadiusChunks, Config, "startup pre-generation",
+                Config.PregenColumnsPerSecond);
             pregen.Start();
         }
     }
