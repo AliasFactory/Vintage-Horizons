@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Tier 2: does the whole pipeline run, end to end, without anything going wrong?
+# Tier 2. It answers one question: does the full pipeline operate, end to end, with no
+# error?
 #
-# Boots a strictly vanilla dedicated server and a sandboxed client with the mod as its
-# only addition, lets it capture for a while, stops cleanly, and asserts on what the
-# logs say happened. Then restarts against the warm cache, which is the only way to
-# check that what was written can be read back.
+# The script starts a vanilla dedicated server, and a client in a sandbox with the mod as
+# its only addition. It lets the client capture for a time. It stops both cleanly. Then
+# it examines what the logs record.
 #
-# Everything here goes through the existing test-*.sh isolation plumbing unchanged.
-# Those rules are safety-critical - a violation once crashed the user's live game -
-# and this script is a caller, never a modification.
+# Then it starts the client again, against the warm cache. That second run is the only
+# way to know that the mod can read back what it wrote.
+#
+# CAUTION: Each step here uses the isolation code in the test-*.sh scripts, with no
+# change. Those rules are safety-critical, and a violation stopped the live game of the
+# user one time. This script is a caller of them, and never a change to them.
 #
 # Usage: check-smoke.sh [--settle <seconds>]
 
@@ -34,8 +37,8 @@ trap cleanup EXIT
 echo "  smoke: deploying a fresh build"
 "$VH_ROOT/scripts/deploy-sandbox.sh" client >/dev/null
 
-# A vanilla server, deliberately: the mod must work as a client-side-only install, and
-# that is the configuration almost every player is actually in.
+# The server is vanilla, on purpose. The mod must operate with an installation on the
+# client only, and almost every player has that configuration.
 rm -rf "${VH_SANDBOX:?}/server/Mods/vintagehorizons"
 
 cleanup
@@ -60,18 +63,22 @@ run_client() {
     echo "  smoke ($label): joined, capturing for ${SETTLE}s"
     sleep "$SETTLE"
 
-    # Stop before asserting: the final statistics line and the storage drain both only
-    # happen on a clean shutdown, and "nothing left unwritten" is exactly what we want
-    # to know. Then wait for it to really be gone - flushing a few thousand sections
-    # regularly outlasts test-stop.sh's 10s patience, and it must not be hurried.
+    # Stop the client before the tests. The last statistics line and the write of the
+    # storage queue both occur at a clean shutdown only. "Nothing stays unwritten" is
+    # exactly what these tests must know.
+    #
+    # Then wait until the process is gone. A write of a few thousand sections regularly
+    # needs more than the 10 seconds that test-stop.sh waits, and nothing must hurry
+    # it.
     "$VH_ROOT/scripts/test-stop.sh" client >/dev/null
     vh_wait_stopped "$VH_SANDBOX/test-instance.pid" 120 \
         || echo "      - client still shutting down after 2 minutes"
     return 0
 }
 
-# --- Pass 1: cold cache. ---
-# Wiped, so every section in this run was captured from scratch this session.
+# --- Pass 1: a cold cache. ---
+# The script empties the cache. Thus this session captured each section in this run from
+# the start.
 rm -rf "${VH_SANDBOX:?}/ModData/vintagehorizons"
 
 if run_client "cold" "Level finalized"; then
@@ -81,9 +88,10 @@ else
     failures=$((failures + 1))
 fi
 
-# --- Pass 2: warm cache. ---
-# The persistence round trip. A section that cannot be read back is invisible until
-# someone restarts and finds a hole, so this is the assertion that catches it.
+# --- Pass 2: a warm cache. ---
+# This is the round trip of the persistence. A section that the mod cannot read back is
+# invisible, until a person restarts the game and finds a hole. Thus this test finds
+# it.
 if run_client "warm" "Level finalized"; then
     python3 "$VH_ROOT/scripts/check-log.py" "$CLIENT_LOG" \
         --label "smoke warm " --expect-capture --expect-cache-loaded || failures=$((failures + 1))

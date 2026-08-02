@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
-# Shared plumbing for the sandbox test launchers. Sourced, never executed.
+# The shared code for the sandbox test launchers. A script sources this file. Nothing
+# executes it directly.
 #
-# The isolation rules below are safety-critical (a violation once crashed the
-# user's live game); keeping them in ONE place is deliberate, so a fix can't be
-# applied to the client launcher and forgotten in the server launcher.
+# CAUTION: The isolation rules below are safety-critical. A violation stopped the live
+# game of the user one time.
+#
+# These rules are in ONE place on purpose. Thus nobody can correct the client launcher
+# and forget the server launcher.
 
 VH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VH_SANDBOX="$VH_ROOT/.testdata"
 VH_GAME="${VINTAGE_STORY:-$HOME/Games/vintagestory1.22.5}"
 
-# The desktop launcher's DOTNET_ROOT (~/.dotnet) is stale on this machine, but a
-# caller who sets it deliberately must win - same contract as dev-run.sh.
+# The DOTNET_ROOT of the desktop launcher, at ~/.dotnet, is old on this machine. But a
+# caller that sets it deliberately must win. This is the same contract as dev-run.sh.
 export DOTNET_ROOT="${DOTNET_ROOT:-/usr/share/dotnet}"
 
-# True only if <pid> is live AND its command line runs against our sandbox
-# dataPath. Liveness alone is not enough: a crashed instance leaves its pidfile
-# behind and the kernel recycles PIDs, so a stale pidfile can point at an
-# unrelated process - possibly the user's own game.
+# True only when <pid> is alive AND its command line uses the sandbox dataPath.
+#
+# A live process alone is not sufficient. An instance that crashed leaves its pidfile,
+# and the kernel uses a PID again. Thus an old pidfile can point at an unrelated
+# process, and that process can be the game of the user.
 vh_is_ours() {
     local pid="$1"
     [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]] || return 1
@@ -25,9 +29,9 @@ vh_is_ours() {
     return 0
 }
 
-# Refuse to start a second instance, but only when the pidfile really points at
-# a live sandbox process; a stale/recycled pidfile is cleared instead of
-# blocking startup forever.
+# Refuse to start a second instance. Do this only when the pidfile points at a live
+# sandbox process. Clear a pidfile that is old, or whose PID the kernel used again.
+# Without that, the pidfile stops each start, forever.
 vh_guard_not_running() {
     local label="$1" pidfile="$2"
     [[ -f "$pidfile" ]] || return 0
@@ -43,18 +47,20 @@ vh_guard_not_running() {
     return 0
 }
 
-# Keep one generation of console output: it is the ONLY record of native crashes
-# and pre-logger host failures (the game's own Logs/ archive covers everything
-# that reaches its logger, but not those).
+# Keep the console output of the previous run. It is the ONLY record of a native crash,
+# and of a host failure before the logger starts. The Logs/ directory of the game holds
+# each message that reaches its logger, but it does not hold those two.
 vh_rotate_log() {
     local log="$1"
     [[ -f "$log" ]] && mv -f "$log" "$log.prev"
     return 0
 }
 
-# Launch detached, record the PID, then confirm it survived startup - a
-# backgrounded failure never trips set -e, and a pidfile pointing at a dead PID
-# is exactly what feeds the recycled-PID hazard.
+# Start the process detached. Record the PID. Then make sure that the process survived
+# the startup.
+#
+# A failure in the background never triggers set -e. A pidfile that points at a dead PID
+# is also exactly what causes the hazard with a reused PID.
 vh_launch() {
     local label="$1" pidfile="$2" log="$3"
     shift 3
@@ -68,8 +74,8 @@ vh_launch() {
     sleep 2
     if ! kill -0 "$pid" 2>/dev/null; then
         rm -f "$pidfile"
-        # Return rather than exit: callers may want to retry (a just-stopped server
-        # leaves its port in TIME_WAIT, which fails the bind for a few seconds).
+        # Return, and do not exit. A caller can try again. A server that stopped just now
+        # leaves its port in TIME_WAIT, and the bind fails for a few seconds.
         return 1
     fi
 
@@ -77,16 +83,18 @@ vh_launch() {
     return 0
 }
 
-# Wait for an instance to actually be gone after test-stop.sh asked it to stop.
+# Wait until an instance is gone, after test-stop.sh asked it to stop.
 #
-# test-stop.sh sends SIGTERM, polls for 10s, and then deliberately gives up rather than
-# escalating to SIGKILL - the right call, because a client mid-shutdown is flushing its
-# LOD cache and killing it there is how a half-written database happens. But a client
-# with a few thousand sections to write regularly takes longer than 10s, and a caller
-# that starts the next instance immediately trips vh_guard_not_running on a pidfile that
-# is still perfectly valid.
+# test-stop.sh sends SIGTERM and polls for 10 seconds. Then it stops, and it does not
+# send SIGKILL. That is the correct decision. A client in the middle of a shutdown writes
+# its LOD cache, and a SIGKILL there gives a database that is half written.
 #
-# So: wait it out. Returns 0 once the process is gone, 1 on timeout.
+# But a client with a few thousand sections to write regularly needs more than 10
+# seconds. Then a caller that starts the next instance immediately triggers
+# vh_guard_not_running, on a pidfile that is still valid.
+#
+# Thus this function waits. It returns 0 after the process is gone, and 1 at the
+# timeout.
 vh_wait_stopped() {
     local pidfile="$1" timeoutSec="${2:-90}"
     local waited=0
@@ -107,12 +115,15 @@ vh_wait_stopped() {
     return 1
 }
 
-# Wait for a marker to appear in a log, giving up if the process dies first (a crash
-# reporter can keep a doomed process alive well past vh_launch's liveness check, so
-# process liveness alone is not proof of a successful start).
-# Returns 0 on success, 1 on timeout or death.
-# An empty marker means "wait for the file itself to appear", which is how the bench
-# harness signals completion.
+# Wait for a marker to appear in a log. Stop when the process dies first.
+#
+# A crash reporter can keep a process alive long after the liveness check of vh_launch.
+# Thus a live process alone does not prove a successful start.
+#
+# This function returns 0 for a success, and 1 for a timeout or a death.
+#
+# An empty marker means "wait for the file to appear". The bench harness uses that form
+# to give its completion.
 vh_wait_for() {
     local log="$1" marker="$2" timeoutSec="$3" pidfile="$4"
     local waited=0

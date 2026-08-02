@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""Assert on what a sandbox run actually logged.
+"""Examine what a sandbox run recorded in its log.
 
-The mod reports its whole internal state through a handful of format strings whose
-shape is stable, so a run's logs are a machine-readable record of what the pipeline
-did. That is what makes the sandbox tiers assertable rather than just watchable.
+The mod reports its full internal state through a small number of format strings. The
+shape of those strings is stable. Thus the log of a run is a record that a machine can
+read, and it gives what the pipeline did. That property is what lets the sandbox tiers
+test a run, instead of a person only watching it.
 
-Every claim in DESIGN.md and docs/STATUS.md was originally established by reading
-these same numbers off a screen by hand, once. This reads them every time.
+A person established each claim in DESIGN.md and docs/STATUS.md by a read of these same
+numbers from a screen, one time. This script reads them at each run.
 
 Usage:
     check-log.py <client-main.log> [options]
 
-Options are assertions; with none, only the universal invariants are checked.
+Each option is a test. Without an option, this script examines the universal rules only.
 """
 
 import argparse
 import re
 import sys
 
-# --- Log line shapes. Quoted from the format strings in the C# source. ---
+# --- The shapes of the log lines. These come from the format strings in the C# source. ---
 
 # LodPipeline.cs: logger.Notification("LOD cache: {0}", dbPath)
 CACHE_OPEN = re.compile(r"LOD cache: (\S+)")
@@ -28,9 +29,12 @@ CACHE_OPEN = re.compile(r"LOD cache: (\S+)")
 LEVEL_FINALIZED = re.compile(
     r"Level finalized\. LOD capture active \([^,]+, (\d+) sections from cache")
 
-# The primary counter line. Matched on labels rather than field positions, because
-# the storage line below genuinely renders its placeholders out of order and a
-# positional match would silently drift if anyone reordered these too.
+# The primary line of counters. The match uses the labels, and not the positions of the
+# fields.
+#
+# The storage line below writes its placeholders out of order. Thus a match on a position
+# becomes incorrect, with no message, if a person changes the order of these fields
+# also.
 STATS = re.compile(
     r"(\d+) sections resident \[(?P<levels>[^\]]*)\] "
     r"\((?P<evicted>\d+) RAM-evicted, (?P<from_cache>\d+) from cache\), "
@@ -56,7 +60,7 @@ FILL_IN = re.compile(r"Fill-in: (\d+) meshes after ([\d.]+)s")
 
 MANIFEST = re.compile(r"server key manifest complete . (\d+) keys received")
 
-# Lines that are a failure by their mere presence.
+# Each line here is a failure when it is present.
 FATAL_LINES = [
     ("First capture error was", "a capture job threw"),
     ("First mesh error was", "a mesh job threw"),
@@ -99,7 +103,8 @@ class Report:
 
 
 def last_match(pattern, lines):
-    """The final occurrence, which is the settled state rather than a mid-run sample."""
+    """The last occurrence. That is the stable state, and not a sample from the middle of a
+    run."""
     found = None
     for line in lines:
         m = pattern.search(line)
@@ -138,7 +143,7 @@ def main():
     r = Report()
     r.ok(len(lines) > 0, "the log is not empty")
 
-    # --- Universal: nothing may have gone wrong. ---
+    # --- Universal rules: nothing can have failed. ---
     for needle, meaning in FATAL_LINES:
         hits = [l for l in lines if needle in l]
         r.ok(not hits, f"no '{needle}' ({meaning})",
@@ -151,10 +156,12 @@ def main():
              "an idle mod opens no cache")
         return r.finish(args.label)
 
-    # --- Exactly one cache per process. ---
-    # Two lines naming one file is not cosmetic: it was the singleplayer bug where the
-    # client and the in-process server each opened the same database, duplicating the
-    # cache, the work and the memory. This assertion is that bug's regression test.
+    # --- There is exactly one cache for each process. ---
+    #
+    # Two lines that name one file is not a cosmetic problem. It was the singleplayer
+    # defect: the client and the server in the same process each opened the same database.
+    # That duplicated the cache, the work and the memory. This test is the regression test
+    # for that defect.
     caches = [CACHE_OPEN.search(l).group(1) for l in lines if CACHE_OPEN.search(l)]
     r.ok(len(caches) == 1, "exactly one LOD cache is opened",
          f"opened {len(caches)}: {caches}")
@@ -230,10 +237,11 @@ def main():
     if manifest:
         r.note(f"manifest: {manifest.group(1)} keys received")
 
-    # --- Throughput, reported and not gated. ---
-    # These are load-dependent: the mesh-pool A/B showed one run capturing four times
-    # the columns of another in the same window. Worth watching as a trend, wrong to
-    # fail a build on.
+    # --- The throughput. This script reports it, and it does not fail on it. ---
+    #
+    # These values depend on the load. The A/B test of the mesh pool showed one run that
+    # captured four times the columns of another run, in the same period. Watch these
+    # numbers as a trend. Do not fail a build on them.
     fills = [(int(m.group(1)), float(m.group(2)))
              for m in (FILL_IN.search(l) for l in lines) if m]
     if fills:

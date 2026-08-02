@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build the mod and install it into the sandbox at .testdata/Mods.
+# Build the mod, and install it into the sandbox at .testdata/Mods.
 #
-# This step used to be manual, which meant a sandbox run could silently measure a
-# binary from some earlier session. bench.sh only ever did it as a side effect of
-# wiping mod directories for its own comparison, so a plain (non-bench) run had no
-# way to get a fresh build in at all.
+# A person did this step by hand before. Thus a sandbox run could measure a binary from
+# an earlier session, and it gave no message.
 #
-# Usage: deploy-sandbox.sh [client|server|both]   (default: client)
+# bench.sh did this step only as a side effect, when it emptied the mod directories for
+# its own comparison. Thus a normal run, which is not a bench run, had no way to install
+# a new build at all.
 #
-# The server side is deliberately NOT the default: most testing wants a strictly
-# vanilla dedicated server, to prove the mod works as a client-side-only install.
-# Ask for it explicitly when testing the server assist.
+# Usage: deploy-sandbox.sh [client|server|both]. The default is client.
+#
+# The server side is deliberately NOT the default. Most tests need a vanilla dedicated
+# server, to prove that the mod operates with an installation on the client only. Ask for
+# the server side when you test the server assist.
 
 source "$(dirname "${BASH_SOURCE[0]}")/test-lib.sh"
 
@@ -35,8 +37,9 @@ fi
 install_into() {
     local dest="$1" label="$2"
     mkdir -p "$dest"
-    # Replace rather than merge: a file removed from the build must disappear here
-    # too, or a stale asset outlives the change that deleted it.
+    # Replace the directory. Do not merge into it. A file that the build no longer makes
+    # must go away here also. Without that, an old asset continues after the change that
+    # deleted it.
     rm -rf "${dest:?}/vintagehorizons"
     cp -r "$BUILT" "$dest/"
     echo "  $label: $dest/vintagehorizons"

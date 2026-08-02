@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# Launch Vintage Story with the dev build of VintageHorizons loaded.
+# Start Vintage Story with the development build of VintageHorizons.
+#
 # Usage: scripts/dev-run.sh [worldname] [playstyle]
-#   worldname defaults to "vhsurvival". playstyle (only used when the world is
-#   created fresh) must be a playstyle LANG code: the game default
-#   "creativebuilding" generates a superflat world useless for LOD testing;
-#   real terrain needs "preset-surviveandbuild" (note the prefix - the plain
-#   code "surviveandbuild" silently mismatches and falls back to superflat).
+#
+# The default worldname is "vhsurvival".
+#
+# The game uses playstyle only when it creates the world. That value must be a playstyle
+# LANG code. The game default is "creativebuilding", and it makes a superflat world,
+# which no LOD test can use.
+#
+# For real terrain, give "preset-surviveandbuild". Note the prefix. The plain code
+# "surviveandbuild" does not match, it gives no message, and the game makes a superflat
+# world.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -16,8 +22,8 @@ PLAYSTYLE="${2:-preset-surviveandbuild}"
 MOD_PATH="$REPO_DIR/VintageHorizons/bin/Debug/net10.0/Mods"
 [ -d "$MOD_PATH/vintagehorizons" ] || { echo "No build output at $MOD_PATH - run: dotnet build VintageHorizons"; exit 1; }
 
-# The desktop launcher's DOTNET_ROOT (~/.dotnet) is stale on this machine;
-# the system-wide SDK lives in /usr/share/dotnet.
+# The DOTNET_ROOT of the desktop launcher, at ~/.dotnet, is old on this machine. The SDK
+# for the full system is at /usr/share/dotnet.
 export DOTNET_ROOT="${DOTNET_ROOT:-/usr/share/dotnet}"
 
 cd "$GAME_DIR"

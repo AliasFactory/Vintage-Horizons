@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Tier 3: the install combinations and the admin-facing controls.
+# Tier 3: the installation combinations, and the controls that an admin uses.
 #
-# Tier 2 proves the pipeline works. This proves it behaves correctly in the
-# configurations other people will actually put it in - including the ones where the
-# right answer is "do nothing and stay out of the way".
+# Tier 2 proves that the pipeline operates. This tier proves that the mod behaves
+# correctly in the configurations that other people use. That includes each configuration
+# where the correct behaviour is to do nothing.
 #
 # Usage: check-matrix.sh [--only <scenario>] [--skip-visual] [--settle <seconds>]
 #
@@ -39,7 +39,7 @@ trap cleanup EXIT
 wants() { [[ -z "$ONLY" || "$ONLY" == "$1" ]]; }
 fail()  { echo "  $1: FAILED"; failures=$((failures + 1)); }
 
-# --- Sandbox state helpers -------------------------------------------------------
+# --- The helpers for the sandbox state ------------------------------------------
 
 client_mod()   { "$VH_ROOT/scripts/deploy-sandbox.sh" client >/dev/null; }
 server_mod()   { "$VH_ROOT/scripts/deploy-sandbox.sh" server >/dev/null; }
@@ -49,8 +49,9 @@ no_server_mod(){ rm -rf "${VH_SANDBOX:?}/server/Mods/vintagehorizons"; }
 wipe_client_cache() { rm -rf "${VH_SANDBOX:?}/ModData/vintagehorizons"; }
 wipe_server_cache() { rm -rf "${VH_SANDBOX:?}/server/ModData/vintagehorizons"; }
 
-# Written before the server starts; it sanitizes and rewrites this file on load, so
-# reading it back afterwards also proves the round trip.
+# This script writes the file before the server starts. The server clamps the values and
+# writes the file again at load. Thus a read of the file afterward also proves the round
+# trip.
 write_server_config() {
     mkdir -p "$(dirname "$SERVER_CONFIG")"
     cat > "$SERVER_CONFIG"
@@ -61,8 +62,9 @@ start_server() {
     "$VH_ROOT/scripts/test-server.sh" >/dev/null
 }
 
-# Runs a client, waits for the marker, lets it settle, then stops it cleanly so the
-# final statistics line and the storage drain both land in the log.
+# Run a client. Wait for the marker. Let the client reach a stable state. Then stop it
+# cleanly, thus the last statistics line and the write of the storage queue both go into
+# the log.
 run_client() {
     local marker="${1:-Level finalized}" settle="${2:-$SETTLE}"
     rm -f "$CLIENT_LOG"
@@ -82,9 +84,12 @@ run_client() {
     return 0
 }
 
-# test-stop.sh gives a client 10s to exit and then refuses to escalate, which is correct:
-# a client mid-shutdown is flushing its LOD cache. Waiting is the caller's job, and
-# skipping it means the next scenario trips over a pidfile that is still valid.
+# test-stop.sh gives a client 10 seconds to exit, and then it does not send a stronger
+# signal. That is correct, because a client in the middle of a shutdown writes its LOD
+# cache.
+#
+# The wait is the work of the caller. Without that wait, the next scenario meets a
+# pidfile that is still valid.
 stop_client() {
     "$VH_ROOT/scripts/test-stop.sh" client >/dev/null 2>&1 || true
     vh_wait_stopped "$VH_SANDBOX/test-instance.pid" 120 \
@@ -93,20 +98,22 @@ stop_client() {
 
 assert_log() { python3 "$VH_ROOT/scripts/check-log.py" "$CLIENT_LOG" "$@"; }
 
-# One field out of the assist statistics line, e.g. "633" from "... 633 installed, ...".
-# Takes the LAST occurrence: the settled figure, not a sample from mid-run.
+# One field from the statistics line of the assist. One example is "633", from
+# "... 633 installed, ...". This takes the LAST occurrence, which is the stable value. It
+# is not a sample from the middle of a run.
 assist_field() {
     grep -oE "[0-9]+ $2" "$1" 2>/dev/null | tail -1 | grep -oE "^[0-9]+" || true
 }
 
-# --- Scenario 1: the ordinary case. A vanilla server, mod on the client only. -----
-# The configuration almost every player is in, and the one where the assist must
-# conclude "nothing here" without breaking anything.
+# --- Scenario 1: the normal case. A vanilla server, with the mod on the client only. ---
+# Almost every player has this configuration. Here the assist must conclude "nothing
+# here", and it must break nothing.
 
 if wants client-only; then
     echo "  [client-only] mod on the client, vanilla server"
-    # Strip the server first: deploy-sandbox.sh warns when the server still has the mod,
-    # and a warning printed and then immediately made untrue is worse than none.
+    # Remove the mod from the server first. deploy-sandbox.sh gives a warning when the
+    # server still has the mod. A warning that this script prints and then makes incorrect
+    # is worse than no warning.
     no_server_mod; client_mod; wipe_client_cache
     start_server
     if run_client; then
@@ -117,7 +124,8 @@ if wants client-only; then
     fi
 fi
 
-# --- Scenario 2: mod on both sides, server pre-generated so it has something. -----
+# --- Scenario 2: the mod on both sides, with a pre-generated server, thus it holds
+# data. ---
 
 if wants both || wants radius; then
     echo "  [both] mod on both sides, server pre-generating a cache"
@@ -135,8 +143,8 @@ if wants both || wants radius; then
 JSON
     start_server
 
-    # Wait for the pre-generation to finish, so what follows is testing the serve
-    # path rather than a race against worldgen.
+    # Wait for the pre-generation to complete. Thus the steps that follow test the serve
+    # path, and not a race against the worldgen.
     if vh_wait_for "$SERVER_LOG" "LOD pre-generation finished" 600 "$VH_SANDBOX/server/server.pid"; then
         echo "      - server pre-generation complete"
     else
@@ -152,23 +160,26 @@ if wants both; then
         fail "both"
     fi
 
-    # The config file is rewritten on load with sanitized values, so what is on disk
-    # now is what the server actually applied.
+    # The server writes the config file again at load, with the clamped values. Thus the
+    # content of the disk now is what the server applied.
     if [[ -f "$SERVER_CONFIG" ]]; then
         echo "      - server applied: $(tr -d ' \n' < "$SERVER_CONFIG")"
     fi
 fi
 
 # --- Scenario 3: a client WITHOUT the mod joins a server that has it. -------------
-# side: Universal with both required flags false. Get this wrong and the server
-# demands the mod from every player, which is the one failure that would make an
-# admin uninstall it immediately.
+# The mod uses side: Universal, with both required flags false. An error here makes the
+# server request the mod from each player. That is the one failure that makes an admin
+# remove the mod immediately.
 
 if wants no-client-mod; then
     echo "  [no-client-mod] vanilla client joins a modded server"
-    # Its own server, rather than inheriting the one scenario 2 left running: every
-    # scenario has to stand alone or --only silently tests something else. Pre-generation
-    # off, because all this needs is a server that HAS the mod.
+    # This scenario starts its own server. It does not use the server that scenario 2 left
+    # running. Each scenario must operate alone. Without that, --only tests something
+    # different, and it gives no message.
+    #
+    # Pre-generation is off, because this scenario needs a server that HAS the mod, and
+    # nothing more.
     server_mod; no_client_mod
     write_server_config <<'JSON'
 {
@@ -182,10 +193,12 @@ if wants no-client-mod; then
 }
 JSON
     start_server
-    # Without our mod none of our own log lines exist, so the marker has to be a vanilla
-    # one - and it has to prove the join COMPLETED. "Connected to server" appears during
-    # the handshake and so would also appear on a run that is about to be rejected;
-    # receiving the block registry only happens once the server has accepted the client.
+    # The client has no mod, thus no log line of this mod exists. The marker must be a
+    # vanilla line.
+    #
+    # The marker must also prove that the join COMPLETED. "Connected to server" appears
+    # during the handshake, thus it also appears on a run that the server is about to
+    # reject. The block registry arrives only after the server accepts the client.
     if run_client "block types from server" 15; then
         if grep -qi "missing.*mods to join\|you are missing" "$CLIENT_LOG" "$VH_SANDBOX/launch.log" 2>/dev/null; then
             echo "      x the server demanded the mod from a vanilla client"
@@ -199,7 +212,7 @@ JSON
     client_mod
 fi
 
-# --- Scenario 4: serving switched off. Cache kept, nothing shared. ----------------
+# --- Scenario 4: the serving is off. The server keeps its cache, and gives nothing. ---
 
 if wants serving-off; then
     echo "  [serving-off] server keeps its cache but shares none of it"
@@ -224,8 +237,9 @@ JSON
     fi
 fi
 
-# --- Scenario 5: capture switched off entirely. -----------------------------------
-# Clients must be completely unaffected: exactly as on a server without the mod.
+# --- Scenario 5: the capture is fully off. ----------------------------------------
+# Each client must be unaffected. The result must be exactly the result on a server with
+# no mod.
 
 if wants capture-off; then
     echo "  [capture-off] server builds no cache at all"
@@ -255,7 +269,7 @@ JSON
     fi
 fi
 
-# --- Scenario 6: pre-generation covers exactly the square it promises. ------------
+# --- Scenario 6: the pre-generation covers exactly the square that it promises. ---
 
 if wants pregen; then
     echo "  [pregen] radius 2 chunks must request exactly (2*2+1)^2 = 25 columns"
@@ -285,13 +299,16 @@ JSON
     fi
 fi
 
-# --- Scenario 6b: SWEEPING MUST NOT GENERATE. -------------------------------------
-# The single promise the feature makes, and the reason it is safe to default on where
-# pre-generation is not. Loading a column whose surroundings are absent makes the engine
-# generate them to finish worldgen across the seam, so this is not self-evident: an
-# earlier version of the sweep silently added 1,460 columns to the savegame.
+# --- Scenario 6b: A SWEEP MUST GENERATE NOTHING. ----------------------------------
+# This is the one promise that the function makes. It is also the reason why a sweep is
+# safe to have on by default, and pre-generation is not.
 #
-# Asserted against the savegame's own row counts, which is the only place the truth is.
+# This is not obvious. A load of a column whose surround is absent makes the engine
+# generate that surround, to complete the worldgen across the seam. An earlier version of
+# the sweep added 1,460 columns to the savegame, and it gave no message.
+#
+# This test uses the row counts of the savegame. That is the only place that holds the
+# truth.
 
 if wants sweep; then
     echo "  [sweep] indexing existing terrain must add none"
@@ -322,7 +339,7 @@ print(c.execute('SELECT COUNT(*) FROM mapchunk').fetchone()[0],
     if vh_wait_for "$SERVER_LOG" "Savegame sweep finished" 900 "$VH_SANDBOX/server/server.pid"; then
         grep -o "Savegame sweep finished:.*nothing generated" "$SERVER_LOG" | tail -1 | sed 's/^/      - /'
 
-        # Stop first: rows are not all flushed while the server is live.
+        # Stop the server first. It does not write each row while it runs.
         "$VH_ROOT/scripts/test-stop.sh" server >/dev/null 2>&1 || true
         vh_wait_stopped "$VH_SANDBOX/server/server.pid" 180 || true
 
@@ -346,9 +363,11 @@ print(c.execute('SELECT COUNT(*) FROM mapchunk').fetchone()[0],
 fi
 
 # --- Scenario 7: THE SERVE RADIUS. ------------------------------------------------
-# Measured before but never watched. This is the map-revealing control: without it a
-# new player could pull a survey of the whole explored world without travelling, so
-# it is the setting an admin will judge the mod on.
+# A person measured this control before, and never watched it.
+#
+# This is the control for the map-revealing problem. Without it, a new player takes a
+# survey of the full explored world, with no travel. Thus an admin judges the mod on this
+# setting.
 
 if wants radius; then
     echo "  [radius] capped serving must refuse sections outside the ring"
@@ -376,11 +395,15 @@ JSON
         fail "radius"
     fi
 
-    # The uncapped control. A bare "declined > 0" proves nothing on its own: sections
-    # resident in RAM but not yet flushed to disk are also declined, and an uncapped run
-    # was measured producing 55 of them. Terrain missing at distance looks identical
-    # whether the server refused it or never had it, so the only honest test is the same
-    # server cache served twice with the cap as the only difference.
+    # This is the control with no limit.
+    #
+    # A test of "declined > 0" alone proves nothing. A section that is resident in RAM,
+    # and that the mod did not write to the disk yet, is also declined. A run with no limit
+    # produced 55 of those.
+    #
+    # Terrain that is absent at a distance looks the same, whether the server refused it or
+    # never held it. Thus the only honest test gives the same server cache two times, with
+    # the limit as the only difference.
     echo "      running the uncapped control"
     write_server_config <<'JSON'
 {
@@ -423,13 +446,19 @@ JSON
         fail "radius uncapped control"
     fi
 
-    # INFORMATIONAL ONLY. This captures two frames; it does not and cannot assert what is
-    # in them. Across three attempts the same route and configs produced contradictory
-    # images - including a capped run that rendered nothing at a 180s settle after
-    # rendering terrain at 75s - because what the client has fetched is not what it has
-    # drawn: meshing, eviction and quadtree descent all sit in between, and the game's fog
-    # hides the ring distance anyway. The counters above are the verification. Read these
-    # frames only alongside them, and never conclude anything from the pair alone.
+    # CAUTION: This step gives information only. It captures two frames. It does not test
+    # what is in them, and it cannot test that.
+    #
+    # Across three attempts, the same route and the same settings gave images that did not
+    # agree. One capped run drew nothing at a settle of 180 s, after it drew terrain at
+    # 75 s.
+    #
+    # The reason is that what the client fetched is not what it drew. Meshing, eviction and
+    # the descent of the quadtree are all between the two. The fog of the game also hides
+    # the ring distance.
+    #
+    # The counters above are the verification. Read these frames beside those counters
+    # only. Never make a conclusion from the pair of images alone.
     if [[ "$SKIP_VISUAL" == "0" ]]; then
         if [[ -d "$BENCH_BUILT" ]]; then
             echo "      capturing the visual pair (informational: not asserted on)"
@@ -453,16 +482,19 @@ JSON
                 vh_wait_for "$SERVER_LOG" "Dedicated Server now running" 180 \
                     "$VH_SANDBOX/server/server.pid" || true
 
-                # An empty client cache each time, or the second run simply reads back
-                # what the first one fetched and both pictures look the same.
+                # Empty the client cache each time. Without that, the second run reads back
+                # what the first run fetched, and the two images look the same.
                 wipe_client_cache
                 rm -f "$VH_SANDBOX/bench/$label.done" "$VH_SANDBOX/bench/$label.csv"
 
-                # A long settle, and not arbitrarily: at 75s a capped run was screenshotted
-                # with 348 sections resident but only 20 meshed and 4 selected, so the
-                # picture showed meshing progress rather than what the server had served.
-                # Fill-in milestones put 600 meshes at ~40s on a well-fed client, and the
-                # uncapped side has twice as many sections to get through.
+                # The settle time is long, and this value is not arbitrary. At 75 s, a
+                # capped run gave a screenshot with 348 sections resident, but only 20
+                # meshed and 4 selected. Thus that image showed the progress of the
+                # meshing, and not what the server gave.
+                #
+                # The fill-in milestones put 600 meshes at approximately 40 s on a client
+                # with enough data. The uncapped side has two times as many sections to
+                # process.
                 VHBENCH_ROUTE="$VH_ROOT/bench/routes/radius-cap.txt" \
                 VHBENCH_LABEL="$label" VHBENCH_OUT="$VH_SANDBOX/bench" \
                 VHBENCH_SETTLE="${VH_RING_SETTLE:-180}" VHBENCH_MEASURE=5 \
@@ -493,22 +525,27 @@ JSON
 fi
 
 # --- Scenario 8: another LOD mod is installed. ------------------------------------
-# Two mods drawing distant terrain fight over the camera far plane and draw over each
-# other. Going idle is the correct behaviour, and it must be complete.
+# Two mods that draw distant terrain set the far plane of the camera against each other,
+# and they draw over each other. The correct behaviour is to do nothing, and that must be
+# complete.
 
 if wants deferral; then
     echo "  [deferral] another LOD mod present means we stay idle"
     if [[ -d "$VH_ROOT/bench/mods/farseer" ]]; then
         client_mod; server_mod
-        # On the server too, and not as a convenience: Farseer is requiredOnServer, so
-        # against a vanilla server the client disables it and IsModEnabled returns false.
-        # There is then nothing to defer to and the scenario tests nothing. That is also
-        # the real-world shape - a server running one of these forces it on every client.
+        # Install it on the server also. This is not for convenience. Farseer is
+        # requiredOnServer. Thus against a vanilla server the client disables it, and
+        # IsModEnabled returns false. Then there is nothing to defer to, and the scenario
+        # tests nothing.
+        #
+        # This is also the shape in the real world. A server that runs one of these mods
+        # makes each client install it.
         cp -r "$VH_ROOT/bench/mods/farseer" "$VH_SANDBOX/Mods/"
         cp -r "$VH_ROOT/bench/mods/farseer" "$VH_SANDBOX/server/Mods/"
         start_server
-        # Deferring returns from StartClientSide before a world exists, so "Level
-        # finalized" is never logged. The idle notice is the only marker there is.
+        # The deferral returns from StartClientSide before a world exists. Thus the mod
+        # never records "Level finalized". The notice about the idle state is the only
+        # marker.
         if run_client "staying idle" 15; then
             assert_log --label "deferral  " --expect-idle || fail "deferral"
         else

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a Release configuration and package the mod as a ModDB-ready zip.
+# Build the Release configuration, and package the mod as a zip file for ModDB.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,8 +15,9 @@ mkdir -p "$OUT"
 ZIP="$OUT/vintagehorizons_${VERSION}.zip"
 rm -f "$ZIP"
 
-# ModDB zips contain the mod files at the archive root (no wrapping folder),
-# and never the game's own DLLs (all references are Private=false).
+# A zip file for ModDB holds the mod files at the root of the archive, with no folder
+# around them. It never holds a DLL of the game, because each reference uses
+# Private=false.
 python3 - "$MOD_DIR" "$ZIP" <<'EOF'
 import os, sys, zipfile
 mod_dir, zip_path = sys.argv[1], sys.argv[2]
