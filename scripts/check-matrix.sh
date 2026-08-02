@@ -573,8 +573,13 @@ JSON
     VINTAGEHORIZONS_AUTOCMD="/vhgen start 10" run_client "Level finalized" 30 || ok=0
     vh_wait_for "$SERVER_LOG" "Generation finished" 600 "$VH_SANDBOX/server/server.pid" || {
         echo "      x generation never finished after the player command"; ok=0; }
-    grep -q "Generation started by Player" "$SERVER_LOG" \
-        || { echo "      x the run was not attributed to the player"; ok=0; }
+    # Attributed to a player, not to the console. The line carries the player's own
+    # name, so match on what it is not rather than on a literal word.
+    if ! grep -q "Generation started by " "$SERVER_LOG" \
+       || grep -q "Generation started by the console" "$SERVER_LOG"; then
+        echo "      x the run was not attributed to a player"
+        ok=0
+    fi
 
     # Join 2, empty cache: the generated sections must arrive over the wire.
     wipe_client_cache
