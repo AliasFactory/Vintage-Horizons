@@ -17,8 +17,8 @@ converts them into column-RLE "full data sources". Each source holds 64 x 64 col
 palette with packed longs. The mod merges these into a mip pyramid on SQLite, keyed by the
 detail level with x and z. A quadtree of render sections, centered on the player, takes data
 from that pyramid. It meshes greedy quads off the main thread. Then it draws them into a
-framebuffer of its own, which it composites behind and around the vanilla terrain, with a
-clip plane and a dithered fade.
+framebuffer of its own. It composites that framebuffer behind and around the vanilla
+terrain, with a clip plane and a dithered fade.
 
 ---
 
@@ -86,9 +86,9 @@ the interaction again, and submits it again.
 
 Forge and NeoForge use `PlayerInteractEvent.LeftClickBlock` and `RightClickBlock`
 (`forge/src/main/java/com/seibel/distanthorizons/forge/ForgeClientProxy.java` lines 113-176).
-Note the cheap first test, `SharedApi.isChunkAtBlockPosAlreadyUpdating(...)`. It prevents a
-pull of a chunk from Minecraft, which is slow and bad for the render thread, when that chunk
-is in the queue already.
+Note the cheap first test, `SharedApi.isChunkAtBlockPosAlreadyUpdating(...)`. When a chunk
+is in the queue already, this test prevents a pull of that chunk from Minecraft. Such a pull
+is slow, and it is bad for the render thread.
 
 ### 1.2 The funnel: `SharedApi.applyChunkUpdate`
 
@@ -189,9 +189,13 @@ wrapper and a block-state wrapper. It serializes as strings, in the form
 again, in `mergeAndReturnRemappedEntityIds`. `removeUnusedIdsAndRemap()`, at line 1145,
 prevents a palette that grows without a limit.
 
-**The packing of a data point** is in `core/util/FullDataPointUtil.java`, lines 30-70. One
-`long` holds a **32-bit palette id, a 12-bit height, a 12-bit bottom Y relative to the minimum
-of the level, 4 bits of sky light and 4 bits of block light**. A column is a stack of these
+**The packing of a data point** is in `core/util/FullDataPointUtil.java`, lines 30-70. One `long` holds these fields:
+
+- a 32-bit palette id
+- a 12-bit height
+- a 12-bit bottom Y, relative to the minimum of the level
+- 4 bits of sky light
+- 4 bits of block light A column is a stack of these
 runs with no gaps. Air is stored, thus the downsampling of the lighting operates.
 `LodDataBuilder.validateOrThrowApiDataColumn` makes this a rule.
 
@@ -206,8 +210,8 @@ reads each of the 16 x 16 columns from the top down. It starts at
 `max(lightBlockingHeightmap, solidHeightmap)`, and it writes a new run when the block state
 **or the biome** changes.
 
-A "force single block" rule prevents a thin colored top, such as a snow layer, a flower or
-fire, from giving its color to the full column. Read lines 195-256.
+A "force single block" rule stops a thin colored top from giving its color to the full
+column. A snow layer, a flower and fire are such tops. Read lines 195-256.
 
 The chunk position maps into one quadrant of the leaf section of 4 x 4 chunks, as
 `chunkPos & 3`.
@@ -248,9 +252,13 @@ compression is on.
 
 `core/dataObjects/render/ColumnRenderSource.java` also holds 64 x 64 columns. But each column
 has a **fixed maximum count of vertical slices**, which comes from `EDhApiVerticalQuality`. It
-also uses a different 64-bit packing (`core/util/RenderDataPointUtil.java` lines 30-60): a
-**4-bit material id, a 4-bit alpha, 8 bits each of R, G and B, a 12-bit yMax, a 12-bit yMin,
-and 4 bits each of block light and sky light**.
+also uses a different 64-bit packing (`core/util/RenderDataPointUtil.java` lines 30-60):
+
+- a 4-bit material id
+- a 4-bit alpha
+- 8 bits each of R, G and B
+- a 12-bit yMax and a 12-bit yMin
+- 4 bits each of block light and sky light
 
 Thus the render pipeline operates on colors that the mod resolved already, and it uses no
 palette.
@@ -283,9 +291,9 @@ own thread.
 the primary key **(DetailLevel, PosX, PosZ)**. `DetailLevel` is the *data* detail, as 0, 1, 2
 and more, which matches the mip pyramid.
 
-The blob columns are `Data`, which holds all 4096 columns as packed longs with a length
-prefix, then `ColumnGenerationStep`, `ColumnWorldCompressionMode`, and `Mapping` for the
-palette strings. The other columns are `DataFormatVersion`, `CompressionMode`, the dirty flags
+The blob columns are `Data`, `ColumnGenerationStep`, `ColumnWorldCompressionMode` and
+`Mapping`. `Data` holds all 4096 columns as packed longs, with a length prefix. `Mapping`
+holds the palette strings. The other columns are `DataFormatVersion`, `CompressionMode`, the dirty flags
 `ApplyToParent` and `ApplyToChildren`, and the timestamps.
 
 The migration `0090-sqlite-addAdjacentFullDataColumns.sql` adds the blobs `NorthAdjData`,
@@ -319,7 +327,7 @@ server. Without it, the mod can use the dimension name only. Singleplayer uses
 
 **Write merging** is `core/util/delayedSaveCache/AbstractDelayedSaveCache.java` with
 `DelayedDataSourceSaveCache`. The mod merges the chunk updates in memory for each section
-position, and writes them after 1 second with no new data (`AbstractDhLevel.java` line 69).
+position. It writes them after 1 second with no new data (`AbstractDhLevel.java` line 69).
 Chunks that arrive near each other almost always go into the same section of 4 x 4 chunks.
 
 ---
@@ -374,7 +382,7 @@ executor. It has five steps.
    it converts each one to a `ColumnRenderSource`, as section 2.4 gives.
 2. `core/dataObjects/render/bufferBuilding/ColumnRenderBufferBuilder.java#makeLodRenderData`
    runs for each of the 64 x 64 columns. It gets the 4 adjacent columns, from inside the
-   section or from the neighbour strip, and it handles a mismatch in the detail level, at
+   section or from the neighbour strip. It also handles a mismatch in the detail level, at
    lines 146-235. Then for each vertical run it calls `addRenderDataPointToBuilder`, which
    calls `ColumnBox.addBoxQuadsToBuilder`
    (`core/dataObjects/render/bufferBuilding/ColumnBox.java`).
@@ -384,15 +392,20 @@ executor. It has five steps.
    the adjacent column, and it marks an occluded span as `SKYLIGHT_COVERED` and skips it. This
    is the strategy of column quads with neighbour culling.
 3. `core/dataObjects/render/bufferBuilding/LodQuadBuilder.java` puts the quads into buckets
-   for the 6 face directions. It merges during the insert, and then it does a full **greedy
+   for the 6 face directions. It merges during the insert. Then it does a full **greedy
    merge pass** (`mergeQuads`, line 265) along both axes, through `BufferQuad.tryMerge`
    (`core/dataObjects/render/bufferBuilding/BufferQuad.java`). A transparent quad merges from
    east to west only, which keeps the sort order.
-4. **The vertex format is 16 bytes** (`putVertex`, line 477). It holds 3 int16 values for the
-   position relative to the section, an int16 of metadata with 4 bits each of sky light and
-   block light and a 6-bit "micro offset" for each axis that the vertex shader uses against
-   cracks, an RGBA8 color, a uint8 material id for Iris, a uint8 normal index, and an int16
-   texture tile id. The positions are relative to the corner of the section. The origin of the
+4. **The vertex format is 16 bytes** (`putVertex`, line 477). It holds these fields:
+
+   - 3 int16 values for the position relative to the section
+   - an int16 of metadata. It holds 4 bits each of sky light and block light, and a 6-bit
+     "micro offset" for each axis. The vertex shader uses that offset against cracks.
+   - an RGBA8 color
+   - a uint8 material id for Iris
+   - a uint8 normal index
+   - an int16 texture tile id
+ The positions are relative to the corner of the section. The origin of the
    section goes into a uniform for each buffer.
 5. The upload uses `core/dataObjects/render/bufferBuilding/LodBufferContainer.java`. The CPU
    buffers go to the task queue of the render thread, which makes and uploads the GL buffers.
@@ -416,9 +429,14 @@ distance. The opaque pass draws from near to far. The transparent pass draws fro
 A comment gives the trick for the order of translucency with discrete columns.
 
 `core/render/renderer/LodRenderer.java#renderTerrain`, at line 119, draws into **the color and
-depth framebuffer of Distant Horizons**. The order is: the opaque pass, then the generic
-objects, then SSAO, then the transparent pass, then the fog (`shaders/fog/gl/*`), then the fade
-at the far clip.
+depth framebuffer of Distant Horizons**. The passes run in this order:
+
+1. the opaque pass
+2. the generic objects
+3. SSAO
+4. the transparent pass
+5. the fog (`shaders/fog/gl/*`)
+6. the fade at the far clip
 
 Then a fullscreen "apply" pass composites that buffer into the framebuffer of Minecraft, and
 it uses both depth buffers. Read `this.metaRenderer.applyToMcTexture` and the shader
@@ -461,9 +479,14 @@ The model is in `core/util/threading/ThreadPoolUtil.java` and
 `core/util/threading/PriorityTaskPicker.java`.
 
 **There is one shared worker pool.** `Config.Common.MultiThreading.numberOfThreads` gives its
-size. `PriorityTaskPicker` divides it into named logical executors: `Network Compression`,
-`IO` for the file handler and SQLite, `Render Loader` for the mesh building, `LOD Builder` for
-the conversion from a chunk to full data, `Update Propagator`, and `World Gen`.
+size. `PriorityTaskPicker` divides it into these named logical executors:
+
+- `Network Compression`
+- `IO`, for the file handler and SQLite
+- `Render Loader`, for the mesh building
+- `LOD Builder`, for the conversion from a chunk to full data
+- `Update Propagator`
+- `World Gen`
 
 The picker limits the total concurrent tasks to N, and it goes through the executors in turn.
 `Update Propagator` and `World Gen` have `canRun` predicates. Those predicates **stop them
@@ -471,11 +494,16 @@ while the camera moves fast**, at the speed of an elytra, or while the backlog o
 builder is large. Read lines 117-118 and 170-201. Thus the throttle comes from starvation, and
 not from priorities.
 
-**Some threads are standalone**, and not in the pool: the network client handler, the beacon
-culling, the migration of V1 data, the cleanup, the flusher of the delayed-save cache
-(`core/util/delayedSaveCache/AbstractDelayedSaveCache.java`), the 250 ms poll loop of the
-propagator (`FullDataUpdatePropagatorV2.runUpdateQueue`), and the retrieval-queue thread of
-the quadtree.
+**Some threads are standalone**, and not in the pool:
+
+- the network client handler
+- the beacon culling
+- the migration of V1 data
+- the cleanup
+- the flusher of the delayed-save cache
+  (`core/util/delayedSaveCache/AbstractDelayedSaveCache.java`)
+- the 250 ms poll loop of the propagator (`FullDataUpdatePropagatorV2.runUpdateQueue`)
+- the retrieval-queue thread of the quadtree
 
 The mod makes the pools at world load, and stops them at world unload, in
 `SharedApi.setDhWorld` (`core/api/internal/SharedApi.java` line 91).
@@ -509,9 +537,10 @@ This is the full path when a block changes, or when a chunk arrives again.
    that source into the delayed-save cache in memory, which has a window of 1 second.
 3. **Store the data and give notice.** At the flush, `onDataSourceSaveAsync` bakes the sky
    light. Then `FullDataUpdaterV2.updateDataSource`
-   (`core/file/fullDatafile/V2/FullDataUpdaterV2.java` line 117) locks the position, loads the
-   recipient section from SQLite, merges with `updateFromDataSource`, saves the DTO with
-   `ApplyToParent=1`, and calls the `IDataSourceUpdateListenerFunc` listeners.
+   (`core/file/fullDatafile/V2/FullDataUpdaterV2.java` line 117) does five steps. It locks
+   the position. It loads the recipient section from SQLite. It merges with
+   `updateFromDataSource`. It saves the DTO with `ApplyToParent=1`. Then it calls the
+   `IDataSourceUpdateListenerFunc` listeners.
 4. **Refresh the render.** `ClientLevelModule.OnDataSourceUpdated`
    (`core/level/ClientLevelModule.java` line 169) calls `LodQuadTree.queuePosToReload(pos)`.
    The next tick of the tree builds the mesh of that section again, *if that section has a
@@ -525,9 +554,10 @@ This is the full path when a block changes, or when a chunk arrives again.
    `WHERE ApplyToParent = 1 ORDER BY <manhattan distance to player> LIMIT n`
    (`core/sql/repo/FullDataSourceV2Repo.java` lines 435-480).
 
-   It groups the dirty children by their parent, merges each child into the parent with the
-   2 x 2 to 1 downsample from section 2.3, clears the flags of the children, sets the flag of
-   the parent unless the parent is the root at detail 15, and saves. That save calls the
+   Then it does these steps. It groups the dirty children by their parent. It merges each
+   child into the parent, with the 2 x 2 to 1 downsample from section 2.3. It clears the
+   flags of the children. It sets the flag of the parent, unless the parent is the root at
+   detail 15. Then it saves. That save calls the
    listeners of step 4. Thus **the coarser render sections refresh as the wave goes up the
    pyramid**.
 
@@ -588,6 +618,10 @@ This is a checklist for a port to Vintage Story.
    and the mod needs no dependency graph in memory.
 6. **Draw the parent in the quadtree until all children are ready**, and swap the buffers
    atomically. Thus there are no holes and no flicker.
-7. **Solve the overlap with vanilla in screen space.** Use a near clip that is a fraction of
-   the vanilla view distance, a dithered discard, and a crossfade of the vanilla image that
-   uses the depth. Do not track which chunks the engine draws.
+7. **Solve the overlap with vanilla in screen space.** Use these three things:
+
+   - a near clip that is a fraction of the vanilla view distance
+   - a dithered discard
+   - a crossfade of the vanilla image that uses the depth
+
+   Do not track which chunks the engine draws.

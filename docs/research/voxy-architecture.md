@@ -71,10 +71,10 @@ above covers a change inside a section. But a change at a section boundary, at l
 coordinate 0 or 15, needs the *neighbour* section to be ingested again. This mixin does that,
 and only for a removal of a block, when `updated.isAir()`.
 
-**What Voxy captures for each 16x16x16 section:** the vanilla paletted container of block
-states, the paletted container of biomes, and copies of the sky-light and block-light arrays.
-It packs the light to one byte for each voxel, as `(sky | block<<4)`, through
-`ILightingSupplier` closures
+**Voxy captures three things for each 16x16x16 section.** They are the vanilla paletted
+container of block states, the paletted container of biomes, and copies of the sky-light and
+block-light arrays. It packs the light to one byte for each voxel, as `(sky | block<<4)`,
+through `ILightingSupplier` closures
 (`voxy/common/world/service/VoxelIngestService.java:59`).
 
 **The ingest job** is `VoxelIngestService.processJob`. A `ConcurrentLinkedDeque` holds records
@@ -98,7 +98,7 @@ bit-packed storage words of the chunk directly, and decodes the indexes inline. 
 biomes one time for each 4 x 4 x 4 cell, into a cache of 64 entries.
 
 This difference decides between free ingestion and a frame-time problem. For Vintage Story,
-the equivalent is a direct read of the palette and data arrays of the chunk, and not the
+the equivalent is a direct read of the palette and data arrays of the chunk. Do not use the
 accessor API for each block.
 
 **Bulk import** is in `voxy/commonImpl/importers/WorldImporter.java` and `DHImporter.java`.
@@ -123,8 +123,8 @@ blocks. Level 0 is 32x32x32 blocks, which is 2 x 2 x 2 vanilla chunk sections. L
 level is in bits 60 to 63. A signed 8-bit `y` starts at bit 52. A signed 24-bit `z` starts at
 bit 28. A signed 24-bit `x` starts at bit 4. The low 4 bits are spare.
 
-This one long is the key for the cache in memory, for the database, for the dirty callbacks
-and for the node position on the GPU. It is one identifier through the full system.
+This one long is the key in four places: the cache in memory, the database, the dirty
+callbacks, and the node position on the GPU. It is one identifier through the full system.
 
 **Each voxel is one 64-bit id** (`voxy/common/world/other/Mapper.java:68-95`):
 
@@ -139,8 +139,8 @@ Air has all block bits at zero, and the light does not change this. Thus `isAir`
 test.
 
 **The `Mapper` is the palette idea.** Voxy gives a small dense id to each block state and
-biome when it first sees it, through `registerNewBlockState`, with a lock and a concurrent
-map. It writes each new mapping immediately to the id-mapping keyspace of the database, as
+biome when it first sees it. It does this through `registerNewBlockState`, with a lock and a
+concurrent map. It writes each new mapping immediately to the id-mapping keyspace of the database, as
 serialized NBT, through `Mapper.StateEntry.serialize`.
 
 Voxy never uses an id again for something else. Thus a stored section stays valid forever. At
@@ -262,9 +262,9 @@ the client receives. Thus the same server and dimension always give the same loc
 ## 4. Rendering, which is the difference
 
 The renderer is a **sparse-octree LOD system that the GPU drives**. The CPU maintains the
-octree. The GPU walks it in each frame, selects the LOD levels by the screen-space error,
-culls by occlusion, makes its own draw commands, and *asks the CPU for the geometry that it
-does not have, through a readback*. The meshes are greedy quads that Voxy built earlier. There
+octree. In each frame the GPU walks the octree. It selects the LOD levels by the screen-space
+error. It culls by occlusion. It makes its own draw commands. Then it *asks the CPU for the
+geometry that it does not have, through a readback*. The meshes are greedy quads that Voxy built earlier. There
 is no CPU geometry work in a frame, and there is no draw call for each section.
 
 ### 4.1 Geometry generation: greedy meshing on the CPU into 8-byte quads
@@ -282,14 +282,25 @@ masks.
 Face culling reads the baked metadata of the model: `faceOccludes`, `faceCanBeOccluded`,
 `cullsSame` and `isFullyOpaque`, in `voxy/client/core/model/ModelQueries.java`.
 
-**The quad format** is in `shaders/lod/quad_format.glsl`. One quad is **one uint64**: the face
-in 3 bits, the size minus 1 in x and y at 4 bits each, the position x, y and z at 5 bits each,
-the model or state id in 16 bits, the biome in 9 bits, and the light in 8 bits. Voxy puts the
+**The quad format** is in `shaders/lod/quad_format.glsl`. One quad is **one uint64**:
+
+- the face in 3 bits
+- the size minus 1 in x and y, at 4 bits each
+- the position x, y and z, at 5 bits each
+- the model or state id in 16 bits
+- the biome in 9 bits
+- the light in 8 bits
+ Voxy puts the
 quads into **8 buckets**: translucent, double-sided, and the 6 axial face directions.
 
-**The output** is `voxy/client/core/rendering/building/BuiltSection.java`. It holds the
-position key, a byte for the existence of the children, a packed 30-bit AABB of the section as
-6 fields of 5 bits, the quad buffer, and the 8 bucket offsets.
+**The output** is `voxy/client/core/rendering/building/BuiltSection.java`. It holds these
+fields:
+
+- the position key
+- a byte for the existence of the children
+- a packed 30-bit AABB of the section, as 6 fields of 5 bits
+- the quad buffer
+- the 8 bucket offsets
 
 **The build service** is
 `voxy/client/core/rendering/building/RenderGenerationService.java`. It has a priority queue,
@@ -313,9 +324,16 @@ linear space follows. Read `voxy/client/core/model/MipGen.java` and `TextureUtil
 
 The raster result also *gives* the metadata for the mesher. The occlusion for each face is
 true when the face covers more than 90% of the pixels and the indentation is less than 0.1.
-The other derived values are the bounding box of the face, the depth of the indentation, the
-need for an alpha cutout, the translucency, whether the face is double-sided, whether the
-color depends on the biome, and the light emission. Voxy finds the biome dependence by a probe
+These are the other derived values:
+
+- the bounding box of the face
+- the depth of the indentation
+- the need for an alpha cutout
+- the translucency
+- whether the face is double-sided
+- whether the color depends on the biome
+- the light emission
+ Voxy finds the biome dependence by a probe
 of the color provider with false biome getters.
 
 A GPU record of 64 bytes for each model holds the UV bounds and flags for each face, and the
@@ -328,14 +346,14 @@ share one model id, which also improves the greedy merge.
 
 **The bake is lazy.** The mesher calls `getModelId(blockId)`. If the bake did not occur, the
 call throws a preallocated `IdNotYetComputedException` with no stack trace. The build task
-puts itself in the queue again, asks for a bake of each state in the section and of the states
-at the neighbour boundary, and tries again. Thus a new block never stops the pipeline
+puts itself in the queue again. It asks for a bake of each state in the section, and of the
+states at the neighbour boundary. Then it tries again. Thus a new block never stops the pipeline
 (`RenderGenerationService.processJob:165-259`).
 
 *Note for Vintage Story:* this subsystem exists because a Minecraft block model is an
 arbitrary mesh. The block shapes of Vintage Story are similar in nature. Thus the concept
-moves across directly. Bake 6 orthographic face impostors for each block one time, take the
-occlusion and tint metadata from the rasterization, and join the duplicates by a hash of the
+moves across directly. Bake 6 orthographic face impostors for each block one time. Take the
+occlusion and tint metadata from the rasterization. Join the duplicates by a hash of the
 content.
 
 ### 4.3 The hierarchical node system: a CPU octree with GPU traversal
@@ -421,8 +439,9 @@ position of the corner from the packed position, size and face, with the LOD sca
 all flat attributes on the provoking vertex only.
 
 The fragment shader `gl46/quads.frag` builds the tiled UVs into the atlas cell of the model
-with `textureGrad`. It does the alpha cutout, the biome tint with a per-quad LUT color and a
-per-pixel refinement by a grayscale mask, and the directional shading of the face.
+with `textureGrad`. It does the alpha cutout. It does the biome tint, with a per-quad LUT
+color and a per-pixel refinement by a grayscale mask. It does the directional shading of the
+face.
 
 **The GPU geometry memory** is one large SSBO. Where the driver supports it, the buffer is
 sparse and Voxy commits pages on demand. A best-fit free list with coalescing of the
@@ -509,13 +528,13 @@ These parts support the pool.
 - **The backpressure**, in summary: the save queue has a soft limit of 5000, above which the
   caller runs the job itself. The importer limiter starts when the save queue holds more than
   1200 items. The mesh queue removes duplicates by position. The application of the geometry
-  results has a limit for each iteration of the octree thread: at most 300 results, at least
-  50 MB of free GPU memory, and approximately 1 MB of uploads. The soft limit of the GPU
+  results has three limits for each iteration of the octree thread. They are at most 300
+  results, at least 50 MB of free GPU memory, and approximately 1 MB of uploads. The soft limit of the GPU
   request queue decreases with the mesh backlog. Each stage that can flood the stage below it
   has its own valve.
-- There are dedicated threads outside the pool: the octree thread in `AsyncNodeManager`, the
-  model-bake thread in `ModelBakerySubsystem`, and an idle-world reaper with a 10-second
-  timeout in `VoxyInstance`.
+- Three dedicated threads are outside the pool. They are the octree thread in
+  `AsyncNodeManager`, the model-bake thread in `ModelBakerySubsystem`, and an idle-world
+  reaper with a 10-second timeout in `VoxyInstance`.
 - CPU-affinity code exists, in `voxy/common/util/cpu/CpuLayout.java`, and it knows about
   P-cores and E-cores. But nothing connects it to the workers now.
 
@@ -552,17 +571,17 @@ These parts support the pool.
    the set of resident nodes. Thus the world engine and the renderer are fully separate, and
    the engine has one `dirtyCallback` only.
 9. **Quads of 8 bytes, vertex pulling, one shared index buffer, and buckets for each face
-   direction**, with backface culling of the buckets on the GPU and MultiDrawIndirectCount. On
-   a modern GL or Vulkan-class API in the engine of Vintage Story, this is the largest single
-   gain. The fallback ladder is: persistent-thread traversal, then indirect dispatches for each
+   direction.** Add backface culling of the buckets on the GPU, and MultiDrawIndirectCount.
+   On a modern GL or Vulkan-class API in the engine of Vintage Story, this is the largest
+   single gain. The fallback ladder is: persistent-thread traversal, then indirect dispatches for each
    level, then CPU traversal with GPU culling, then all on the CPU.
 10. **Raster AABB occlusion over two frames with a temporal bucket**, and a **Hi-Z pyramid**,
     for culling at the node level. Servo the LOD threshold of the screen-space error to the
     FPS.
-11. **A depth-bounding buffer built from the real set of visible vanilla chunks**, captured
-    from the visibility walk of the renderer, with a discard in the fragment shader. This is
-    the best known solution for the seam between the LOD and the real terrain, and it also
-    covers the holes and the water.
+11. **A depth-bounding buffer built from the real set of visible vanilla chunks.** Capture
+    that set from the visibility walk of the renderer, and discard in the fragment shader.
+    This is the best known solution for the seam between the LOD and the real terrain. It
+    also covers the holes and the water.
 12. **Bake 6 orthographic face impostors for each block state one time.** Join the duplicates
     by a hash of the content. Take the occlusion metadata from the bake and give it to the
     mesher. Make the bake lazy, with an exception that puts the job in the queue again.
@@ -572,11 +591,17 @@ These parts support the pool.
 14. **A unified job pool with weighted random selection**, with a weight and a limiter for
     each service, and backpressure where the caller takes the work. C# expresses this easily
     over a semaphore and workers that do not depend on the `ThreadPool`.
-15. **Memory hygiene**: pooled section arrays, thread-local scratch buffers, an LRU of released
-    sections, a 4 GB cache of built geometry keyed by the section position that the mod empties
-    at a world change, a free-list arena with coalescing for the GPU memory, and leak detectors
-    on each native handle that the GC drives. In C# these are `SafeHandle` and assertions in a
-    finalizer.
+15. **Memory hygiene.** Use these:
+
+    - pooled section arrays
+    - thread-local scratch buffers
+    - an LRU of released sections
+    - a 4 GB cache of built geometry, keyed by the section position, which the mod empties at
+      a world change
+    - a free-list arena with coalescing, for the GPU memory
+    - leak detectors on each native handle, which the GC drives
+
+    In C# the last item is `SafeHandle` and assertions in a finalizer.
 
 **Known gaps in Voxy.** Do not take these. There are no checksums on the blobs. The baking of
 a block entity, such as a chest, is not complete. The iteration of positions in LMDB has no

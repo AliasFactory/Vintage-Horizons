@@ -50,8 +50,8 @@ unreadable rows. New blobs were decompressed, and they had 0 empty block codes a
 L0, L1 and L2. A failure to find an id writes empty codes.
 
 One known cost remains. The capture path and the propagation path still do 47 loads in the
-same call for each join, at 8 ms on average and 33 ms at the peak. The next step is to make
-the propagation defer these loads safely.
+same call for each join. That is 8 ms on average, and 33 ms at the peak. The next step is
+to make the propagation defer these loads safely.
 
 ## Multiplayer verified (2026-07-16, evening)
 
@@ -96,9 +96,13 @@ also the load queue. This idea comes from Voxy, but this code does it on the CPU
 There are no holes. A section stops being selected only when its parent draws in its place.
 A node that the mod requests again stays behind the parent until its mesh uploads.
 
-The remaining M5 items are: greedy quad merging, seasonal tint classes with a snow line, a
-config GUI with settings that persist, section eviction from RAM, and preparation for
-ModDB.
+These M5 items remain:
+
+- greedy quad merging
+- seasonal tint classes with a snow line
+- a config GUI with settings that persist
+- section eviction from RAM
+- preparation for ModDB
 
 # M4 first pass (branch `m4-blockdata`, merged to master)
 
@@ -118,9 +122,9 @@ which is finer than the 4 blocks of M3. A run is a packed `ulong` with the field
 block **codes**, because ids belong to one savegame.
 
 **3D meshing,** on a worker thread. Each run is a box. The mesher makes a top face at an
-air gap, a bottom face below an overhang, and a side wall where the runs of the neighbour
-column do not cover the span. It finds the wall by interval subtraction. It culls across
-sections with snapshots of the neighbours.
+air gap, and a bottom face below an overhang. It makes a side wall where the runs of the
+neighbour column do not cover the span. It finds that wall by interval subtraction. It
+culls across sections with snapshots of the neighbours.
 
 Thread safety here is a convention: a run array of a section does not change after
 creation, because a write replaces the full array. Thus a snapshot in the worker has no
@@ -142,8 +146,8 @@ stop during a pause. This made the unattended overnight verification possible.
 
 The full pipeline operates without window focus: capture, then palette remap, then apply,
 then mip, then meshing in the worker, then GL upload. In the first 30 seconds it captured
-116 columns and made 24 sections at all 6 levels and 15 meshes, with no exceptions and no
-GL errors.
+116 columns. It made 24 sections at all 6 levels, and 15 meshes. There were no exceptions
+and no GL errors.
 
 The early statistics show "1 drawn". This is the swap rule that prevents holes during the
 initial build. The root draws until its subtree has all its meshes. It is not a defect. The

@@ -71,11 +71,17 @@ capi.Event.ChunkDirty (NewlyLoaded / MarkedDirty)
                                  seasonal tint uniforms, fog-matched shader, dithered near fade
 ```
 
-The design takes the **pipeline shape of Distant Horizons**: column RLE, a mip pyramid on
-disk, a quadtree, and crash-safe dirty flags. It takes the **encoding and scheduling ideas
-of Voxy**: packed single-word keys and voxel ids, early exit from mip propagation, one
-weighted worker pool, and palette serialization. It takes the **Vintage Story rendering
-methods of Farseer**: the render order, ZFar, and the shader for fog and curvature.
+The design takes three things from three projects.
+
+From **Distant Horizons** it takes the pipeline shape: column RLE, a mip pyramid on disk, a
+quadtree, and crash-safe dirty flags.
+
+From **Voxy** it takes the ideas for encoding and scheduling. Those are packed single-word
+keys and voxel ids, an early exit from mip propagation, one weighted worker pool, and the
+serialization of the palette.
+
+From **Farseer** it takes the Vintage Story rendering methods: the render order, ZFar, and
+the shader for fog and curvature.
 
 ## 4. Data model
 
@@ -315,8 +321,8 @@ about. There is one version number and one zip for both groups of users.
 
 ### 10.3 Architecture: a third implementation of a seam that exists
 
-The section source is already pluggable. The async path from the storage work has the exact
-shape that a network source needs: ask by key, get the answer later, install on the main
+The section source is already pluggable. The async path from the storage work has the
+shape that a network source needs. Ask by key. Get the answer later. Install on the main
 thread.
 
 - `LodWorld.LoadFromStore` is a `Func<long, LodSection?>`. It is synchronous and reads the
@@ -389,8 +395,8 @@ An admin must be able to configure this, and the default must be conservative. T
 three controls:
 
 - a radius limit on the distance from a player at which the assist gives data
-- a rule to use already-generated chunks only, and never to start worldgen for a request
-  (this rule is also what makes the server-side mods expensive)
+- a rule to use already-generated chunks only, and never to start worldgen for a request.
+  This rule is also what makes the server-side mods expensive.
 - a switch that stops the function fully
 
 ### 10.7 Transport
@@ -398,8 +404,8 @@ three controls:
 **The limit of 508 bytes does not apply here.** This was measured against the source, not
 assumed. The warning is on the two `RegisterUdpChannel` overloads only, and never on
 `RegisterChannel`. It is about NAT fragmentation of datagrams. The reliable channel has no
-such limit. A section is still tens to hundreds of KB, thus the mod divides it into parts
-for latency and peak memory, not because a limit makes this necessary.
+such limit. A section is still tens to hundreds of KB. Thus the mod divides it into parts, for
+latency and for peak memory. No limit makes this necessary.
 
 **The server limits the rate and the quantity of requests.** A client must not be able to
 ask for an unlimited area. The server decides what it gives, not the client.
@@ -445,9 +451,9 @@ there. A branch is weaker, because one refactor can make it incorrect.
    is 262 MB.
 
    Measured at volume: 5665 keys in 3 parts, with an exact announced count and 0 errors. The
-   welcome message and the manifest come from one snapshot on the main thread. Before this,
-   an answer from the message handler read a set that the capture tick changes, and the
-   announced count did not agree with what followed.
+   welcome message and the manifest come from one snapshot on the main thread. Before this, an answer from the
+   message handler read a set that the capture tick changes. Thus the announced count did
+   not agree with what followed.
 
 4. ~~Section transfer~~ **done.** The client asks only for a key that the manifest offered
    and that it has no local data for. The server answers with the stored blob, without a
@@ -652,8 +658,11 @@ average is 255,249,249. This agrees with the value `00FCFCFC` that the atlas rep
 magenta block comes from somewhere else. The most probable cause is `GetAverageColor` on a
 sub-id that the atlas never assigned, which the guard for range and null now also catches.
 
-To close this issue, ask the reporter for the block code, whether the block looks correct
-near the player, and any "texture not found" lines in `client-main.log`.
+To close this issue, ask the reporter for three things:
+
+- the block code
+- whether the block looks correct near the player
+- any "texture not found" lines in `client-main.log`
 
 ## 12. The test regimen
 
@@ -827,8 +836,9 @@ own lesson. A person who trusts the output reads each one as a defect in the pro
   scenario left running. Thus `--only no-client-mod` got "connection refused". Each scenario
   now starts its own server.
 - **The visual position was inside the cloud layer.** y=420 drew two identical frames of
-  white fog. A height of 260 with a pitch of -20 is the same position as the existing
-  `high-overlook` waypoint, which draws terrain well past the ring distance.
+  white fog. A height of 260 with a pitch of -20 is the same position as the
+  existing `high-overlook` waypoint. That waypoint draws terrain well past the ring
+  distance.
 - **The retry budget for the server cannot outlast TIME_WAIT.** `test-server.sh` retried a
   busy port four times at 10 s, and Linux holds TIME_WAIT for approximately 60 s. This was
   survivable while each restart had a long client run before it. The uncapped control added a
@@ -879,9 +889,9 @@ The cause was identified by a sweep of a radius that was fully *inside* the gene
 terrain. All 4,225 of 4,225 positions existed, the sweep loaded all of them, and the savegame
 gained exactly zero columns. Thus the load is not the mechanism, and the frontier is.
 
-The neighbour state must be known before any load. Thus the sweep has two passes. First it
-probes each position, and it reaches one neighbourhood past the load area, so that no edge
-column is skipped for a lack of information. Then it loads only the columns that have an
+The neighbour state must be known before any load. Thus the sweep has two passes. First it probes
+each position. The probe reaches one neighbourhood past the load area. Thus no edge column
+is skipped for a lack of information. Then it loads only the columns that have an
 intact surround.
 
 ### 13.2 How swept terrain reaches a singleplayer client

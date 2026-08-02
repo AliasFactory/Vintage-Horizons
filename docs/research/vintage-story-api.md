@@ -416,8 +416,8 @@ limits OpenGL to 4.1.
 
 Thus any GL 4.3 path must be optional, with a fallback to 3.3. Test with
 `capi.Shader.IsGLSLVersionSupported` and a query of the GL extensions. Design the core
-renderer for GL 3.3: a static VAO for each LOD cell with one draw call each, which is the
-approach of Farseer, or manual batching. Instancing with `RenderMeshInstanced` is available
+renderer for GL 3.3. Use a static VAO for each LOD cell with one draw call each, which is
+the approach of Farseer. Manual batching is the alternative. Instancing with `RenderMeshInstanced` is available
 in GL 3.3.
 
 ## 4. Existing mods
@@ -431,9 +431,9 @@ under the **MIT license** (LICENSE.md, (c) 2026 Badgerson). Thus the client rend
 reusable with attribution.
 
 The architecture comes from the source. The **server side** is `Server/FarRegionGen.cs`,
-`FarRegionDB.cs` and `FarRegionProvider.cs`. It builds one 2D heightmap for each "far region"
-from the heightmap data of the map chunks, stores it in SQLite, and streams `FarRegionData`
-messages over a named network channel. The channel is
+`FarRegionDB.cs` and `FarRegionProvider.cs`. It builds one 2D heightmap for each "far region",
+from the heightmap data of the map chunks. It stores that heightmap in SQLite. Then it
+streams `FarRegionData` messages over a named network channel. The channel is
 `api.Network.RegisterChannel("farseer").RegisterMessageType<...>()`. Read
 [FarseerModSystem.cs](https://github.com/ViciousBadger/VSMod-Farseer/blob/main/Farseer/FarseerModSystem.cs).
 The protocol is in `Protocol.cs`, with protobuf-net.
@@ -441,8 +441,8 @@ The protocol is in `Protocol.cs`, with protobuf-net.
 The **client side** is `Client/FarRegionRenderer.cs`, at approximately 300 lines. It builds a
 heightmap grid mesh, stitches the neighbour edges, and rebuilds a dirty region later. It calls
 `UploadMesh`, and then one `RenderMesh` for each region in the `Opaque` stage. Its GLSL 330
-shader moves the far terrain down near the transition ring, applies a term for the curvature
-of the globe, and uses the fog and sun uniforms of vanilla.
+shader does three things. It moves the far terrain down near the transition ring. It applies
+a term for the curvature of the globe. It uses the fog and sun uniforms of vanilla.
 
 Farseer needs the mod on the server. The default is approximately 4000 blocks. The server
 limits each client through the world config value
@@ -459,9 +459,9 @@ the author BiasHyperion. There is **no public repository**. The field `sourcecod
 empty in the [ModDB API record](https://mods.vintagestory.at/api/mod/chunklod), and it states
 no license. Thus treat it as all rights reserved. Examine its behaviour, and copy no code.
 
-The status from the ModDB API in July 2026 is: stable 1.1.0, and test builds 1.2.0-dev.1 to
-1.2.0-dev.3, of which the most recent is from July 11, 2026, for game 1.22.0 to 1.22.3. The
-page says that a "major overhaul underway". A backport for 1.21.6 is at
+The ModDB API gives this status in July 2026. The stable version is 1.1.0. The test builds
+are 1.2.0-dev.1 to 1.2.0-dev.3, and the most recent one is from July 11, 2026. They support
+game 1.22.0 to 1.22.3. The page says that a "major overhaul underway". A backport for 1.21.6 is at
 [mods.vintagestory.at/chunklodold](https://mods.vintagestory.at/chunklodold).
 
 The design comes from the mod description. It needs the server. It keeps a SQLite database
@@ -473,9 +473,13 @@ mode. Face lighting and globe curvature are optional. The view distance reaches 
 the development builds reach 65,000. Its shader is *"a heavily modified instance"* of the
 Farseer shader, with a credit.
 
-Its changelogs give these known problems: z-fighting at the LOD seams, fog propagation, water
-at sea level against the fog system, microblocks and chiseled blocks, and face rendering on a
-Qualcomm iGPU.
+Its changelogs give these known problems:
+
+- z-fighting at the LOD seams
+- fog propagation
+- water at sea level against the fog system
+- microblocks and chiseled blocks
+- face rendering on a Qualcomm iGPU
 
 ### 4.3 The vanilla engine
 
@@ -534,13 +538,15 @@ and `IShaderAPI.ReloadShaders()` compiles all of them again.
 ## Key design results for a client-only Distant Horizons for Vintage Story
 
 1. A mod with `"side": "Client"` joins any vanilla server (section 1.3). It must **collect
-   the terrain itself**. It subscribes to `capi.Event.ChunkDirty` for `NewlyLoaded` and
-   `MarkedDirty`, reads `chunk.MapChunk.RainHeightMap` or `WorldGenTerrainHeightMap` for the
-   height (section 2.3), samples the surface blocks for the color, and stores the result in a
-   local SQLite cache for each world and server. `TopRockIdMap` is null on the client. This is
-   the client-side equivalent of what Farseer and ChunkLOD do on the server. It is also the
-   reason why they chose the server: they get full coverage immediately, and this mod builds
-   up coverage as the player explores, as Distant Horizons does.
+   the terrain itself**. It does four things. It subscribes to
+   `capi.Event.ChunkDirty` for `NewlyLoaded` and `MarkedDirty`. It reads
+   `chunk.MapChunk.RainHeightMap` or `WorldGenTerrainHeightMap` for the height (section 2.3).
+   It samples the surface blocks for the color. Then it stores the result in a local SQLite
+   cache for each world and server. `TopRockIdMap` is null on the client.
+
+   This is the client-side equivalent of what Farseer and ChunkLOD do on the server. It is
+   also the reason why they chose the server. They get full coverage immediately. This mod
+   builds up coverage as the player explores, as Distant Horizons does.
 2. Draw with an `IRenderer` at `EnumRenderStage.Opaque` with a `RenderOrder` of approximately
    0.36. Use camera-relative model matrices with `CameraMatrixOriginf`. Use a custom GLSL 330
    program that includes the vanilla `fogandlight.vsh` and `vertexwarp.vsh`. Take the uniforms

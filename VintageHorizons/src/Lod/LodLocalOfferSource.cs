@@ -6,9 +6,9 @@ namespace VintageHorizons;
 /// <summary>
 /// The cache of the server side, which the client side of the same singleplayer world reads.
 ///
-/// A savegame sweep can run only on the server side, because only that side can ask for a
-/// chunk column that the player is far from. But the server has no texture atlas. Thus what
-/// it captures is geometry with each palette color at zero. The client has the atlas, and it
+/// A savegame sweep can run only on the server side. Only that side can ask for a chunk
+/// column that the player is far from. But the server has no texture atlas. Thus what it
+/// captures is geometry with each palette color at zero. The client has the atlas, and it
 /// cannot reach those columns. Each half holds exactly what the other half does not have.
 ///
 /// Thus a swept section travels the same road as a section from a real server. It arrives

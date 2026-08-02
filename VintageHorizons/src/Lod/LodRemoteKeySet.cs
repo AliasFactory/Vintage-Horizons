@@ -1,13 +1,13 @@
 namespace VintageHorizons;
 
 /// <summary>
-/// The record of the sections that a remote source offers. It holds the keys that only the
-/// remote source has, the keys of those that the view wants now, and the keys that the mod
-/// asked for already.
+/// The record of the sections that a remote source offers. It holds three sets of keys.
+/// The first set holds the keys that only the remote source has. The second set holds the
+/// keys that the view wants now. The third set holds the keys that the mod asked for.
 ///
 /// This class came out of LodPipeline, thus a person can understand it alone, and a test can
 /// reach it. It is pure set logic over a LodWorld. But it was inside a class whose
-/// constructor needs a game API and starts five threads, thus no test could reach it.
+/// constructor needs a game API and starts five threads, thus no test can reach it.
 ///
 /// The most important defect here took three wrong diagnoses from the counters, before
 /// anyone examined the branch itself.

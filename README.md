@@ -95,18 +95,33 @@ less than one second. Run all three tiers before you commit.
 
 Each tier answers a different question.
 
-`fast` covers the pure logic: key packing, the RLE column store, mip downsampling, the
-greedy merge and coverage rules of the mesher, the blob format, frustum planes and config
-clamps. It also covers the rules that apply across more than one file, which no compiler
-can find. One example is the shader constant `TINT_SLOTS`, which must agree with
+`fast` covers the pure logic:
+
+- key packing
+- the RLE column store
+- mip downsampling
+- the greedy merge and the coverage rules of the mesher
+- the blob format
+- frustum planes
+- config clamps
+
+It also covers the rules that apply across more than one file, which no compiler can
+find. One example is the shader constant `TINT_SLOTS`, which must agree with
 `LodTintRegistry.MaxSlots`.
 
 `smoke` starts a vanilla dedicated server and a sandbox client, then examines what the run
 recorded in the log. It includes a second run against the warm cache. This second run is
 the only way to know that the mod can read back what it wrote.
 
-`matrix` covers the configurations that other people use: a vanilla server, a server with
-the mod, a client with no mod, each admin switch, and deferral to a different LOD mod.
+`matrix` covers the configurations that other people use:
+
+- a vanilla server
+- a server that has the mod
+- a client with no mod
+- each admin switch
+- deferral to a different LOD mod
+
+Each scenario starts its own server.
 
 **There is no CI, and there cannot be one.** To build this repository you must have the
 Vintage Story assemblies from a local game installation. Anego Studios does not permit

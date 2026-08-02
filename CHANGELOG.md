@@ -16,10 +16,15 @@ of all players. Then it gives sections to each client that asks for them. As a r
 new player or a new area can be far already. Before, a client showed only the terrain that
 the same player explored.
 
-An admin has these controls in `ModConfig/vintagehorizons-server.json`: capture on or off,
-serving on or off, a serve radius for each player, and two rate limits. The command
-`/vhserver` reports the status. Serving is on by default, with a radius of 8192 blocks for
-each player.
+An admin has these controls in `ModConfig/vintagehorizons-server.json`:
+
+- capture on or off
+- serving on or off
+- a serve radius for each player
+- two rate limits
+
+The command `/vhserver` reports the status. Serving is on by default, with a radius of
+8192 blocks for each player.
 
 ### Savegame sweeping, on by default
 
@@ -37,8 +42,8 @@ terrain is terrain that nobody visited. Thus a server can offer a horizon at the
 join, instead of a horizon that appears after weeks of play.
 
 This is the only setting that makes the mod create terrain. For that reason it is off
-until an admin asks for it, and the radius has a limit of 256 chunks (a radius of 4096
-blocks). The cost is worldgen time and disk space. At radius 64 the disk cost is
+until an admin asks for it. The radius also has a limit of 256 chunks, which is a radius
+of 4096 blocks. The cost is worldgen time and disk space. At radius 64 the disk cost is
 approximately a few hundred MB.
 
 ### Faster terrain fill-in
@@ -68,9 +73,11 @@ Before, it depended on sandbox runs that a person started by hand.
 ## [0.1.1] - 2026-07-25
 
 Version 0.1.0 had no LICENSE file in the zip. A review found three defects after the
-release: ground-cover mats that floated above mip-merged runs, thin plants that hid the
-water behind them, and a scheduler loop with no limit that can make one frame do a
-six-figure scan.
+release:
+
+- ground-cover mats that floated above mip-merged runs
+- thin plants that hid the water behind them
+- a scheduler loop with no limit, which can make one frame do a six-figure scan
 
 ## [0.1.0] - 2026-07-25
 
