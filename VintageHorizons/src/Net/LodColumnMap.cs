@@ -49,6 +49,31 @@ public class LodColumnMap
     public static int KeyCx(long key) => (int)(key & 0xFFFFFFFF);
     public static int KeyCz(long key) => (int)(key >> 32);
 
+    /// <summary>
+    /// Index to offset on a square spiral centred on 0,0. Walks ring by ring, so any
+    /// prefix of the sequence is a filled square around the centre. That is the order
+    /// coverage is wanted in when a run is interrupted: a partial spiral is a usable
+    /// disc, and a partial raster is a band across the map.
+    /// </summary>
+    public static (int X, int Z) SpiralAt(int i)
+    {
+        if (i == 0) return (0, 0);
+
+        // Which ring: the k-th ring ends at index (2k+1)^2 - 1.
+        int ring = (int)Math.Ceiling((Math.Sqrt(i + 1) - 1) / 2);
+        int ringStart = (2 * ring - 1) * (2 * ring - 1);
+        int offset = i - ringStart;
+        int side = 2 * ring;
+
+        return (offset / side) switch
+        {
+            0 => (ring, -ring + 1 + offset % side),
+            1 => (ring - 1 - offset % side, ring),
+            2 => (-ring, ring - 1 - offset % side),
+            _ => (-ring + 1 + offset % side, -ring),
+        };
+    }
+
     /// <summary>Positions recorded as holding terrain.</summary>
     public int Count => exists.Count;
 
@@ -99,7 +124,7 @@ public class LodColumnMap
         int absent = 0;
         for (int i = 0; i < total; i++)
         {
-            (int dx, int dz) = LodServerPregen.SpiralAt(i);
+            (int dx, int dz) = LodColumnMap.SpiralAt(i);
             if (!Contains(centreCx + dx, centreCz + dz)) absent++;
         }
 
@@ -110,7 +135,7 @@ public class LodColumnMap
         int seen = 0;
         for (int i = 0; i < total && sample.Count < max; i++)
         {
-            (int dx, int dz) = LodServerPregen.SpiralAt(i);
+            (int dx, int dz) = LodColumnMap.SpiralAt(i);
             int cx = centreCx + dx, cz = centreCz + dz;
             if (Contains(cx, cz)) continue;
             if (seen++ % stride == 0) sample.Add(Key(cx, cz));

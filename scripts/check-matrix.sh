@@ -274,15 +274,36 @@ if wants pregen; then
   "PregenColumnsPerSecond": 64
 }
 JSON
+    save="$VH_SANDBOX/server/Saves/default.vcdbs"
+    before="$(python3 -c "
+import sqlite3
+c = sqlite3.connect('file:$save?mode=ro', uri=True)
+print(*(c.execute('SELECT COUNT(*) FROM '+t).fetchone()[0] for t in ('mapchunk','chunk')))" 2>/dev/null)"
+
     start_server
-    if vh_wait_for "$SERVER_LOG" "LOD pre-generation finished" 180 "$VH_SANDBOX/server/server.pid"; then
-        requested="$(grep -o "pre-generation finished: [0-9]* columns" "$SERVER_LOG" | tail -1 | grep -o '[0-9]*')"
-        if [[ "$requested" == "25" ]]; then
-            echo "  pregen: 1 ok ($requested columns, exactly the 5x5 square)"
-        else
-            echo "      x expected 25 columns, got '$requested'"
-            failures=$((failures + 1))
-        fi
+    if vh_wait_for "$SERVER_LOG" "Generation finished" 180 "$VH_SANDBOX/server/server.pid"; then
+        ok=1
+        requested="$(grep -oE "Generation finished around block [0-9-]+,[0-9-]+: [0-9]+ columns" "$SERVER_LOG" \
+            | tail -1 | grep -oE "[0-9]+ columns" | grep -oE "[0-9]+")"
+        [[ "$requested" == "25" ]] || { echo "      x expected 25 columns, got '$requested'"; ok=0; }
+        # It must be the startup path, not a command someone typed.
+        grep -q "Generation started by startup pre-generation" "$SERVER_LOG" \
+            || { echo "      x the run was not the startup pre-generation"; ok=0; }
+
+        # Pre-generation now peeks instead of loading, so it must add nothing to the
+        # savegame either. This is the assertion that would have failed before the
+        # mechanism changed.
+        "$VH_ROOT/scripts/test-stop.sh" server >/dev/null 2>&1 || true
+        vh_wait_stopped "$VH_SANDBOX/server/server.pid" 180 || true
+        after="$(python3 -c "
+import sqlite3
+c = sqlite3.connect('file:$save?mode=ro', uri=True)
+print(*(c.execute('SELECT COUNT(*) FROM '+t).fetchone()[0] for t in ('mapchunk','chunk')))" 2>/dev/null)"
+        echo "      - savegame before: $before   after: $after"
+        [[ "$before" == "$after" && -n "$before" ]] \
+            || { echo "      x pre-generation wrote terrain to the savegame"; ok=0; }
+
+        [[ "$ok" == 1 ]] && echo "  pregen: ok ($requested columns, savegame unchanged)" || fail "pregen"
     else
         fail "pregen"
     fi

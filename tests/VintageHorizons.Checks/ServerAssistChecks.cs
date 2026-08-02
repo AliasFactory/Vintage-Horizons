@@ -28,7 +28,7 @@ public static class ServerAssistChecks
     /// </summary>
     static void SpiralIsAnExactCover(Check c)
     {
-        c.Eq((0, 0), LodServerPregen.SpiralAt(0), "the spiral starts at spawn");
+        c.Eq((0, 0), LodColumnMap.SpiralAt(0), "the spiral starts at spawn");
 
         foreach (int radius in new[] { 1, 2, 3, 8, 32 })
         {
@@ -39,7 +39,7 @@ public static class ServerAssistChecks
 
             for (int i = 0; i < total; i++)
             {
-                (int x, int z) = LodServerPregen.SpiralAt(i);
+                (int x, int z) = LodColumnMap.SpiralAt(i);
                 if (Math.Abs(x) > radius || Math.Abs(z) > radius) inRange = false;
                 seen.Add((x, z));
             }
@@ -54,7 +54,7 @@ public static class ServerAssistChecks
         {
             int side = 2 * ring + 1;
             var seen = new HashSet<(int, int)>();
-            for (int i = 0; i < side * side; i++) seen.Add(LodServerPregen.SpiralAt(i));
+            for (int i = 0; i < side * side; i++) seen.Add(LodColumnMap.SpiralAt(i));
 
             bool filled = true;
             for (int z = -ring; z <= ring; z++)
@@ -71,7 +71,7 @@ public static class ServerAssistChecks
         const int max = 256;
         int maxTotal = (2 * max + 1) * (2 * max + 1);
         var all = new HashSet<(int, int)>(maxTotal);
-        for (int i = 0; i < maxTotal; i++) all.Add(LodServerPregen.SpiralAt(i));
+        for (int i = 0; i < maxTotal; i++) all.Add(LodColumnMap.SpiralAt(i));
         c.Eq(maxTotal, all.Count, "the spiral is an exact cover at the maximum configurable radius");
     }
 

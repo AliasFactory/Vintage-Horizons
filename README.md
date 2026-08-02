@@ -80,7 +80,9 @@ On by default (`SweepSavegame` in `ModConfig/vintagehorizons-server.json`, along
 default on because it **generates nothing**: positions that were never visited are skipped,
 and so is a border around explored terrain, since loading a column whose surroundings are
 missing would make the engine generate them. That is the opposite trade from
-`PregenRadiusChunks`, which deliberately creates new terrain and stays off unless asked for.
+`PregenRadiusChunks`, which deliberately creates terrain nobody has visited and stays off
+unless asked for. That setting now uses the same transient generation `/vhgen` does, so
+it too writes nothing to the savegame.
 
 ### Generating the horizon (/vhgen)
 
