@@ -96,10 +96,20 @@ result on its finish line ("Verified 256/256 sampled absent positions still abse
 The savegame promise is also asserted byte-for-byte by the check regimen, but only
 against vanilla worldgen - the runtime check is what watches it on modded servers.
 
-Two limits to know. Generated terrain has no trees: trees need a worldgen pass that
-crashes vanilla when run transiently, so generated ground stays bare until a player
-actually visits and real capture replaces it. And clients that are already connected
-learn about new sections at their next join, not live.
+**Generated terrain is bare.** It carries the landform, rock strata, caves, rivers and
+the soil and sand on top, and nothing else. Measured against a full generation of the
+same column, a peek is missing 67 block types: snow, ore, cave dressing, surface
+boulders, small water, worldgen ruins with their contents, and (in a forested column)
+trees. What it does produce is never wrong - nothing appears in a peek that a real
+generation would not also make - so generated terrain reads as a correct but plain
+version of itself, and real capture fills in the rest the first time a player visits.
+`/vhgen diff` prints the measurement for your own world.
+
+The reason it stops there is that the pass which adds trees crashes vanilla worldgen
+when run this way, and the fix is a patch this mod does not ship.
+
+Clients that are already connected learn about new sections at their next join, not
+live.
 
 The command needs the controlserver privilege. `EnableGenerateCommand`,
 `GenerateMaxRadiusChunks` (ceiling, default 128), `GenerateDefaultRadiusChunks`,
