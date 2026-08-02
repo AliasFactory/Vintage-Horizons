@@ -194,9 +194,11 @@ public static class ServerAssistChecks
     }
 
     /// <summary>
-    /// Handlers run on the network thread and may only enqueue; everything that touches
-    /// shared state happens on the tick, in Pump. A manifest read straight from the handler
-    /// is what made the announced and applied key counts disagree once.
+    /// A handler runs on the network thread, and it can only put an item into a queue. Each
+    /// step that touches shared state occurs on the tick, in Pump.
+    ///
+    /// A read of the manifest directly from a handler made the announced key count and the
+    /// applied key count disagree one time.
     /// </summary>
     static void ManifestAndArrivals(Check c)
     {

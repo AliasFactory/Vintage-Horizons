@@ -145,7 +145,7 @@ public class LodWorld
 
     /// <summary>
     /// The keys whose load returned nothing. The row is absent, or the mod deleted it
-    /// because it could not read it.
+    /// because the mod cannot read it.
     ///
     /// Without this set, the selection walk asks for those keys again in each frame, forever,
     /// because the section never becomes resident.
@@ -347,7 +347,8 @@ public class LodWorld
     /// work as it is, and try again later.
     ///
     /// This is how the mip propagation does not block the frame on a decompress. It also
-    /// never makes an empty section, which would hide a stored row and then overwrite it.
+    /// never makes an empty section. Such a section hides a stored row, and then it
+    /// overwrites that row.
     ///
     /// The rule is the rule of TryGetForRender, with one difference. Here a key with nothing
     /// to load means "continue", and not "no mesh".

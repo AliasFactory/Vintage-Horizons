@@ -351,8 +351,7 @@ public static class LodMesher
     /// it fills almost none of its cell, and it must never hide anything.
     ///
     /// Without this rule, a fern on a shoreline counted as cover for the water beside it.
-    /// That removed the wall of the water, and a player could see through the edge of the
-    /// pond.
+    /// That removed the wall of the water, and a player saw through the edge of the pond.
     /// </summary>
     static bool IsThinRun(SectionSnapshot s, ulong run) =>
         (s.PaletteFlags[LodSection.RunPaletteId(run)] & LodPaletteEntry.FlagThin) != 0;

@@ -8,7 +8,7 @@ namespace VintageHorizons;
 /// The planes come from the SAME matrices that the LOD shader gets. Thus the test can never
 /// disagree with what the mod draws.
 ///
-/// The planes do not come from the culler of the game. That would connect this mod to the
+/// The planes do not come from the culler of the game. That culler connects this mod to the
 /// vanilla view distance, and to the order in which the game updates it. Neither one matches
 /// the extended ZFar of this mod.
 ///

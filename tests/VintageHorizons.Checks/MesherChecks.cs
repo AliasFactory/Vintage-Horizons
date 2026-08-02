@@ -163,7 +163,7 @@ public static class MesherChecks
     ///   - Any coverage culls a water face. Thus a cliff under water does not appear two
     ///     times.
     ///   - Thin cover never culls anything. A fern on a shoreline removed the wall of the
-    ///     pond beside it, and a player could see through the edge of the water.
+    ///     pond beside it, and a player saw through the edge of the water.
     /// </summary>
     static void CoverageRules(Check c)
     {

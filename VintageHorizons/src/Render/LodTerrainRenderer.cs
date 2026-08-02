@@ -463,7 +463,7 @@ public class LodTerrainRenderer : IRenderer
         // nothing, because it only puts a key into a queue. A mesh snapshot is real work.
         //
         // One budget for both slowed the fill-in at a join badly. Each section needed two
-        // passes to appear, and the mod could touch only four in each frame.
+        // passes to appear, and the mod touched only four in each frame.
         int meshBudget = MeshSchedulesPerFrame;
         int loadBudget = MeshLoadRequestsPerFrame;
 
