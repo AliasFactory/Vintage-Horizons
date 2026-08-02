@@ -3,16 +3,18 @@ using Vintagestory.API.Common;
 namespace VintageHorizons;
 
 /// <summary>
-/// A section frozen for off-thread persistence.
+/// A copy of a section, for persistence on another thread.
 ///
-/// Everything the storage thread needs is copied on the main thread, because the
-/// live section keeps mutating: palette entries are appended, Captured is written
-/// in place, and LodSection.SetColumn edits Runs/ColumnStart in place when a
-/// column's run count is unchanged. Block CODES are resolved here too - the
-/// storage thread must never touch the game's block registry.
+/// The main thread copies each item that the storage thread needs, because the live section
+/// continues to change. The mod appends palette entries. It writes Captured in place. And
+/// LodSection.SetColumn edits Runs and ColumnStart in place, when the run count of a column
+/// does not change.
 ///
-/// The copies are a few hundred KB of memcpy, against the ~20ms of deflate and
-/// SQLite work they let us move off the render thread.
+/// The mod also finds the block CODES here. The storage thread must never touch the block
+/// registry of the game.
+///
+/// The copies are a few hundred KB of memcpy. They let the mod move approximately 20 ms of
+/// deflate and SQLite work off the render thread.
 /// </summary>
 public sealed class LodSaveSnapshot
 {

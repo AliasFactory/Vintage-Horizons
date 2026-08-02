@@ -1,23 +1,28 @@
 namespace VintageHorizons;
 
 /// <summary>
-/// Child→parent section downsampling: every 2×2 child columns merge into one parent
-/// column via a y-boundary slice sweep (DH's approach). A slice is solid when at
-/// least two of the four child columns cover it; the slice takes the most common
-/// covering block. Adjacent same-block slices re-merge into runs.
+/// Downsampling from a child section to its parent. Each 2 x 2 group of child columns merges
+/// into one parent column, through a slice sweep on the y boundaries. This is the approach of
+/// Distant Horizons.
+///
+/// A slice is solid when two or more of the four child columns cover it. That slice takes the
+/// most common block of the columns that cover it. Then adjacent slices with the same block
+/// merge into one run.
 /// </summary>
 public static class LodMip
 {
     [ThreadStatic] static List<int>? boundaries;
     [ThreadStatic] static List<ulong>? outRuns;
 
-    /// <summary>Merge the whole child section into one parent quadrant. Returns true if the parent changed.</summary>
+    /// <summary>Merge the full child section into one quadrant of the parent. The result is
+    /// true when the parent changed.</summary>
     public static bool DownsampleIntoParent(LodSection child, LodSection parent, int qx, int qz)
     {
         const int gs = LodSection.GridSize;
         const int half = gs / 2;
 
-        // Child palette id → parent palette id, registered lazily.
+        // A map from a child palette id to a parent palette id. The mod adds an entry when
+        // it first needs one.
         var paletteMap = new int[child.Palette.Count];
         for (int i = 0; i < paletteMap.Length; i++) paletteMap[i] = -1;
 
@@ -42,7 +47,7 @@ public static class LodMip
 
                 ulong[] merged = MergeColumns(mergedCols, captured);
 
-                // Remap child palette ids to the parent palette.
+                // Change the child palette ids to the ids of the parent palette.
                 for (int i = 0; i < merged.Length; i++)
                 {
                     int cpid = LodSection.RunPaletteId(merged[i]);
@@ -63,7 +68,8 @@ public static class LodMip
         return parent.ReplaceColumns(batch);
     }
 
-    /// <summary>Merge up to four columns' runs into one, majority-occupancy per slice.</summary>
+    /// <summary>Merge the runs of up to four columns into one. A slice is solid when the
+    /// majority of the sources are solid.</summary>
     static ulong[] MergeColumns(ulong[][] cols, int count)
     {
         var bounds = boundaries ??= new List<int>(64);
@@ -80,7 +86,7 @@ public static class LodMip
         if (bounds.Count == 0) return Array.Empty<ulong>();
 
         bounds.Sort();
-        // Deduplicate in place, then walk slices top-down.
+        // Remove the duplicates in place. Then walk the slices from the top down.
         int uniqueCount = 0;
         for (int i = 0; i < bounds.Count; i++)
         {
@@ -98,7 +104,7 @@ public static class LodMip
             int sliceBottom = bounds[i - 1];
             int mid = (sliceTop + sliceBottom) / 2;
 
-            // Which columns cover this slice, and with what block?
+            // Find the columns that cover this slice, and the block of each one.
             int covering = 0;
             int bestPid = -1;
             int bestPidCount = 0;
@@ -110,7 +116,8 @@ public static class LodMip
                     {
                         covering++;
                         int pid = LodSection.RunPaletteId(run);
-                        // Cheap mode estimate over ≤4 values (Boyer–Moore style).
+                        // A cheap estimate of the most common value, over 4 values or
+                        // fewer. This is the Boyer-Moore method.
                         if (bestPidCount == 0) { bestPid = pid; bestPidCount = 1; }
                         else if (pid == bestPid) bestPidCount++;
                         else bestPidCount--;
@@ -121,7 +128,8 @@ public static class LodMip
 
             if (covering < majority) continue;
 
-            // Merge with the previous run when contiguous and same block.
+            // Merge with the previous run when the two are adjacent and have the same
+            // block.
             if (result.Count > 0)
             {
                 ulong prev = result[^1];

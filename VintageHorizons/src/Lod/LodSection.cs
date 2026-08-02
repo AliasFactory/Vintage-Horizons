@@ -3,49 +3,62 @@ using Vintagestory.API.MathTools;
 namespace VintageHorizons;
 
 /// <summary>
-/// One entry in a section's palette: a block resolved to its LOD appearance.
-/// Color is RGBA-packed (R in the low byte), resolved on the main thread when the
-/// palette entry is first registered (Block.GetColor touches client-only state).
+/// One entry in the palette of a section. It is a block with its LOD appearance.
+///
+/// The color is RGBA packed, with R in the low byte. The main thread finds it when the mod
+/// first registers the palette entry, because Block.GetColor touches state that exists on
+/// the client only.
 /// </summary>
 public struct LodPaletteEntry
 {
     public int BlockId;
 
-    /// <summary>Untinted base color; seasonal/climate tint is applied live in the shader.</summary>
+    /// <summary>The base color, with no tint. The shader applies the tint for the season
+    /// and the climate.</summary>
     public int Color;
 
     public byte Flags;
 
     /// <summary>
-    /// Which live tint applies (see LodTintRegistry). Derived from the block, never
-    /// persisted: an existing cache gets correct per-species tints without re-capturing,
-    /// and the mapping stays right if a game update moves a block to a different map.
+    /// The live tint that applies. Read LodTintRegistry.
+    ///
+    /// The mod calculates this from the block, and it never stores it. Thus a cache that
+    /// exists already gets the correct tint for each species, with no new capture. The map
+    /// also stays correct when a game update moves a block to a different color map.
     /// </summary>
     public byte TintSlot;
 
     public const byte FlagWater = 1;
-    // Bits 2 and 4 are free: they held tint classes, now superseded by TintSlot.
+    // Bits 2 and 4 are free. They held tint classes, and TintSlot replaced those.
 
     /// <summary>
-    /// Not terrain at all (fire, meta markers): dropped at capture so it never becomes
-    /// geometry. Thin ground cover is NOT skipped - see FlagThin.
+    /// This block is not terrain. Fire and a meta marker are examples. The capture removes
+    /// it, thus it never becomes geometry.
+    ///
+    /// The capture does NOT skip thin ground cover. Read FlagThin.
     /// </summary>
     public const byte FlagSkip = 8;
 
     /// <summary>
-    /// Thin decorative geometry (flowers) that vanilla draws as crossed quads. As a
-    /// solid LOD cube it reads as a grey blob; drawn see-through it reads as a plant
-    /// and the ground shows through it.
+    /// Thin decorative geometry, such as a flower, which vanilla draws as crossed quads.
+    ///
+    /// As a solid LOD cube it looks like a grey shape. The mod draws it so that a player can
+    /// see through it. Then it looks like a plant, and the ground is visible behind it.
     /// </summary>
     public const byte FlagThin = 16;
 }
 
 /// <summary>
-/// The M4 leaf data model: a section holds 64×64 vertical RLE columns over a local
-/// palette. At level L each column covers (ColumnStepBlocks &lt;&lt; L) blocks, so a
-/// section spans SectionBlocks &lt;&lt; L. Runs are packed ulongs, stored top-down,
-/// contiguous per column, addressed by a prefix-offset table - compact, fast to
-/// serialize, and cheap to mip (concepts per DESIGN.md §4, informed by DH/Voxy).
+/// The leaf data model of M4. A section holds 64 x 64 vertical RLE columns, over a local
+/// palette.
+///
+/// At level L, each column covers (ColumnStepBlocks &lt;&lt; L) blocks. Thus a section covers
+/// SectionBlocks &lt;&lt; L.
+///
+/// A run is a packed ulong. The mod stores the runs from the top down, and the runs of one
+/// column are next to each other. A prefix-offset table gives the position of each column.
+/// This layout is compact, it serializes fast, and a mip over it is cheap. DESIGN.md section
+/// 4 gives the concepts, which come from Distant Horizons and Voxy.
 /// </summary>
 public class LodSection
 {
@@ -53,7 +66,8 @@ public class LodSection
     public const int ColumnStepBlocks = 1;          // blocks per column at level 0 - full DH-parity resolution
     public const int SectionBlocks = GridSize * ColumnStepBlocks; // 64 at level 0
 
-    /// <summary>Run packing: paletteId(16) | yTop(14) | yBottom(14). Run spans [yBottom, yTop).</summary>
+    /// <summary>The packing of a run: paletteId(16) | yTop(14) | yBottom(14). A run covers
+    /// [yBottom, yTop).</summary>
     public static ulong PackRun(int paletteId, int yTop, int yBottom) =>
         ((ulong)(uint)paletteId << 28) | ((ulong)(uint)(yTop & 0x3FFF) << 14) | (uint)(yBottom & 0x3FFF);
 
@@ -61,22 +75,27 @@ public class LodSection
     public static int RunYTop(ulong run) => (int)((run >> 14) & 0x3FFF);
     public static int RunYBottom(ulong run) => (int)(run & 0x3FFF);
 
-    /// <summary>Prefix offsets into Runs; column c owns Runs[ColumnStart[c] .. ColumnStart[c+1]).</summary>
+    /// <summary>The prefix offsets into Runs. Column c owns
+    /// Runs[ColumnStart[c] .. ColumnStart[c+1]).</summary>
     public int[] ColumnStart = new int[GridSize * GridSize + 1];
 
     public ulong[] Runs = Array.Empty<ulong>();
 
     public readonly List<LodPaletteEntry> Palette = new();
 
-    /// <summary>Columns that have been captured at least once (empty column ≠ uncaptured column).</summary>
+    /// <summary>The columns that the mod captured one time or more. An empty column is not
+    /// the same as a column that the mod did not capture.</summary>
     public readonly bool[] Captured = new bool[GridSize * GridSize];
 
     public int CapturedColumns;
 
     /// <summary>
-    /// Set when a section was deserialized off the main thread: palette BlockIds are
-    /// not resolved yet, because the game's block registry may only be touched from
-    /// the main thread. Resolved and cleared on install, before anything reads ids.
+    /// The mod sets this when a thread other than the main thread deserialized a section.
+    /// The BlockIds of the palette are not found yet, because only the main thread can touch
+    /// the block registry of the game.
+    ///
+    /// The mod finds the ids at install, and clears this field, before anything reads an
+    /// id.
     /// </summary>
     public string[]? PendingPaletteCodes;
 
@@ -84,7 +103,8 @@ public class LodSection
 
     public int RunCount(int col) => ColumnStart[col + 1] - ColumnStart[col];
 
-    /// <summary>Enumerate a column's runs: callback(paletteId, yTop, yBottom).</summary>
+    /// <summary>Give each run of a column to the callback, as (paletteId, yTop,
+    /// yBottom).</summary>
     public Span<ulong> ColumnRuns(int col) =>
         Runs.AsSpan(ColumnStart[col], ColumnStart[col + 1] - ColumnStart[col]);
 
@@ -105,9 +125,12 @@ public class LodSection
     }
 
     /// <summary>
-    /// Drop every run whose palette entry carries <paramref name="flag"/>, rebuilding the
-    /// run storage. Applied after a section is loaded so terrain already in the cache is
-    /// corrected in place - no re-exploration, no cache wipe.
+    /// Remove each run whose palette entry has <paramref name="flag"/>, and build the run
+    /// storage again.
+    ///
+    /// The mod does this after it loads a section. Thus it corrects the terrain that is in
+    /// the cache already. A player does not explore that area again, and the mod does not
+    /// empty the cache.
     /// </summary>
     public void RemoveRunsWithFlag(byte flag)
     {
@@ -141,8 +164,8 @@ public class LodSection
     }
 
     /// <summary>
-    /// Replace one column's runs. Run values must already reference this section's
-    /// palette. Returns true if the column content actually changed.
+    /// Replace the runs of one column. Each run value must point at the palette of this
+    /// section already. The result is true when the content of the column changed.
     /// </summary>
     public bool SetColumn(int col, ReadOnlySpan<ulong> newRuns)
     {
@@ -184,10 +207,12 @@ public class LodSection
     }
 
     /// <summary>
-    /// Replace many columns in one pass (one array rebuild total, not one per column) -
-    /// the capture path applies a whole chunk column's worth of LOD columns at once.
-    /// Entries in newRunsByCol may be null to leave that column untouched.
-    /// Returns true if any column content changed.
+    /// Replace many columns in one pass. This builds the array one time, and not one time
+    /// for each column. The capture path applies all the LOD columns of one chunk column
+    /// together.
+    ///
+    /// An entry in newRunsByCol can be null, and then that column does not change. The
+    /// result is true when the content of any column changed.
     /// </summary>
     public bool ReplaceColumns(ulong[]?[] newRunsByCol)
     {
