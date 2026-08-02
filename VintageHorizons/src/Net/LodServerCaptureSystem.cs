@@ -6,17 +6,20 @@ using Vintagestory.API.Server;
 namespace VintageHorizons.Net;
 
 /// <summary>
-/// Builds the server's own LOD cache (DESIGN.md §10, stage 2). Runs the same
-/// <see cref="LodPipeline"/> the client does, driven by chunk columns the server loads or
-/// generates rather than by ones a player receives, so the cache accumulates terrain from
-/// everybody's travels instead of one player's.
+/// Builds the LOD cache of the server (DESIGN.md section 10, stage 2). It runs the same
+/// <see cref="LodPipeline"/> that the client runs.
 ///
-/// Dedicated servers only. In singleplayer the client side of this same process already
-/// captures every chunk that loads, so a second pipeline would duplicate the cache file,
-/// the work and the memory for nothing - see StartServerSide.
+/// The chunk columns that the server loads or generates drive it. The columns that one
+/// player receives do not. Thus the cache collects the terrain from the travels of all
+/// players, and not from the travels of one player.
 ///
-/// Deliberately not merged into <see cref="LodAssistServerSystem"/>: the handshake has to
-/// keep answering, and answer honestly, even when capture is off or skipped.
+/// This class is for a dedicated server only. In singleplayer, the client side of this same
+/// process captures each chunk that loads. Thus a second pipeline duplicates the cache file,
+/// the work and the memory, for no gain. Read StartServerSide.
+///
+/// This class is deliberately separate from <see cref="LodAssistServerSystem"/>. The
+/// handshake must continue to answer, and to answer correctly, even when the capture is off
+/// or skipped.
 /// </summary>
 public class LodServerCaptureSystem : ModSystem
 {
@@ -30,37 +33,45 @@ public class LodServerCaptureSystem : ModSystem
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Server;
 
-    /// <summary>Set once the cache is open; the assist handshake reports it.</summary>
+    /// <summary>The mod sets this after it opens the cache. The assist handshake reports
+    /// it.</summary>
     public bool Capturing => pipeline?.Active == true;
 
     /// <summary>
-    /// Keys the server can offer. HasDataSet, not Sections: a section evicted from RAM is
-    /// still on disk and still servable, and the count a client is told has to match what
-    /// the manifest will actually contain.
+    /// The keys that the server can offer.
+    ///
+    /// This uses HasDataSet, and not Sections. A section that the mod evicted from RAM is
+    /// still on the disk, and the server can still give it. The count that a client receives
+    /// must also match the content of the manifest.
     /// </summary>
     public int SectionCount => pipeline?.World.HasDataSet.Count ?? 0;
 
     public int ColumnsCaptured => pipeline?.ColumnsCaptured ?? 0;
 
-    /// <summary>Progress line for /vhserver, or null when no pre-generation is running.</summary>
+    /// <summary>A progress line for /vhserver. This is null when no pre-generation
+    /// runs.</summary>
     public string? PregenStatus => pregen == null ? null
         : pregen.Done ? $"pre-generation complete ({pregen.Total} columns)"
         : $"pre-generating {pregen.Requested}/{pregen.Total} columns";
 
-    /// <summary>Progress line for /vhserver, or null when no sweep is running.</summary>
+    /// <summary>A progress line for /vhserver. This is null when no sweep runs.</summary>
     public string? SweepStatus => sweep?.Status;
 
-    /// <summary>Main thread only - the capture pipeline mutates this set every tick.</summary>
+    /// <summary>Use this on the main thread only. The capture pipeline changes this set in
+    /// each tick.</summary>
     public long[] SnapshotKeys() =>
         pipeline == null ? Array.Empty<long>() : pipeline.World.HasDataSet.ToArray();
 
     /// <summary>
-    /// The stored blob for a key, for serving over the network. Main thread only: it
-    /// shares the store connection with the capture that writes it.
+    /// The stored blob for a key, to give over the network.
+    ///
+    /// Use this on the main thread only. It shares the store connection with the capture that
+    /// writes to it.
     /// </summary>
     public byte[]? LoadBlob(long key) => pipeline?.LoadBlob(key);
 
-    /// <summary>Admin settings, loaded once; both server systems read this copy.</summary>
+    /// <summary>The settings of the admin, which the mod loads one time. Both server systems
+    /// read this copy.</summary>
     public LodServerConfig Config { get; private set; } = new();
 
     public override void StartServerSide(ICoreServerAPI api)
@@ -77,8 +88,9 @@ public class LodServerCaptureSystem : ModSystem
             Config = new LodServerConfig();
         }
         Config.Sanitize();
-        // Written back every start so a new option appears in the file rather than only in
-        // the source, and so a sanitised value is visible as the one actually in force.
+        // The mod writes the file again at each start. Thus a new option appears in the
+        // file, and not in the source only. A value that the mod clamped is also visible as
+        // the value in force.
         api.StoreModConfig(Config, ConfigFile);
 
         if (!Config.EnableCapture)
@@ -89,21 +101,24 @@ public class LodServerCaptureSystem : ModSystem
             return;
         }
 
-        // Singleplayer (and LAN-hosted) worlds run client and integrated server in one
-        // process. Ordinarily there is nothing for this side to do there: capture is driven
-        // by chunks loading, and in one process the server loads exactly the chunks the
-        // client is already shown, so running both sides doubles every capture and holds
-        // two copies of the section pyramid for no gain. Observed live before this was
-        // guarded: a manifest of 3851 keys the client already had, every one redundant.
+        // A singleplayer world, and a world that a player hosts on a LAN, run the client
+        // and the integrated server in one process. Normally this side has nothing to do
+        // there.
         //
-        // Sweeping is the exception, and the reason the guard is conditional rather than
-        // absolute. A sweep deliberately loads columns the client will never be shown -
-        // terrain generated in sessions before this mod was installed, or hundreds of
-        // blocks from where the player is standing. That is the one thing this side can do
-        // in singleplayer that the client cannot do for itself.
+        // The chunks that load drive the capture. In one process, the server loads exactly
+        // the chunks that the client shows already. Thus two sides double each capture, and
+        // they hold two copies of the section pyramid, for no gain. This was observed in a
+        // live session before the guard existed: a manifest of 3851 keys that the client
+        // held already, and each one was redundant.
         //
-        // The two caches stay separate regardless (the -server suffix below), so the
-        // double-open that caused the original bug cannot recur.
+        // A sweep is the exception, and it is the reason why the guard has a condition. A
+        // sweep deliberately loads columns that the client never shows. Those columns are
+        // terrain that a session generated before the installation of this mod, or terrain
+        // hundreds of blocks from the player. That is the one thing that this side can do in
+        // singleplayer, and the client cannot do it for itself.
+        //
+        // The two caches stay separate in each case, through the -server suffix below. Thus
+        // the double open that caused the original defect cannot occur again.
         if (!api.Server.IsDedicated && !Config.SweepEnabled)
         {
             Mod.Logger.Notification(
@@ -114,14 +129,15 @@ public class LodServerCaptureSystem : ModSystem
             return;
         }
 
-        // A server has no texture atlas, so it cannot compute a palette colour at all
-        // (Block.GetColorWithoutTint takes ICoreClientAPI). Sections are written
-        // colour-unresolved and the receiving client fills colour in, which it can do
-        // from the block code alone. Tint slots are likewise client-only and stay 0.
+        // A server has no texture atlas. Thus it cannot calculate a palette color at all,
+        // because Block.GetColorWithoutTint takes an ICoreClientAPI. The mod writes a
+        // section with no color. The client that receives it adds the color, which it can do
+        // from the block code alone. A tint slot is also for the client only, and it stays
+        // at 0.
         pipeline = new LodPipeline(api, Mod.Logger, (_, _, _, _) => (0, 0));
 
-        // Not at StartServerSide: the savegame identifier that names the cache file is
-        // not known until the world is up.
+        // Do not do this at StartServerSide. The savegame identifier gives the name of the
+        // cache file, and it is not known until the world starts.
         api.Event.ServerRunPhase(EnumServerRunPhase.RunGame, OnRunGame);
         api.Event.GameWorldSave += OnGameWorldSave;
     }
@@ -139,10 +155,10 @@ public class LodServerCaptureSystem : ModSystem
         Mod.Logger.Notification("Server LOD capture active ({0} sections from cache). {1}",
             pipeline.CachedSectionsLoaded, Config.Describe());
 
-        // Sweep before pregen, and not only because it is cheaper. Sweeping loads terrain
-        // that already exists; pregen makes more. Doing the free work first means an
-        // interrupted startup has still indexed everything real before spending a second on
-        // inventing anything.
+        // Sweep before pre-generation. The lower cost is not the only reason. A sweep loads
+        // terrain that exists already, and pre-generation makes more terrain. The free work
+        // comes first. Thus a startup that stops early has still indexed each real column,
+        // before it spent one second to create new terrain.
         if (Config.SweepEnabled)
         {
             sweep = new LodSavegameSweep(sapi, Mod.Logger,
@@ -164,8 +180,8 @@ public class LodServerCaptureSystem : ModSystem
     }
 
     /// <summary>
-    /// Player edits: the column has to be re-captured or the cache keeps showing terrain
-    /// that is no longer there. ChunkColumnLoaded does not fire again for a live column.
+    /// A player edit. The mod must capture the column again, or the cache continues to show
+    /// terrain that is gone. ChunkColumnLoaded does not occur again for a live column.
     /// </summary>
     void QueueAt(BlockPos? pos)
     {
@@ -174,8 +190,8 @@ public class LodServerCaptureSystem : ModSystem
     }
 
     /// <summary>
-    /// Flush with the world save rather than only at shutdown: a server that is killed
-    /// rather than stopped cleanly would otherwise lose everything since it started.
+    /// Write the data with the world save, and not at the shutdown only. A server can stop
+    /// without a clean shutdown. Then it loses each change since its start.
     /// </summary>
     void OnGameWorldSave()
     {
