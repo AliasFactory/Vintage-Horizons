@@ -228,7 +228,67 @@ public class LodServerCaptureSystem : ModSystem
             .BeginSubCommand("status")
                 .WithDescription("Progress of the current or last run")
                 .HandleWith(_ => TextCommandResult.Success(GenerateStatusLine()))
+            .EndSubCommand()
+            .BeginSubCommand("diff")
+                .WithDescription("Measure what a peek produces against a full generation")
+                .WithArgs(parsers.OptionalInt("x", -1), parsers.OptionalInt("z", -1))
+                .HandleWith(OnGenerateDiff)
             .EndSubCommand();
+
+        // Places a block, so it exists only where someone asked for developer tools.
+        // DESIGN.md 14 states the mod writes nothing to the world; that stays literally
+        // true on every server that does not set this.
+        if (Environment.GetEnvironmentVariable("VINTAGEHORIZONS_DEVTOOLS") != "1") return;
+
+        sapi.ChatCommands.Get("vhgen")
+            .BeginSubCommand("edittest")
+                .WithDescription("Dev tool: place a marker, then show a peek cannot see it")
+                .WithArgs(parsers.OptionalInt("x", -1), parsers.OptionalInt("z", -1))
+                .HandleWith(OnGenerateEditTest)
+            .EndSubCommand();
+
+        Mod.Logger.Notification(
+            "Developer tools on (VINTAGEHORIZONS_DEVTOOLS): /vhgen edittest is registered and "
+            + "PLACES BLOCKS in the world when run. Do not set this on a server you care about.");
+    }
+
+    /// <summary>Centre for a diagnostic run: explicit x z, else the caller, else spawn.</summary>
+    (int Cx, int Cz) DiagnosticCentre(TextCommandCallingArgs args)
+    {
+        int argX = (int)args.Parsers[0].GetValue();
+        int argZ = (int)args.Parsers[1].GetValue();
+        bool aimed = argX >= 0 && argZ >= 0;
+        var pos = args.Caller.Pos;
+        double bx = aimed ? argX : pos?.X ?? sapi.World.DefaultSpawnPosition.X;
+        double bz = aimed ? argZ : pos?.Z ?? sapi.World.DefaultSpawnPosition.Z;
+        return ((int)bx / GlobalConstants.ChunkSize, (int)bz / GlobalConstants.ChunkSize);
+    }
+
+    TextCommandResult OnGenerateDiff(TextCommandCallingArgs args)
+    {
+        if (!worldReady) return TextCommandResult.Error("[VintageHorizons] The world is still starting.");
+
+        (int cx, int cz) = DiagnosticCentre(args);
+        new LodPeekDiff(sapi, Mod.Logger).RunDiff(cx, cz,
+            line => Mod.Logger.Notification("Peek diff result: {0}", line));
+
+        return TextCommandResult.Success(
+            $"[VintageHorizons] Comparing a peek against a full generation at chunk {cx},{cz}. "
+            + "This GENERATES terrain for the reference, so do not run it where that matters. "
+            + "The report lands in the server log shortly.");
+    }
+
+    TextCommandResult OnGenerateEditTest(TextCommandCallingArgs args)
+    {
+        if (!worldReady) return TextCommandResult.Error("[VintageHorizons] The world is still starting.");
+
+        (int cx, int cz) = DiagnosticCentre(args);
+        new LodPeekDiff(sapi, Mod.Logger).RunEditTest(cx, cz,
+            line => Mod.Logger.Notification("Edit test result: {0}", line));
+
+        return TextCommandResult.Success(
+            $"[VintageHorizons] Placing a marker at chunk {cx},{cz} and peeking the same "
+            + "coordinate. This WRITES BLOCKS to your world. The report lands in the server log.");
     }
 
     string GenerateStatusLine() => generate != null

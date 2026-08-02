@@ -10,7 +10,7 @@ set -euo pipefail
 # Usage: check-matrix.sh [--only <scenario>] [--skip-visual] [--settle <seconds>]
 #
 # Scenarios: client-only both no-client-mod serving-off capture-off pregen sweep
-#            nondestructive generate generate-sp radius deferral
+#            nondestructive peekdiff generate generate-sp radius deferral
 
 source "$(dirname "${BASH_SOURCE[0]}")/test-lib.sh"
 
@@ -57,9 +57,11 @@ write_server_config() {
     cat > "$SERVER_CONFIG"
 }
 
+# VH_DEVTOOLS=1 in front of a call forwards the dev-tools switch to the server, which
+# is what registers the block-placing /vhgen edittest. Off everywhere else.
 start_server() {
     cleanup
-    "$VH_ROOT/scripts/test-server.sh" >/dev/null
+    VINTAGEHORIZONS_DEVTOOLS="${VH_DEVTOOLS:-0}" "$VH_ROOT/scripts/test-server.sh" >/dev/null
 }
 
 # Runs a client, waits for the marker, lets it settle, then stops it cleanly so the
@@ -453,6 +455,93 @@ print(sqlite3.connect('file:$db?mode=ro', uri=True).execute('SELECT COUNT(*) FRO
         fail "config-preserve"
     fi
     rm -f "$SERVER_CONFIG"
+fi
+
+# --- Scenario 6c2: WHAT A PEEK LOSES, AND WHAT IT CANNOT SEE. ---------------------
+# Two experiments, both server-only over the console FIFO.
+#
+# The diff records what a Terrain-pass peek is missing against a full generation of
+# the same coordinates. That caveat used to read "no trees", which came from the
+# EnumWorldGenPass doc comments rather than measurement - the same method that
+# under-reported the sweep's neighbour dependency by three rings.
+#
+# The edit test places a marker, reads it back from the loaded world, then peeks the
+# same coordinate and looks for it. This is the evidence behind Classify never peeking
+# a column that exists. It needs the dev-tools switch because it writes blocks.
+#
+# Assertions are on SHAPE, not counts: exact block counts move with the seed and the
+# game version, so pinning them makes failures uninformative. The real numbers go to
+# the scenario output for a human to read on every run.
+
+if wants peekdiff; then
+    echo "  [peekdiff] measure what a peek loses, and that it cannot see an edit"
+    server_mod; wipe_server_cache
+    write_server_config <<'JSON'
+{
+  "EnableCapture": true,
+  "EnableServing": true,
+  "SweepSavegame": false,
+  "PregenRadiusChunks": 0
+}
+JSON
+    VH_DEVTOOLS=1 start_server
+    ok=1
+
+    grep -q "Developer tools on" "$SERVER_LOG" \
+        || { echo "      x the dev-tools notice is missing, so edittest is not registered"; ok=0; }
+
+    # Experiment A, on land no session has touched.
+    echo "/vhgen diff 470000 470000" > "$VH_SANDBOX/server/console.in"
+    if vh_wait_for "$SERVER_LOG" "surface height delta median" 420 "$VH_SANDBOX/server/server.pid"; then
+        grep -oE "Peek diff( at chunk|:) .*" "$SERVER_LOG" | tail -4 | sed 's/^/      - /'
+
+        only_loaded="$(grep -oE "ONLY IN THE FULL GENERATION \([0-9]+\)" "$SERVER_LOG" | tail -1 | grep -oE "[0-9]+")"
+        only_peek="$(grep -oE "ONLY IN THE PEEK \([0-9]+\)" "$SERVER_LOG" | tail -1 | grep -oE "[0-9]+")"
+        median="$(grep -oE "surface height delta median -?[0-9]+" "$SERVER_LOG" | tail -1 | grep -oE -- "-?[0-9]+$")"
+        peek_blocks="$(grep -oE "peek produced [0-9]+ blocks" "$SERVER_LOG" | tail -1 | grep -oE "[0-9]+")"
+
+        # A peek that produced nothing would satisfy "something is missing" trivially.
+        [[ "${peek_blocks:-0}" -gt 0 ]] || { echo "      x the peek produced no blocks at all"; ok=0; }
+        [[ "${only_loaded:-0}" -gt 0 ]] || { echo "      x nothing was missing from the peek, which contradicts the pass list"; ok=0; }
+
+        # The strongest claim the data supports: a peek never invents anything. Every
+        # block type it produces also appears in a full generation, so generated LOD
+        # can only ever be INCOMPLETE, never wrong. In principle a later pass could
+        # replace every instance of some type and break this; that has not happened,
+        # and if it ever does the case is worth reading rather than tolerating.
+        [[ "${only_peek:-1}" == "0" ]] \
+            || { echo "      x the peek produced $only_peek block types absent from a real generation"; ok=0; }
+
+        # The ground itself must not move. Measured: median +1, because the snow layer
+        # (pass 4, which a Terrain peek never runs) adds one block on top of every
+        # exposed position - 1024 of them in a 32x32 column. So 0 or 1 is correct and
+        # anything larger means the Terrain pass alone is not setting the terrain.
+        [[ "${median:-99}" == "0" || "${median:-99}" == "1" ]] \
+            || { echo "      x surface height median delta is $median: the peek moved the ground"; ok=0; }
+    else
+        echo "      x the diff never reported"
+        ok=0
+    fi
+
+    # Experiment B. No coordinates: the console falls back to spawn, which is loaded
+    # and therefore has a column a marker can actually be placed into.
+    echo "/vhgen edittest" > "$VH_SANDBOX/server/console.in"
+    if vh_wait_for "$SERVER_LOG" "MARKER PRESENT WHEN PEEKED" 240 "$VH_SANDBOX/server/server.pid"; then
+        grep -oE "Edit test:.*" "$SERVER_LOG" | tail -3 | sed 's/^/      - /'
+        verdict="$(grep -oE "MARKER PRESENT WHEN LOADED: (True|False)\. MARKER PRESENT WHEN PEEKED: (True|False)" "$SERVER_LOG" | tail -1)"
+        [[ "$verdict" == *"WHEN LOADED: True"* ]] \
+            || { echo "      x the marker did not read back from the loaded world"; ok=0; }
+        [[ "$verdict" == *"WHEN PEEKED: False"* ]] \
+            || { echo "      x the peek CONTAINED the placed marker, contradicting the API contract"; ok=0; }
+    else
+        echo "      x the edit test never reported"
+        ok=0
+    fi
+
+    "$VH_ROOT/scripts/test-stop.sh" server >/dev/null 2>&1 || true
+    vh_wait_stopped "$VH_SANDBOX/server/server.pid" 180 || true
+
+    [[ "$ok" == 1 ]] && echo "  peekdiff: ok" || fail "peekdiff"
 fi
 
 # --- Scenario 6d: /vhgen FROM A REAL PLAYER, SERVED ON REJOIN. --------------------
