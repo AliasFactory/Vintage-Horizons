@@ -17,18 +17,23 @@ uniform float fogDensityIn;
 
 uniform float farViewDistance;
 
-// Which of this section's four sides border on area we have NO captured data for
-// (-X, +X, -Z, +Z; 1 = open). Client-side-only means coverage is whatever the
-// server has streamed us, so the cache genuinely runs out mid-air along the edges
-// of wherever the player has been. Those boundaries are dissolved into the
-// horizon rather than left standing as cliffs.
+// Which of the four sides of this section touch an area with NO captured data.
+// The order is -X, +X, -Z, +Z, and a value of 1 means open.
+//
+// This mod is client-side only. Thus its coverage is what the server streamed to
+// it, and the cache stops in the air at the edges of the area that the player
+// visited. The shader fades those boundaries into the horizon. It does not leave
+// them as cliffs.
 uniform vec4 openEdges;
 uniform float sectionSize;
 
-// Tint is resolved per VERTEX, not per fragment: the slot is constant across a quad
-// and the altitude blend is linear in height, so interpolating the result is
-// equivalent and saves two indexed uniform-array lookups per fragment.
-// Must equal LodTintRegistry.MaxSlots; LoadShader logs an error if it does not.
+// The shader finds the tint for each VERTEX, and not for each fragment. The slot is
+// the same across one quad, and the altitude blend is linear in the height. Thus an
+// interpolation of the result gives the same value, and it removes two indexed
+// lookups in a uniform array for each fragment.
+//
+// CAUTION: This value must equal LodTintRegistry.MaxSlots. LoadShader records an
+// error when it does not.
 const int TINT_SLOTS = 64;
 uniform vec4 tintsLow[TINT_SLOTS];
 uniform vec4 tintsHigh[TINT_SLOTS];
@@ -63,30 +68,35 @@ void main()
     worldPos = modelMatrix * vec4(vertexPositionIn, 1.0);
     worldPos = applyGlobalWarping(worldPos);
 
-    // 0 at the start of the LOD band (inside vanilla terrain), 1 at the far edge
+    // This is 0 at the start of the LOD band, which is inside the vanilla terrain.
+    // It is 1 at the far edge.
     float distStart = viewDistance * 0.785;
     float radial = length(worldPos.xz);
     dist = (radial - distStart) / (farViewDistance - distStart - 512.0);
 
-    // Sink LOD terrain into the ground near the transition ring so the seam with real
-    // chunks reads as terrain, not a floating shelf.
+    // Move the LOD terrain down into the ground near the transition ring. Thus the
+    // seam with the real chunks looks like terrain, and not like a shelf in the air.
     //
-    // Measured in BLOCKS from the start of the band, not as a fraction of it: dist is
-    // normalised over the whole cache, which grows as the player explores, so a
-    // fractional ramp changed width depending on how much of the world had been
-    // visited -- 86 blocks at a 5000-block edge, 390 at 20000.
+    // The distance is in BLOCKS from the start of the band. It is not a fraction of the
+    // band. The value dist is normalized over the full cache, and that cache grows as
+    // the player explores.
     //
-    // smoothstep rather than a linear ramp: a straight rise stops dead when it reaches
-    // full height and leaves a visible crease right where it finishes. This eases out
-    // to zero slope at both ends, so the sink is still there but the top of the bend
-    // is not something the eye can catch.
+    // Thus a ramp that used a fraction changed its width with the quantity of the world
+    // that the player visited. It was 86 blocks at an edge of 5000 blocks, and 390
+    // blocks at 20000.
+    //
+    // This code uses smoothstep, and not a linear ramp. A straight rise stops at its
+    // full height, and it leaves a visible line at that point. smoothstep reaches zero
+    // slope at both ends. Thus the terrain still moves down, and the eye cannot find
+    // the top of the bend.
     const float SINK_DEPTH = 5.0;
     const float SINK_FADE_BLOCKS = 110.0;
     float intoBand = radial - distStart;
     worldPos.y -= SINK_DEPTH * (1.0 - smoothstep(0.0, SINK_FADE_BLOCKS, intoBand));
 
-    // Distance into the section from each open side, as a 0..1 ramp over the outer
-    // third. Vertex positions are section-local, so this is just the local x/z.
+    // The distance into the section from each open side, as a ramp from 0 to 1 over
+    // the outer third. A vertex position is local to the section. Thus this value is
+    // the local x or z.
     float fadeWidth = max(8.0, sectionSize * 0.34);
     vec4 inset = vec4(
         vertexPositionIn.x,
@@ -96,8 +106,8 @@ void main()
     vec4 nearness = clamp(1.0 - inset / fadeWidth, 0.0, 1.0) * openEdges;
     edgeFade = max(max(nearness.x, nearness.y), max(nearness.z, nearness.w));
 
-    // Only past the transition ring: terrain beside the player is covered by real
-    // chunks, and dissolving it there would read as a hole rather than haze.
+    // Do this past the transition ring only. Real chunks cover the terrain beside the
+    // player. A fade there looks like a hole, and not like haze.
     edgeFade *= clamp(dist * 4.0, 0.0, 1.0);
 
     fogAmount = getFogLevel(worldPos, fogMinIn, fogDensityIn);
