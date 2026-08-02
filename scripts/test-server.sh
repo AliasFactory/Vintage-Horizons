@@ -22,6 +22,23 @@ vh_guard_not_running "Test server" "$PIDFILE"
 mkdir -p "$DATA/tmp" "$DATA/Mods"
 export TMPDIR="$DATA/tmp"
 
+# A writable console. Scenarios type server commands (echo "/vhgen start 8" >
+# console.in) without needing a client. The holder process keeps the FIFO open
+# between writers - without it, the first echo's close delivers EOF to the server
+# console. test-stop.sh kills the holder via its pidfile.
+FIFO="$DATA/console.in"
+if [[ -f "$DATA/console-stdin.pid" ]]; then
+    kill "$(cat "$DATA/console-stdin.pid")" 2>/dev/null || true
+    rm -f "$DATA/console-stdin.pid"
+fi
+rm -f "$FIFO"
+mkfifo "$FIFO"
+# The holder must not inherit this script's stdout/stderr: a caller reading our
+# output through a pipe would otherwise wait on the holder forever.
+sleep infinity > "$FIFO" 2>/dev/null < /dev/null &
+echo $! > "$DATA/console-stdin.pid"
+export VH_STDIN="$FIFO"
+
 # A server-side mod left over from a previous benchmark makes the server demand it
 # from every joining client, which shows up as "You are missing 1 mods to join this
 # server" and looks like a bug in our own mod. bench.sh manages this set explicitly;

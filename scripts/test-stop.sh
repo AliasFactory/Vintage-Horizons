@@ -65,12 +65,25 @@ stop_one() {
     return 0
 }
 
+# The console FIFO's holder (see test-server.sh) is a plain sleep, not a game
+# process: kill it directly rather than through stop_one's SIGTERM-and-wait.
+stop_console_holder() {
+    local pidfile="$SANDBOX/server/console-stdin.pid"
+    [[ -f "$pidfile" ]] || return 0
+    kill "$(cat "$pidfile" 2>/dev/null)" 2>/dev/null || true
+    rm -f "$pidfile" "$SANDBOX/server/console.in"
+}
+
 case "${1:-all}" in
     client) stop_one "test client" "$SANDBOX/test-instance.pid" ;;
-    server) stop_one "test server" "$SANDBOX/server/server.pid" ;;
+    server)
+        stop_one "test server" "$SANDBOX/server/server.pid"
+        stop_console_holder
+        ;;
     all)
         stop_one "test client" "$SANDBOX/test-instance.pid"
         stop_one "test server" "$SANDBOX/server/server.pid"
+        stop_console_holder
         ;;
     *)
         echo "usage: test-stop.sh [client|server|all]" >&2

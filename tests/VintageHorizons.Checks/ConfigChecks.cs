@@ -49,6 +49,19 @@ public static class ConfigChecks
         c.Eq(LodAssist.MaxSectionsPerSecondTotal, config.MaxSectionsPerSecondTotal,
             "the total default tracks the protocol constant");
 
+        // Generation is on by default where pregen is not: it runs only when a person
+        // with the controlserver privilege asks, and peeks write nothing to the savegame.
+        c.True(config.EnableGenerateCommand, "the generate command is enabled by default");
+        c.True(config.GenerateEnabled, "the defaults leave generation available");
+        c.Eq(128, config.GenerateMaxRadiusChunks, "the generate ceiling is 128 chunks");
+        c.Eq(32, config.GenerateDefaultRadiusChunks, "the no-argument radius is 32 chunks");
+        c.Eq(16, config.GenerateColumnsPerSecond, "the generate rate default is 16 columns/s");
+        c.Eq(64, config.GenerateMaxInFlight, "the in-flight cap default is TopoHorizon's measured 64");
+        c.False(new LodServerConfig { EnableGenerateCommand = false }.GenerateEnabled,
+            "clearing the flag disables generation");
+        c.False(new LodServerConfig { GenerateMaxRadiusChunks = 0 }.GenerateEnabled,
+            "a zero ceiling disables generation as surely as the flag does");
+
         var untouched = new LodServerConfig();
         untouched.Sanitize();
         c.Eq(8192, untouched.ServeRadiusBlocks, "sanitizing the defaults changes nothing");
@@ -95,6 +108,28 @@ public static class ConfigChecks
         c.Eq(48, Sanitized(cfg => cfg.SweepRadiusChunks = 48).SweepRadiusChunks,
             "an in-range sweep radius is preserved exactly");
 
+        c.Eq(256, Sanitized(cfg => cfg.GenerateMaxRadiusChunks = 99999).GenerateMaxRadiusChunks,
+            "the generate ceiling is capped at 256 chunks");
+        c.Eq(0, Sanitized(cfg => cfg.GenerateMaxRadiusChunks = -1).GenerateMaxRadiusChunks,
+            "a negative generate ceiling means off");
+        c.Eq(64, Sanitized(cfg => cfg.GenerateColumnsPerSecond = 1000).GenerateColumnsPerSecond,
+            "generate rate is capped");
+        c.Eq(1, Sanitized(cfg => cfg.GenerateColumnsPerSecond = 0).GenerateColumnsPerSecond,
+            "a zero generate rate becomes one, not a stall");
+        c.Eq(256, Sanitized(cfg => cfg.GenerateMaxInFlight = 99999).GenerateMaxInFlight,
+            "the in-flight cap is bounded");
+        c.Eq(1, Sanitized(cfg => cfg.GenerateMaxInFlight = 0).GenerateMaxInFlight,
+            "a zero in-flight cap becomes one");
+
+        // The cross-field clamp. A lowered ceiling must never leave a default the
+        // command itself then refuses as out of range.
+        c.Eq(8, Sanitized(cfg => cfg.GenerateMaxRadiusChunks = 8).GenerateDefaultRadiusChunks,
+            "the default radius clamps down to a lowered ceiling");
+        c.Eq(0, Sanitized(cfg => cfg.GenerateMaxRadiusChunks = 0).GenerateDefaultRadiusChunks,
+            "a zero ceiling zeroes the default radius too");
+        c.Eq(32, Sanitized(cfg => cfg.GenerateDefaultRadiusChunks = 32).GenerateDefaultRadiusChunks,
+            "an in-range default radius is preserved exactly");
+
         // The invariant that matters downstream: WithinServeRadius squares this value and
         // compares it against a squared distance, so a negative would compare as positive
         // and quietly serve a radius the admin never asked for.
@@ -137,6 +172,11 @@ public static class ConfigChecks
         c.True(text.Contains("sweep 128 chunks"), "the description reports the sweep radius");
         c.True(new LodServerConfig { SweepSavegame = false }.Describe().Contains("sweep off"),
             "a disabled sweep is described as off");
+
+        c.True(text.Contains("generate on request up to 128 chunks"),
+            "the description reports the generate ceiling");
+        c.True(new LodServerConfig { EnableGenerateCommand = false }.Describe().Contains("generate off"),
+            "disabled generation is described as off");
     }
 
     static LodServerConfig Sanitized(Action<LodServerConfig> setup)

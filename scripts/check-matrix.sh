@@ -9,7 +9,8 @@ set -euo pipefail
 #
 # Usage: check-matrix.sh [--only <scenario>] [--skip-visual] [--settle <seconds>]
 #
-# Scenarios: client-only both no-client-mod serving-off capture-off pregen sweep radius deferral
+# Scenarios: client-only both no-client-mod serving-off capture-off pregen sweep
+#            nondestructive generate generate-sp radius deferral
 
 source "$(dirname "${BASH_SOURCE[0]}")/test-lib.sh"
 
@@ -343,6 +344,215 @@ print(c.execute('SELECT COUNT(*) FROM mapchunk').fetchone()[0],
     else
         fail "sweep"
     fi
+fi
+
+# --- Scenario 6c: GENERATION MUST NOT TOUCH THE SAVEGAME. -------------------------
+# The strict form of the non-destructive promise, and stricter than the sweep's row
+# counts: identical counts also pass when content was rewritten, or when five rows
+# left and five arrived. This compares the row KEY SETS and a CONTENT hash of all
+# three terrain tables, byte for byte.
+#
+# The run is aimed at virgin land far from spawn, over the console FIFO, with no
+# client connected. Every column then takes the Peek arm, the run loads nothing into
+# the live world, and nothing ticks - so content equality is assertable here in a way
+# it never can be for the sweep, whose loads hand columns to vanilla simulation.
+#
+# The savegame is snapshotted between two clean server sessions, so trailing worldgen
+# from the first boot cannot masquerade as generation damage from the second.
+
+save_state() {
+    python3 - "$1" <<'PYEOF'
+import hashlib, sqlite3, sys
+c = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+h = hashlib.sha256()
+for table in ("mapchunk", "chunk", "mapregion"):
+    keys = [r[0] for r in c.execute(f"SELECT position FROM {table} ORDER BY position")]
+    h.update(repr(keys).encode())
+    for row in c.execute(f"SELECT position, data FROM {table} ORDER BY position"):
+        h.update(repr(row[0]).encode())
+        h.update(row[1] if row[1] is not None else b"~")
+    print(table, len(keys), end="  ")
+print(h.hexdigest()[:16])
+PYEOF
+}
+
+if wants nondestructive; then
+    echo "  [nondestructive] generation must leave the savegame byte-identical"
+    server_mod; wipe_server_cache
+    write_server_config <<'JSON'
+{
+  "EnableCapture": true,
+  "EnableServing": true,
+  "SweepSavegame": false,
+  "PregenRadiusChunks": 0,
+  "GenerateColumnsPerSecond": 32,
+  "GenerateMaxInFlight": 64
+}
+JSON
+    save="$VH_SANDBOX/server/Saves/default.vcdbs"
+
+    # Session 1: boot and stop cleanly, so the measured session starts from a
+    # settled savegame.
+    start_server
+    sleep 15
+    "$VH_ROOT/scripts/test-stop.sh" server >/dev/null 2>&1 || true
+    vh_wait_stopped "$VH_SANDBOX/server/server.pid" 180 || true
+    before="$(save_state "$save")"
+
+    # Session 2: generate 32,000 blocks from spawn - land no session has touched.
+    start_server
+    echo "/vhgen start 12 480000 480000" > "$VH_SANDBOX/server/console.in"
+    ok=1
+    if vh_wait_for "$SERVER_LOG" "Generation finished" 600 "$VH_SANDBOX/server/server.pid"; then
+        line="$(grep -o "Generation finished.*" "$SERVER_LOG" | tail -1)"
+        echo "      - $line"
+        # 25x25 columns, every one virgin: all generated, none loaded, none failed.
+        echo "$line" | grep -q "625 generated" || { echo "      x expected 625 generated"; ok=0; }
+        echo "$line" | grep -q "0 timed out"   || { echo "      x peeks timed out"; ok=0; }
+        # The mod's own instrument must agree with the external measurement below.
+        echo "$line" | grep -qE "Verified [0-9]+/[0-9]+ sampled" || { echo "      x no verify clause"; ok=0; }
+        echo "$line" | grep -qE "Verified ([0-9]+)/\1 " || { echo "      x verify found regrown positions"; ok=0; }
+    else
+        echo "      x generation never finished"
+        ok=0
+    fi
+    "$VH_ROOT/scripts/test-stop.sh" server >/dev/null 2>&1 || true
+    vh_wait_stopped "$VH_SANDBOX/server/server.pid" 180 || true
+    after="$(save_state "$save")"
+
+    echo "      - before: $before"
+    echo "      - after:  $after"
+    [[ "$before" == "$after" && -n "$before" ]] \
+        || { echo "      x the savegame changed: keys or content differ"; ok=0; }
+
+    db="$(ls "$VH_SANDBOX"/server/ModData/vintagehorizons/*-server.db 2>/dev/null | head -1)"
+    sections=$(python3 -c "
+import sqlite3
+print(sqlite3.connect('file:$db?mode=ro', uri=True).execute('SELECT COUNT(*) FROM Section').fetchone()[0])" 2>/dev/null || echo 0)
+    [[ "${sections:-0}" -gt 0 ]] || { echo "      x the LOD cache gained no sections"; ok=0; }
+
+    if [[ "$ok" == 1 ]]; then
+        echo "  nondestructive: ok (625 peeks, savegame byte-identical, $sections sections built)"
+    else
+        fail "nondestructive"
+    fi
+
+    # Piggyback: a broken config must be preserved, not clobbered with defaults.
+    echo "  [nondestructive] a corrupt config file must be left untouched"
+    printf '{ "EnableCapture": true,, }' > "$SERVER_CONFIG"
+    cfg_before="$(sha256sum "$SERVER_CONFIG")"
+    start_server
+    vh_wait_for "$SERVER_LOG" "Dedicated Server now running" 180 "$VH_SANDBOX/server/server.pid" || true
+    "$VH_ROOT/scripts/test-stop.sh" server >/dev/null 2>&1 || true
+    vh_wait_stopped "$VH_SANDBOX/server/server.pid" 180 || true
+    cfg_after="$(sha256sum "$SERVER_CONFIG")"
+    if [[ "$cfg_before" == "$cfg_after" ]] && grep -q "Could not parse" "$SERVER_LOG"; then
+        echo "  config-preserve: ok (file byte-identical, parse warning logged)"
+    else
+        echo "      x the config file changed, or no parse warning was logged"
+        fail "config-preserve"
+    fi
+    rm -f "$SERVER_CONFIG"
+fi
+
+# --- Scenario 6d: /vhgen FROM A REAL PLAYER, SERVED ON REJOIN. --------------------
+# The player path the console FIFO cannot exercise: chat registration, the privilege
+# gate, Caller.Pos. Then the part that makes it useful - a client with an empty cache
+# rejoins and receives the generated sections over the assist. The manifest is sent
+# once at handshake, so the SECOND join is the one that can see them.
+
+if wants generate; then
+    echo "  [generate] a player runs /vhgen; a rejoin fetches what it built"
+    client_mod; server_mod; wipe_client_cache; wipe_server_cache
+    write_server_config <<'JSON'
+{
+  "EnableCapture": true,
+  "EnableServing": true,
+  "ServeRadiusBlocks": 0,
+  "MaxSectionsPerSecondPerPlayer": 64,
+  "MaxSectionsPerSecondTotal": 128,
+  "SweepSavegame": false,
+  "PregenRadiusChunks": 0,
+  "GenerateColumnsPerSecond": 32
+}
+JSON
+    start_server
+    ok=1
+
+    # Join 1 types the command (the hook fires 15s after finalize) and leaves; the
+    # server finishes the run on its own.
+    VINTAGEHORIZONS_AUTOCMD="/vhgen start 10" run_client "Level finalized" 30 || ok=0
+    vh_wait_for "$SERVER_LOG" "Generation finished" 600 "$VH_SANDBOX/server/server.pid" || {
+        echo "      x generation never finished after the player command"; ok=0; }
+    grep -q "Generation started by Player" "$SERVER_LOG" \
+        || { echo "      x the run was not attributed to the player"; ok=0; }
+
+    # Join 2, empty cache: the generated sections must arrive over the wire.
+    wipe_client_cache
+    run_client "Level finalized" 45 || ok=0
+    installed="$(assist_field "$CLIENT_LOG" installed)"
+    if [[ -n "$installed" && "$installed" -gt 0 ]]; then
+        echo "      - rejoin installed $installed sections from the server"
+    else
+        echo "      x the rejoin installed nothing"
+        ok=0
+    fi
+
+    [[ "$ok" == 1 ]] && echo "  generate: ok" || fail "generate"
+fi
+
+# --- Scenario 6e: /vhgen IN SINGLEPLAYER. -----------------------------------------
+# The integration that has no server process: the guard leaves the server side idle,
+# the command opens the cache lazily hours after startup would have, and the client
+# adopts the result through the local offer source - which only works because the
+# client re-probes for a sibling cache that did not exist when the world finalized.
+
+if wants generate-sp; then
+    echo "  [generate-sp] singleplayer: lazy cache, local adoption, host privilege"
+    client_mod
+    # The integrated server reads the same ModConfig directory as the client sandbox.
+    mkdir -p "$VH_SANDBOX/ModConfig"
+    cat > "$VH_SANDBOX/ModConfig/vintagehorizons-server.json" <<'JSON'
+{
+  "EnableCapture": true,
+  "SweepSavegame": false,
+  "PregenRadiusChunks": 0,
+  "GenerateColumnsPerSecond": 32
+}
+JSON
+    rm -f "$CLIENT_LOG"
+    SP_SERVER_LOG="$VH_SANDBOX/Logs/server-main.log"
+    rm -f "$SP_SERVER_LOG"
+
+    cleanup
+    # Radius 12, not something smaller: the client streams and self-captures its own
+    # surroundings, so the adoption assertion needs generated sections beyond that.
+    VINTAGEHORIZONS_AUTOUNPAUSE=1 VINTAGEHORIZONS_STATS=1 \
+    VINTAGEHORIZONS_AUTOCMD="/vhgen start 12" \
+        "$VH_ROOT/scripts/test-client.sh" -o vhgen-sp -p preset-surviveandbuild >/dev/null
+
+    ok=1
+    vh_wait_for "$CLIENT_LOG" "Level finalized" 600 "$VH_SANDBOX/test-instance.pid" || ok=0
+    # The startup guard must have left the server side idle - no sweep, no cache.
+    grep -q "server side stays idle" "$SP_SERVER_LOG" \
+        || { echo "      x the idle-guard notice is missing"; ok=0; }
+    # The command must open the cache on demand and run to completion. This is also
+    # the empirical test that the singleplayer host holds the privilege.
+    vh_wait_for "$SP_SERVER_LOG" "Generation finished" 600 "$VH_SANDBOX/test-instance.pid" || {
+        echo "      x generation never finished in singleplayer"; ok=0; }
+    grep -q "Server LOD capture active" "$SP_SERVER_LOG" \
+        || { echo "      x the cache never opened lazily"; ok=0; }
+
+    # The client must notice the cache that appeared mid-session and adopt from it.
+    if ! vh_wait_for "$CLIENT_LOG" "adopting them as the view needs them" 240 \
+        "$VH_SANDBOX/test-instance.pid"; then
+        echo "      x the client never saw the late-appearing server cache"
+        ok=0
+    fi
+    sleep 20
+    stop_client
+
+    [[ "$ok" == 1 ]] && echo "  generate-sp: ok" || fail "generate-sp"
 fi
 
 # --- Scenario 7: THE SERVE RADIUS. ------------------------------------------------

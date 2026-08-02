@@ -50,6 +50,7 @@ public class LodAssistServerSystem : ModSystem
                     + $"{sectionsOutsideRadius} refused as out of radius, {pendingByPlayer.Count} players waiting. "
                     + (capture?.SweepStatus is string sw ? sw + ". " : "")
                     + (capture?.PregenStatus is string pg ? pg + ". " : "")
+                    + (capture?.GenerateStatus is string gn ? gn + ". " : "")
                     + "Settings live in ModConfig/vintagehorizons-server.json (restart to apply).");
             });
 

@@ -70,6 +70,48 @@ public class LodServerConfig
     public int SweepColumnsPerSecond = 16;
 
     /// <summary>
+    /// Let an admin build the LOD cache around themselves with /vhgen. Columns nobody
+    /// has generated are peeked: real worldgen runs from the seed, capture reads the
+    /// result, and nothing is written to the savegame. Columns that exist are loaded
+    /// under the same neighbourhood rule the sweep uses, so player edits stay correct.
+    ///
+    /// On by default, unlike <see cref="PregenRadiusChunks"/>, and the difference is
+    /// the same one that puts sweeping on by default: this runs only when a person
+    /// with the controlserver privilege asks, and the reply states the cost first.
+    /// Off means the command still exists but refuses, with the reason.
+    /// </summary>
+    public bool EnableGenerateCommand = true;
+
+    /// <summary>
+    /// The largest radius, in chunks, that /vhgen accepts. 0 disables the command as
+    /// surely as the flag does. 128 is a 4096-block radius: 66,049 columns, roughly 48
+    /// minutes at the engine's measured ~23 columns per second of worldgen.
+    /// </summary>
+    public int GenerateMaxRadiusChunks = 128;
+
+    /// <summary>
+    /// The radius used when /vhgen start gets no argument. Small on purpose: a person
+    /// typing a command wants a result. 32 chunks is 4,225 columns, roughly 3 minutes.
+    /// </summary>
+    public int GenerateDefaultRadiusChunks = 32;
+
+    /// <summary>
+    /// Columns started per second. The engine saturates near 23 per second whatever
+    /// this says. A higher value only means the in-flight cap binds first. A lower one
+    /// is a real throttle for a server with players on it.
+    /// </summary>
+    public int GenerateColumnsPerSecond = 16;
+
+    /// <summary>
+    /// Peeks outstanding at once. A memory ceiling as much as a contention one: each
+    /// peek that lands hands a whole chunk column to the capture thread, which unpacks
+    /// it to read it - 1-2 MB per column, held until capture drains it. 64 is
+    /// TopoHorizon's measured value; unbounded reached ~520 in flight and every peek
+    /// slowed under the contention.
+    /// </summary>
+    public int GenerateMaxInFlight = 64;
+
+    /// <summary>
     /// Pre-build the cache by generating a square of chunk columns around spawn, in chunks
     /// of radius. 0 (default) means never; the cache then fills only as players travel.
     ///
@@ -97,6 +139,14 @@ public class LodServerConfig
         // index lookup, so a large radius over a small world is nearly free.
         SweepRadiusChunks = Math.Clamp(SweepRadiusChunks, 0, 512);
         SweepColumnsPerSecond = Math.Clamp(SweepColumnsPerSecond, 1, 64);
+        // Same ceiling as pregen: past 256 chunks the time cost stops being something an
+        // admin grasps from a chat reply. The default clamps against the ceiling, not
+        // against 256 - a lowered ceiling must not leave a default the command refuses.
+        GenerateMaxRadiusChunks = Math.Clamp(GenerateMaxRadiusChunks, 0, 256);
+        GenerateDefaultRadiusChunks = GenerateMaxRadiusChunks == 0
+            ? 0 : Math.Clamp(GenerateDefaultRadiusChunks, 1, GenerateMaxRadiusChunks);
+        GenerateColumnsPerSecond = Math.Clamp(GenerateColumnsPerSecond, 1, 64);
+        GenerateMaxInFlight = Math.Clamp(GenerateMaxInFlight, 1, 256);
         // Ceilings derived from measurement, not taste: a served section costs ~0.9ms of
         // main-thread SQLite blob read (415 sections, 348ms, on a warm cache). So 128/s is
         // ~115ms per second, around 11% of a core, which is the most an admin should be
@@ -109,9 +159,13 @@ public class LodServerConfig
     /// <summary>True when the sweep is configured to actually do something.</summary>
     public bool SweepEnabled => SweepSavegame && SweepRadiusChunks > 0;
 
+    /// <summary>True when /vhgen is configured to accept a start.</summary>
+    public bool GenerateEnabled => EnableGenerateCommand && GenerateMaxRadiusChunks > 0;
+
     public string Describe() =>
         $"capture {(EnableCapture ? "on" : "off")}, serving {(EnableServing ? "on" : "off")}, "
         + $"radius {(ServeRadiusBlocks > 0 ? ServeRadiusBlocks + " blocks" : "unlimited")}, "
         + $"{MaxSectionsPerSecondPerPlayer}/s per player, {MaxSectionsPerSecondTotal}/s total, "
-        + $"sweep {(SweepEnabled ? SweepRadiusChunks + " chunks" : "off")}";
+        + $"sweep {(SweepEnabled ? SweepRadiusChunks + " chunks" : "off")}, "
+        + $"generate {(GenerateEnabled ? "on request up to " + GenerateMaxRadiusChunks + " chunks" : "off")}";
 }
