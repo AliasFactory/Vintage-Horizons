@@ -67,9 +67,9 @@ public static class FrustumChecks
     static void NearAndFar(Check c, LodFrustum f)
     {
         // This point is past the far plane. This case connects the culling to the extended
-        // ZFar of this mod. If the far distance of the projection and the LOD render distance
-        // disagree, the mod culls terrain that it still draws, or it draws terrain that
-        // nobody can see.
+        // ZFar of this mod. The far distance of the projection and the LOD render distance
+        // can disagree. Then the mod culls terrain that it still draws, or it draws terrain
+        // that nobody can see.
         c.False(Box(f, 0, 0, -5000, 10), "a box beyond the far plane is rejected");
         c.True(Box(f, 0, 0, -5000, 4500), "a box straddling the far plane is kept");
     }

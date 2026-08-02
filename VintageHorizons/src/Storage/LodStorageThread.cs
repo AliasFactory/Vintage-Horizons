@@ -6,9 +6,10 @@ namespace VintageHorizons;
 /// Serializes LOD sections and writes them, off the render thread.
 ///
 /// This was measured before this class existed. A save batch cost 10 ms to 22 ms of main
-/// thread time on average, and it reached approximately 49 ms, which is one full game tick.
-/// That occurred during exploration, which is exactly when the player moves and a delay is
-/// most visible.
+/// thread time on average. It reached approximately 49 ms, which is one full game tick.
+///
+/// That occurred during exploration. Exploration is exactly when the player moves, and a
+/// delay is most visible then.
 ///
 /// The deflate occurs here, outside the transaction lock of the store. Thus a load on the
 /// main thread waits for a row write at most.

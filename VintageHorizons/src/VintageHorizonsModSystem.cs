@@ -380,8 +380,8 @@ public class VintageHorizonsModSystem : ModSystem
     /// often.
     ///
     /// The solution is to use any baked texture of the block, and not the first one. The
-    /// result is cached for each block id. The answer cannot change during a session, and the
-    /// mod registers a palette entry one time for each section, which is thousands of times
+    /// result is cached for each block id. The answer cannot change during a session. The mod
+    /// also registers a palette entry one time for each section, which is thousands of times
     /// for each world.
     /// </summary>
     int ColorFromAnyTexture(Block block, int fallback)

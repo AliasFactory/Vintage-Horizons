@@ -107,9 +107,10 @@ public class LodServerCaptureSystem : ModSystem
         //
         // The chunks that load drive the capture. In one process, the server loads exactly
         // the chunks that the client shows already. Thus two sides double each capture, and
-        // they hold two copies of the section pyramid, for no gain. This was observed in a
-        // live session before the guard existed: a manifest of 3851 keys that the client
-        // held already, and each one was redundant.
+        // they hold two copies of the section pyramid, for no gain.
+        //
+        // A live session showed this before the guard existed. A manifest held 3851 keys that
+        // the client held already, and each one was redundant.
         //
         // A sweep is the exception, and it is the reason why the guard has a condition. A
         // sweep deliberately loads columns that the client never shows. Those columns are

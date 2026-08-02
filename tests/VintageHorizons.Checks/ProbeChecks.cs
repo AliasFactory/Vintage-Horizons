@@ -6,9 +6,9 @@ namespace VintageHorizons.Checks;
 /// This suite runs first. It exists to fail clearly and specifically when the runtime cannot
 /// load the game assemblies.
 ///
-/// Each other suite here uses the BCL only, or it touches game types so lightly that a
-/// loading failure appears as a confusing TypeInitializationException, in the middle of an
-/// unrelated assertion.
+/// Each other suite here uses the BCL only, or it touches game types very lightly. For those
+/// suites, a loading failure appears as a confusing TypeInitializationException, in the
+/// middle of an unrelated assertion.
 ///
 /// These two calls exercise the only two real loading risks in the full fast tier. Thus when
 /// they pass, the remainder is safe.

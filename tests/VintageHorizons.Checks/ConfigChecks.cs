@@ -102,9 +102,9 @@ public static class ConfigChecks
         c.Eq(48, Sanitized(cfg => cfg.SweepRadiusChunks = 48).SweepRadiusChunks,
             "an in-range sweep radius is preserved exactly");
 
-        // The invariant that matters downstream: WithinServeRadius squares this value and
-        // compares it against a squared distance, so a negative would compare as positive
-        // and quietly serve a radius the admin never asked for.
+        // This is the rule that matters later. WithinServeRadius squares this value, and it
+        // compares the result against a squared distance. Thus a negative value compares as
+        // a positive one, and the server gives a radius that the admin did not ask for.
         c.True(Sanitized(cfg => cfg.ServeRadiusBlocks = -1).ServeRadiusBlocks >= 0,
             "the serve radius is never left negative");
         c.Eq(512, Sanitized(cfg => cfg.ServeRadiusBlocks = 512).ServeRadiusBlocks,
@@ -112,9 +112,9 @@ public static class ConfigChecks
         c.Eq(0, Sanitized(cfg => cfg.ServeRadiusBlocks = 0).ServeRadiusBlocks,
             "zero is preserved, and means unlimited");
 
-        // Sanitize must be idempotent: it runs on load and the result is written back to
-        // disk, so a second run on its own output has to be a no-op or the file drifts
-        // every restart.
+        // Sanitize must give the same result each time. It runs at load, and the mod writes
+        // the result back to the disk. Thus a second run on its own output must change
+        // nothing. Without that, the file changes at each restart.
         var once = Sanitized(cfg => { cfg.ServeRadiusBlocks = -7; cfg.MaxSectionsPerSecondTotal = 9999; });
         var twice = Sanitized(cfg =>
         {

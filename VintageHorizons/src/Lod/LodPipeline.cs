@@ -36,7 +36,7 @@ public delegate byte LodTintSlotResolver(Block block);
 ///
 /// Two things differ between the sides: which chunks arrive, and the color of a palette
 /// entry. Thus the caller supplies those two things. There is no branch on the side. One copy
-/// of this class for each side would become different over time, and the mip rules and the
+/// of this class for each side becomes different over time. The mip rules and the
 /// persistence rules are exactly the rules that must stay the same.
 ///
 /// CAUTION: Call each method here from the thread that owns the world, which is the game

@@ -177,12 +177,17 @@ public static class ServerAssistChecks
         }), "a welcome with null strings does not throw");
         c.True(client.Status.Contains("unknown"), "a null version reads as unknown rather than blank");
 
-        // The empty-string case is NOT the null case. Both AssistWelcome string fields carry
-        // a "" initializer, and protobuf-net runs initializers before filling in what the
-        // wire actually sent - so a server that simply omits the field yields "", which
-        // sails past the ?? guard and renders a blank in the middle of the status line.
-        // Harmless today, since our own server always sets it. Recorded rather than fixed
-        // so the guard's real coverage is not overstated.
+        // The case of an empty string is NOT the case of a null.
+        //
+        // Both string fields of AssistWelcome have a "" initializer. protobuf-net runs the
+        // initializers before it fills in what the wire sent.
+        //
+        // Thus a server that does not send the field gives "". That value passes the ??
+        // guard, and the status line shows an empty space in its middle.
+        //
+        // This is harmless today, because the server of this mod always sets the field. This
+        // check records the behaviour, and it does not correct it. Thus nobody states the
+        // coverage of the guard as larger than it is.
         client.Reset();
         client.OnWelcome(new AssistWelcome { Protocol = LodAssist.Protocol, Enabled = true });
         c.False(client.Status.Contains("unknown"), "an empty version does not reach the unknown fallback");
@@ -225,10 +230,11 @@ public static class ServerAssistChecks
             client.Pump((_, _) => true);
         }, "a manifest chunk with no keys does not throw");
 
-        // An empty blob means the server declined. The installer is still called, because
-        // it is the one place that can release the render path's wait on the key -
-        // short-circuiting here left declined keys stuck in flight and pinned their parents
-        // coarse for the whole session.
+        // An empty blob means that the server declined the key. The mod still calls the
+        // installer, because that is the one place that can stop the wait of the render path.
+        //
+        // An early exit here left a declined key in flight, and that key kept its parent
+        // coarse for the full session.
         var offered = new List<long>();
         long declined = LodWorld.SectionKey(0, 1, 1);
         client.OnSection(new AssistSection { Key = declined, Blob = Array.Empty<byte>() });
