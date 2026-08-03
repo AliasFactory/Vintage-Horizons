@@ -50,6 +50,12 @@ a sweep after a slow start or from a `/vhgen` run. Before, it looked once at joi
 never again. The cache-format purge also reports how many sections it discards, instead
 of deleting them in silence.
 
+**Stays out of the way of other LOD mods.** With Farseer, ChunkLOD, Vistas Beyond or
+TopoHorizon loaded, this mod now goes idle instead of fighting them for the camera far
+plane and drawing over their terrain. A server that runs one of those forces it onto
+every client, while this mod stays optional, so this is the one that yields. `.vh`
+reports the idle state and names the mod it defers to.
+
 **Optional server-side assist.** The mod is now Universal, with both
 `requiredOnClient` and `requiredOnServer` false. Install it only on your client and it
 works exactly as before, on any server, vanilla included.
