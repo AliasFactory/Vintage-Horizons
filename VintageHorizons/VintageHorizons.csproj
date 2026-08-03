@@ -11,6 +11,12 @@
     <Version>0.2.0</Version>
   </PropertyGroup>
 
+  <!-- No debug info in Release: the zip never ships the .pdb, and generating one
+       stamps its absolute path (with the builder's username) into the DLL. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
   <!-- Game install: set VINTAGE_STORY, falls back to the local install -->
   <PropertyGroup>
     <GamePath>$(VINTAGE_STORY)</GamePath>
