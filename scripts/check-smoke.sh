@@ -48,7 +48,7 @@ run_client() {
 
     rm -f "$CLIENT_LOG"
 
-    VINTAGEHORIZONS_AUTOUNPAUSE=1 VINTAGEHORIZONS_STATS=1 \
+    VINTAGEHORIZONS_AUTOUNPAUSE=1 VINTAGEHORIZONS_CREATIVE=1 VINTAGEHORIZONS_STATS=1 \
         "$VH_ROOT/scripts/test-client.sh" -c "localhost:$PORT" >/dev/null
 
     if ! vh_wait_for "$CLIENT_LOG" "$wait_for" 240 "$VH_SANDBOX/test-instance.pid"; then

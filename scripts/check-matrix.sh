@@ -70,7 +70,7 @@ run_client() {
     local marker="${1:-Level finalized}" settle="${2:-$SETTLE}"
     rm -f "$CLIENT_LOG"
 
-    VINTAGEHORIZONS_AUTOUNPAUSE=1 VINTAGEHORIZONS_STATS=1 \
+    VINTAGEHORIZONS_AUTOUNPAUSE=1 VINTAGEHORIZONS_CREATIVE=1 VINTAGEHORIZONS_STATS=1 \
         "$VH_ROOT/scripts/test-client.sh" -c "localhost:$PORT" >/dev/null
 
     if ! vh_wait_for "$CLIENT_LOG" "$marker" 240 "$VH_SANDBOX/test-instance.pid"; then
@@ -642,7 +642,7 @@ JSON
     cleanup
     # Radius 12, not something smaller: the client streams and self-captures its own
     # surroundings, so the adoption assertion needs generated sections beyond that.
-    VINTAGEHORIZONS_AUTOUNPAUSE=1 VINTAGEHORIZONS_STATS=1 \
+    VINTAGEHORIZONS_AUTOUNPAUSE=1 VINTAGEHORIZONS_CREATIVE=1 VINTAGEHORIZONS_STATS=1 \
     VINTAGEHORIZONS_AUTOCMD="/vhgen start 12" \
         "$VH_ROOT/scripts/test-client.sh" -o vhgen-sp -p preset-surviveandbuild >/dev/null
 
@@ -791,7 +791,7 @@ JSON
                 VHBENCH_ROUTE="$VH_ROOT/bench/routes/radius-cap.txt" \
                 VHBENCH_LABEL="$label" VHBENCH_OUT="$VH_SANDBOX/bench" \
                 VHBENCH_SETTLE="${VH_RING_SETTLE:-180}" VHBENCH_MEASURE=5 \
-                VINTAGEHORIZONS_AUTOUNPAUSE=1 \
+                VINTAGEHORIZONS_AUTOUNPAUSE=1 VINTAGEHORIZONS_CREATIVE=1 \
                     "$VH_ROOT/scripts/test-client.sh" -c "localhost:$PORT" >/dev/null
 
                 vh_wait_for "$VH_SANDBOX/bench/$label.done" "" 300 \

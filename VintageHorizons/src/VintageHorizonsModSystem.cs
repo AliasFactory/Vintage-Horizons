@@ -484,11 +484,31 @@ public class VintageHorizonsModSystem : ModSystem
         }
 
         autoExplore = Environment.GetEnvironmentVariable("VINTAGEHORIZONS_AUTOEXPLORE") == "1";
+
+        // Creative for any unattended run, not only an exploring one.
+        //
+        // A survival player is moved by things the test did not ask for: knockback,
+        // drowning, hunger, a mob, and at worst a death that respawns them somewhere
+        // else entirely. Player position is an INPUT to most of what these scenarios
+        // measure - which chunks stream in, where /vhgen centres, and which positions
+        // the absence verifier excludes as explainable by a nearby player. A scenario
+        // whose subject wanders is measuring the wander.
+        //
+        // Sent before the auto-command below fires, so a /vhgen run is already centred
+        // on a player who will stay put.
+        if (autoExplore || Environment.GetEnvironmentVariable("VINTAGEHORIZONS_CREATIVE") == "1")
+        {
+            capi.Event.RegisterCallback(_ =>
+            {
+                Mod.Logger.Notification("Test run: entering creative so the player cannot be moved");
+                capi.SendChatMessage("/gamemode creative");
+            }, 10000);
+        }
+
         if (autoExplore)
         {
             exploreX = capi.World.Player.Entity.Pos.X;
             exploreZ = capi.World.Player.Entity.Pos.Z;
-            capi.Event.RegisterCallback(_ => capi.SendChatMessage("/gamemode creative"), 10000);
             capi.Event.RegisterGameTickListener(_ => ExploreHop(), 60000);
             Mod.Logger.Notification("Auto-explore active (spiral teleports every 60s)");
         }
