@@ -5,7 +5,7 @@ Written when a version is released, not when a commit lands - see
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-08-02
+## [0.2.0] - 2026-08-03
 
 **Chunk generation on request**, with `/vhgen start [radius] [x z]`. It builds the LOD
 picture around a player, or around coordinates you give, for terrain nobody has visited.
@@ -15,7 +15,8 @@ player builds stay correct.
 
 The command needs the controlserver privilege, which every singleplayer host has. Config
 ceilings and rate caps bound it. Generated terrain has no trees until a real visit
-replaces it.
+replaces it. Give both coordinates or neither: the command refuses one on its own, rather
+than centring somewhere you did not ask for.
 
 **The non-destructive promise is now measured, twice.** Every sweep and every generation
 run re-probes sampled positions that did not exist before it. Each run then prints the
@@ -23,6 +24,10 @@ result, as "Verified 256/256 sampled absent positions still absent". So a worldg
 that breaks the promise is detected on the server where it happens, and not only in this
 repo's test matrix. The check regimen also asserts, byte for byte, that an all-peek run
 leaves the savegame's terrain tables identical.
+
+The sample keeps clear of online players, because the engine generates terrain around a
+player as ordinary play. A run centred on a player therefore still measures something,
+instead of reporting "Verified 0/0".
 
 **Fixed: a client can stop receiving terrain for the rest of a session.** A server
 dropped queued section requests without answering them, in two places. The first was

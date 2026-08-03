@@ -198,8 +198,10 @@ window focus), `VINTAGEHORIZONS_AUTOEXPLORE=1` and `VINTAGEHORIZONS_EXPLORE_HOP=
   mutates a dictionary). Sections deserialized on the storage thread keep their palette
   block *codes* and have ids resolved at install time on the main thread.
 
-See [DESIGN.md](DESIGN.md) for the architecture and [docs/STATUS.md](docs/STATUS.md) for
-current status, measurements, and known gaps.
+See [DESIGN.md](DESIGN.md) for the architecture. See [docs/STATUS.md](docs/STATUS.md) for
+current status, measurements, and known gaps. See [CHANGELOG.md](CHANGELOG.md) for what
+shipped in each version, and [docs/RELEASING.md](docs/RELEASING.md) for the release
+procedure.
 
 ## Credits
 
