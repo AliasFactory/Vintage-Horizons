@@ -15,7 +15,7 @@ are unaffected.
 ## What it does
 
 - **Unlimited render distance**, decoupled from the vanilla view-distance slider.
-- **Real 3D terrain**, not a heightmap: mountains, overhangs, cave mouths, forests, and
+- **Real 3D terrain**, not a heightmap. Mountains, overhangs, cave mouths, forests, and
   anything you build all appear at distance, at 1-block resolution near the player.
 - **Translucent water**, drawn over the lake and sea floors beneath it.
 - **Live seasonal colour**. Grass and foliage follow the game's own climate and season
@@ -112,9 +112,10 @@ regimen also asserts the savegame promise byte for byte, but only against vanill
 worldgen. The runtime check is what watches it on a modded server.
 
 **Generated terrain is bare.** It carries the landform, the rock strata, caves, rivers,
-and the soil and sand on top. Nothing else. Measured against a full generation of the same
-column, a peek is missing 67 block types: snow, ore, cave dressing, surface boulders,
-small water, worldgen ruins with their contents, and trees in a forested column.
+and the soil and sand on top. Nothing else. Measured against a full generation of the
+same column, a peek misses 67 block types. The missing types are snow, ore, cave
+dressing, surface boulders, small water, worldgen ruins with their contents, and trees
+in a forested column.
 
 What a peek does produce is never wrong. Nothing appears in a peek that a real generation
 does not also make. So generated terrain reads as a correct but plain version of itself,
@@ -144,18 +145,18 @@ Run the whole thing before you commit.
 
 The three tiers answer different questions.
 
-`fast` covers the pure logic: key packing, the RLE column store, mip downsampling, the
-mesher's greedy merge and coverage rules, the blob format, frustum planes and config
-clamps. It also covers the invariants that span files, which no compiler can catch. One
+`fast` covers the pure logic: key packing, the RLE column store, mip downsampling, and
+the mesher's greedy merge and coverage rules. The blob format, frustum planes and config
+clamps are in it too. It also covers the invariants that span files, which no compiler can catch. One
 example is the shader's `TINT_SLOTS` matching `LodTintRegistry.MaxSlots`.
 
 `smoke` starts a vanilla dedicated server and a sandboxed client, then asserts on what the
 run logged. It includes a second pass against the warm cache. That pass is the only way to
 know that what was written can be read back.
 
-`matrix` covers the configurations other people put the mod in: a vanilla server, a modded
-one, a client without the mod at all, each admin switch, and deferral to a competing LOD
-mod.
+`matrix` covers the configurations other people put the mod in. It runs a vanilla
+server, a modded one, and a client without the mod at all. It also tests each admin
+switch, and deferral to a competing LOD mod.
 
 **There is no CI, and there cannot be.** Building this repo requires the Vintage Story
 assemblies from a local game install, and those are not redistributable, so no hosted

@@ -51,9 +51,9 @@ never again. The cache-format purge also reports how many sections it discards, 
 of deleting them in silence.
 
 **Stays out of the way of other LOD mods.** With Farseer, ChunkLOD, Vistas Beyond or
-TopoHorizon loaded, this mod now goes idle instead of fighting them for the camera far
-plane and drawing over their terrain. A server that runs one of those forces it onto
-every client, while this mod stays optional, so this is the one that yields. `.vh`
+TopoHorizon loaded, this mod now goes idle. Two LOD mods would fight for the camera far
+plane and draw over each other. A server that runs one of those forces it onto every
+client, while this mod stays optional, so this is the one that yields. `.vhinfo`
 reports the idle state and names the mod it defers to.
 
 **Optional server-side assist.** The mod is now Universal, with both
@@ -101,9 +101,9 @@ claims. Before, each one rested on a hand-run sandbox session.
 
 ## [0.1.1] - 2026-07-25
 
-0.1.0 shipped without the LICENSE in the zip. A review afterwards found three defects:
-ground-cover mats floated on mip-merged runs, thin plants hid water so shorelines showed
-through, and an unbounded scheduler loop turned one frame into a six-figure scan.
+0.1.0 shipped without the LICENSE in the zip. A review afterwards found three defects.
+Ground-cover mats floated on mip-merged runs. Thin plants hid water, so shorelines
+showed through. And an unbounded scheduler loop turned one frame into a six-figure scan.
 
 ## [0.1.0] - 2026-07-25
 
