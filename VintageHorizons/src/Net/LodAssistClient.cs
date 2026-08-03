@@ -170,17 +170,9 @@ public sealed class LodAssistClient
     {
         if (!Available || channel == null || !channel.Connected) return Array.Empty<long>();
 
-        List<long>? batch = null;
-        foreach (long key in wanted)
-        {
-            if (inFlight.Count >= LodAssist.MaxSectionsInFlight) break;
-            if (!RemoteKeys.Contains(key) || refused.Contains(key) || !inFlight.Add(key)) continue;
-            (batch ??= new List<long>()).Add(key);
-        }
+        long[] sent = SelectRequestBatch(wanted);
+        if (sent.Length == 0) return Array.Empty<long>();
 
-        if (batch == null) return Array.Empty<long>();
-
-        long[] sent = batch.ToArray();
         try
         {
             channel.SendPacket(new AssistSectionRequest { Keys = sent });
@@ -189,10 +181,31 @@ public sealed class LodAssistClient
         }
         catch (Exception e)
         {
-            foreach (long key in batch) inFlight.Remove(key);
+            foreach (long key in sent) inFlight.Remove(key);
             logger.Warning("VintageHorizons: section request failed: {0}", e);
             return Array.Empty<long>();
         }
+    }
+
+    /// <summary>
+    /// Choose the next batch and mark it in flight. Split out of <see cref="Request"/>
+    /// so the cap and the slot bookkeeping can be tested: Request needs a live channel,
+    /// which meant the one rule the whole transfer rests on had no reachable check.
+    ///
+    /// That rule: a slot is held until a reply arrives. If the server ever answers a
+    /// request with silence, the cap fills and this returns nothing forever. The server
+    /// therefore replies to everything, even to refuse - see LodAssistServerSystem.
+    /// </summary>
+    internal long[] SelectRequestBatch(IEnumerable<long> wanted)
+    {
+        List<long>? batch = null;
+        foreach (long key in wanted)
+        {
+            if (inFlight.Count >= LodAssist.MaxSectionsInFlight) break;
+            if (!RemoteKeys.Contains(key) || refused.Contains(key) || !inFlight.Add(key)) continue;
+            (batch ??= new List<long>()).Add(key);
+        }
+        return batch?.ToArray() ?? Array.Empty<long>();
     }
 
     public int SectionsRequested { get; private set; }

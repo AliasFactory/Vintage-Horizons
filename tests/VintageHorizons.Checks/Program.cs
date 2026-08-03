@@ -15,6 +15,7 @@ public static class Program
         ("probe", "assembly loading", ProbeChecks.Run),
         ("pure", "key math", KeyMathChecks.Run),
         ("pure", "section runs", SectionChecks.Run),
+        ("pure", "section properties", SectionPropertyChecks.Run),
         ("pure", "mip downsample", MipChecks.Run),
         ("pure", "mesher", MesherChecks.Run),
         ("pure", "server config", ConfigChecks.Run),
@@ -24,6 +25,7 @@ public static class Program
         ("pure", "remote keys", RemoteKeyChecks.Run),
         ("pure", "chunk generation", GenerateChecks.Run),
         ("fixture", "server assist", ServerAssistChecks.Run),
+        ("pure", "wire format", WireFormatChecks.Run),
         ("static", "assets and constants", StaticAssetChecks.Run),
     };
 

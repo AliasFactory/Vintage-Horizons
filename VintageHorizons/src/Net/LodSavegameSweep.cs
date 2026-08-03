@@ -194,7 +194,7 @@ public class LodSavegameSweep
         // positions that did not exist, and report the result on the finish line.
         verifying = true;
         new LodAbsenceVerifier(sapi,
-            exists.AbsentSample(spawnCx, spawnCz, ProbeRadius, LodAbsenceVerifier.MaxSample),
+            exists.AbsentSample(spawnCx, spawnCz, ProbeRadius, LodAbsenceVerifier.MaxSample, LodAbsenceVerifier.AwayFromPlayers(sapi)),
             Finish).Start();
     }
 

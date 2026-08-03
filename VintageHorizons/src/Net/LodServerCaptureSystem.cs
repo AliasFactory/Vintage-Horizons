@@ -260,23 +260,36 @@ public class LodServerCaptureSystem : ModSystem
             + "PLACES BLOCKS in the world when run. Do not set this on a server you care about.");
     }
 
-    /// <summary>Centre for a diagnostic run: explicit x z, else the caller, else spawn.</summary>
-    (int Cx, int Cz) DiagnosticCentre(TextCommandCallingArgs args)
+    /// <summary>
+    /// Centre for a diagnostic run: explicit x z, else the caller, else spawn. Null when
+    /// only one coordinate was given, which the caller reports as an error.
+    /// </summary>
+    (int Cx, int Cz)? DiagnosticCentre(TextCommandCallingArgs args)
     {
         int argX = (int)args.Parsers[0].GetValue();
         int argZ = (int)args.Parsers[1].GetValue();
-        bool aimed = argX >= 0 && argZ >= 0;
         var pos = args.Caller.Pos;
+        var centre = LodPlayerPregen.ResolveCentre(argX, argZ, pos != null);
+        if (centre == LodPlayerPregen.EnumCentre.Incomplete) return null;
+
+        bool aimed = centre == LodPlayerPregen.EnumCentre.Argument;
         double bx = aimed ? argX : pos?.X ?? sapi.World.DefaultSpawnPosition.X;
         double bz = aimed ? argZ : pos?.Z ?? sapi.World.DefaultSpawnPosition.Z;
         return ((int)bx / GlobalConstants.ChunkSize, (int)bz / GlobalConstants.ChunkSize);
     }
 
+    const string BothCoordinates =
+        "[VintageHorizons] Give both coordinates or neither. With neither, the run "
+        + "centres on you.";
+
     TextCommandResult OnGenerateDiff(TextCommandCallingArgs args)
     {
         if (!worldReady) return TextCommandResult.Error("[VintageHorizons] The world is still starting.");
 
-        (int cx, int cz) = DiagnosticCentre(args);
+        if (DiagnosticCentre(args) is not (int cx, int cz))
+        {
+            return TextCommandResult.Error(BothCoordinates);
+        }
         new LodPeekDiff(sapi, Mod.Logger).RunDiff(cx, cz,
             line => Mod.Logger.Notification("Peek diff result: {0}", line));
 
@@ -290,7 +303,10 @@ public class LodServerCaptureSystem : ModSystem
     {
         if (!worldReady) return TextCommandResult.Error("[VintageHorizons] The world is still starting.");
 
-        (int cx, int cz) = DiagnosticCentre(args);
+        if (DiagnosticCentre(args) is not (int cx, int cz))
+        {
+            return TextCommandResult.Error(BothCoordinates);
+        }
         new LodPeekDiff(sapi, Mod.Logger).RunEditTest(cx, cz,
             line => Mod.Logger.Notification("Edit test result: {0}", line));
 
@@ -333,13 +349,17 @@ public class LodServerCaptureSystem : ModSystem
         int argX = (int)args.Parsers[1].GetValue();
         int argZ = (int)args.Parsers[2].GetValue();
 
-        // Centre precedence: explicit x z beats the caller's position beats spawn.
-        // World coordinates are never negative, so -1 means "not given". The console
-        // has no position, so spawn is its only honest fallback, and the reply says
-        // which centre was used.
         var pos = args.Caller.Pos;
-        bool aimed = argX >= 0 && argZ >= 0;
-        bool fromSpawn = !aimed && pos == null;
+        var centre = LodPlayerPregen.ResolveCentre(argX, argZ, pos != null);
+        if (centre == LodPlayerPregen.EnumCentre.Incomplete)
+        {
+            return TextCommandResult.Error(
+                "[VintageHorizons] Give both coordinates or neither: /vhgen start "
+                + $"{radius} <x> <z>. With neither, the run centres on you.");
+        }
+
+        bool aimed = centre == LodPlayerPregen.EnumCentre.Argument;
+        bool fromSpawn = centre == LodPlayerPregen.EnumCentre.Spawn;
         double bx = aimed ? argX : pos?.X ?? sapi.World.DefaultSpawnPosition.X;
         double bz = aimed ? argZ : pos?.Z ?? sapi.World.DefaultSpawnPosition.Z;
         int cs = GlobalConstants.ChunkSize;

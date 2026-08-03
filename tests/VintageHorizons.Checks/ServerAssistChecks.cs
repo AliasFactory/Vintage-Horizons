@@ -15,6 +15,7 @@ public static class ServerAssistChecks
         ServeRadiusIsNearestEdge(c);
         ProtocolNegotiation(c);
         ManifestAndArrivals(c);
+        InFlightCapReleasesOnAnyReply(c);
     }
 
     /// <summary>
@@ -241,6 +242,55 @@ public static class ServerAssistChecks
         client.OnSection(new AssistSection { Key = good, Blob = new byte[] { 4, 1, 2, 3 } });
         client.Pump((_, _) => true);
         c.Eq(1, client.SectionsReceived, "an adopted section is counted as received");
-        c.Eq(0, client.InFlight, "an arrival clears its in-flight slot");
+    }
+
+    /// <summary>
+    /// The rule the whole transfer rests on: a request holds an in-flight slot until a
+    /// reply arrives, and ANY reply frees it - including a refusal.
+    ///
+    /// This was untested until 0.2.0, and the old check that looked like it covered it
+    /// asserted InFlight == 0 without ever having requested anything, so it could not
+    /// fail. The cost of that gap was an intermittent stall where a server dropped
+    /// requests in silence: the cap filled with keys that would never be answered, and
+    /// the client asked for nothing again for the rest of the session.
+    /// </summary>
+    static void InFlightCapReleasesOnAnyReply(Check c)
+    {
+        var logger = new CaptureLogger();
+        var client = new LodAssistClient(null!, logger, "0.2.0");
+        client.OnWelcome(new AssistWelcome { Protocol = LodAssist.Protocol, Enabled = true });
+
+        int cap = LodAssist.MaxSectionsInFlight;
+        var offered = new long[cap * 3];
+        for (int i = 0; i < offered.Length; i++) offered[i] = LodWorld.SectionKey(0, i + 1, 7);
+        client.OnKeyManifest(new AssistKeyManifest { Keys = offered, Last = true });
+        client.Pump((_, _) => true);
+
+        long[] first = client.SelectRequestBatch(offered);
+        c.Eq(cap, first.Length, "the first batch fills the in-flight cap exactly");
+        c.Eq(cap, client.InFlight, "every key in the batch holds a slot");
+
+        // The stall, stated as a check. With the cap full and no reply, asking again
+        // yields nothing - which is correct, and is why silence from the server is fatal
+        // rather than merely slow.
+        c.Eq(0, client.SelectRequestBatch(offered).Length,
+            "a full cap yields no further requests until something is answered");
+
+        // A REFUSAL frees the slots, exactly as a real section does. This is what the
+        // server's refuse-out-loud behaviour depends on.
+        foreach (long key in first) client.OnSection(new AssistSection { Key = key });
+        client.Pump((_, _) => false);
+        c.Eq(0, client.InFlight, "a refusal frees the slot, the same as a delivered section");
+        c.Eq(cap, client.SectionsRefused, "each refusal is counted");
+
+        long[] second = client.SelectRequestBatch(offered);
+        c.Eq(cap, second.Length, "the freed slots let the next batch go out");
+        c.Eq(0, second.Intersect(first).Count(), "the next batch asks for different keys");
+
+        // And a delivered section frees a slot the same way, so the two paths agree.
+        foreach (long key in second) client.OnSection(new AssistSection { Key = key, Blob = new byte[] { 1 } });
+        client.Pump((_, _) => true);
+        c.Eq(0, client.InFlight, "a delivered section frees its slot too");
+        c.Eq(cap, client.SectionsReceived, "each delivery is counted");
     }
 }

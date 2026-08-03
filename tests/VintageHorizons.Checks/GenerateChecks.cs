@@ -33,6 +33,40 @@ public static class GenerateChecks
         c.Eq(66049, LodPlayerPregen.ColumnsFor(128), "radius 128 is 66049 columns");
         c.True(LodPlayerPregen.EstimateSeconds(2401, 16) > 0, "a real run estimates a non-zero time");
         c.Eq(0, LodPlayerPregen.EstimateSeconds(1, 16), "one column rounds to zero seconds, not a crash");
+
+        CentrePrecedence(c);
+    }
+
+    /// <summary>
+    /// Where a command run centres itself. World coordinates are never negative, so -1
+    /// means "not given". One coordinate alone used to be ignored in silence, and the
+    /// run centred somewhere else entirely without saying so.
+    /// </summary>
+    static void CentrePrecedence(Check c)
+    {
+        c.Eq(LodPlayerPregen.EnumCentre.Argument,
+            LodPlayerPregen.ResolveCentre(480000, 480000, callerHasPosition: true),
+            "both coordinates win over the caller's position");
+        c.Eq(LodPlayerPregen.EnumCentre.Argument,
+            LodPlayerPregen.ResolveCentre(0, 0, callerHasPosition: false),
+            "0,0 is a real coordinate, not a missing one");
+        c.Eq(LodPlayerPregen.EnumCentre.Caller,
+            LodPlayerPregen.ResolveCentre(-1, -1, callerHasPosition: true),
+            "no coordinates centres on the caller");
+        c.Eq(LodPlayerPregen.EnumCentre.Spawn,
+            LodPlayerPregen.ResolveCentre(-1, -1, callerHasPosition: false),
+            "the console has no position, so it falls back to spawn");
+
+        // The case that used to pass silently. Either half alone is refused.
+        c.Eq(LodPlayerPregen.EnumCentre.Incomplete,
+            LodPlayerPregen.ResolveCentre(480000, -1, callerHasPosition: true),
+            "an x with no z is refused, not ignored");
+        c.Eq(LodPlayerPregen.EnumCentre.Incomplete,
+            LodPlayerPregen.ResolveCentre(-1, 480000, callerHasPosition: true),
+            "a z with no x is refused, not ignored");
+        c.Eq(LodPlayerPregen.EnumCentre.Incomplete,
+            LodPlayerPregen.ResolveCentre(480000, -1, callerHasPosition: false),
+            "a half coordinate is refused from the console too");
     }
 
     static void AbsentSampling(Check c)
@@ -69,6 +103,40 @@ public static class GenerateChecks
         // Round-trip of the key unpacking the verifier depends on, at negatives too.
         c.Eq(-37, LodColumnMap.KeyCx(LodColumnMap.Key(-37, 91)), "KeyCx round-trips a negative cx");
         c.Eq(91, LodColumnMap.KeyCz(LodColumnMap.Key(-37, 91)), "KeyCz round-trips");
+
+        EligibilityKeepsTheSampleUseful(c);
+    }
+
+    /// <summary>
+    /// A run centred on a player must still verify something.
+    ///
+    /// The verifier ignores positions close to an online player, because the engine
+    /// generates terrain around players as ordinary play. When the sample was drawn
+    /// before that filter ran, a player-centred run had its whole sample discarded and
+    /// reported "Verified 0/0" - honest, and completely uninformative, for the most
+    /// common way anyone uses the command.
+    /// </summary>
+    static void EligibilityKeepsTheSampleUseful(Check c)
+    {
+        var empty = new LodColumnMap();   // nothing exists, so every position is absent
+
+        // A player sits at the centre. Everything within 12 chunks is theirs to explain.
+        Func<int, int, bool> away = (cx, cz) => Math.Max(Math.Abs(cx), Math.Abs(cz)) > 12;
+
+        List<long> filtered = empty.AbsentSample(0, 0, 20, 64, away);
+        c.Eq(64, filtered.Count, "a player-centred run still fills its sample");
+        int inside = filtered.Count(k =>
+            !away(LodColumnMap.KeyCx(k), LodColumnMap.KeyCz(k)));
+        c.Eq(0, inside, "no sampled position sits inside the player's own radius");
+
+        // With no eligible position anywhere, it falls back rather than returning empty.
+        // Something measured beats nothing, and the verifier reports the skips either way.
+        List<long> allInside = empty.AbsentSample(0, 0, 5, 16, away);
+        c.True(allInside.Count > 0,
+            "when every position is near a player, the sample falls back instead of emptying");
+
+        // Without a filter the behaviour is unchanged, so existing callers are unaffected.
+        c.Eq(64, empty.AbsentSample(0, 0, 20, 64).Count, "an unfiltered sample is unchanged");
     }
 
     static void KeyInjective(Check c)

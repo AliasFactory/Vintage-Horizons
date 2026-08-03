@@ -15,6 +15,71 @@ public static class StoreChecks
         RoundTrip(c);
         DeferredPalette(c);
         Rejection(c);
+        PurgeKeepsMatchingData(c);
+    }
+
+    /// <summary>
+    /// Reopening a cache at the same format version must keep every row.
+    ///
+    /// This is the one place the mod deletes data a player accumulated over weeks, so it
+    /// gets a check that opens a real file rather than reasoning about the SQL. The
+    /// nearby bug was the reverse of this: a brand-new cache announced that it was
+    /// discarding data it never had, because a missing FormatVersion row compares
+    /// unequal to the current version.
+    /// </summary>
+    static void PurgeKeepsMatchingData(Check c)
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "vh-purge-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        string path = Path.Combine(dir, "cache.db");
+        try
+        {
+            var logger = new CaptureLogger();
+            var store = new LodStore(logger);
+            c.True(store.Open(path), "a new cache file opens");
+
+            // A first-ever cache holds nothing, so it must not claim to discard anything.
+            c.False(logger.Contains("discarding"),
+                "a brand new cache does not announce that it is discarding data");
+
+            store.SaveBlob(0, 1, 1, new byte[] { 1, 2, 3, 4 }, applyToParent: false);
+            store.SaveBlob(0, 2, 2, new byte[] { 5, 6, 7, 8 }, applyToParent: true);
+            store.Dispose();
+
+            // Reopen at the SAME version. Every row survives.
+            var reopenLogger = new CaptureLogger();
+            var reopened = new LodStore(reopenLogger);
+            c.True(reopened.Open(path), "an existing cache reopens");
+            int kept = reopened.LoadAllKeys((_, _, _, _) => { });
+            c.Eq(2, kept, "reopening at the same format version keeps every section");
+            c.False(reopenLogger.Contains("discarding"),
+                "reopening at the same version does not discard anything");
+            reopened.Dispose();
+
+            // Now make the stored version disagree. The purge must fire, and say how
+            // much it took - silent destruction of a player's cache is the thing to
+            // avoid, not the destruction itself.
+            using (var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=" + path))
+            {
+                conn.Open();
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "UPDATE Meta SET Value='1' WHERE Key='FormatVersion'";
+                cmd.ExecuteNonQuery();
+            }
+
+            var staleLogger = new CaptureLogger();
+            var stale = new LodStore(staleLogger);
+            c.True(stale.Open(path), "a cache in an older format still opens");
+            c.Eq(0, stale.LoadAllKeys((_, _, _, _) => { }),
+                "an older format is discarded, not read");
+            c.True(staleLogger.Contains("discarding"), "the purge says that it discarded data");
+            c.True(staleLogger.Contains("2"), "the purge reports how many sections it took");
+            stale.Dispose();
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* temp dir */ }
+        }
     }
 
     static void RoundTrip(Check c)

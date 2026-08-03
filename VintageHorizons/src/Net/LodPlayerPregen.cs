@@ -91,6 +91,37 @@ public class LodPlayerPregen
     /// <summary>Columns in a square of this radius. Printed to the person who typed the command.</summary>
     public static int ColumnsFor(int radiusChunks) => (2 * radiusChunks + 1) * (2 * radiusChunks + 1);
 
+    /// <summary>Where a command run gets its centre from.</summary>
+    public enum EnumCentre
+    {
+        /// <summary>Both coordinates were given.</summary>
+        Argument,
+
+        /// <summary>Neither was given, and the caller has a position.</summary>
+        Caller,
+
+        /// <summary>Neither was given and the caller has none, as from the console.</summary>
+        Spawn,
+
+        /// <summary>Exactly one coordinate was given, which cannot mean anything.</summary>
+        Incomplete,
+    }
+
+    /// <summary>
+    /// Resolve where a run should be centred. Pure, so the precedence has a check.
+    ///
+    /// World coordinates are never negative, so -1 means "not given". One coordinate
+    /// alone used to be ignored in silence, and the run quietly centred somewhere else -
+    /// a person who typed "/vhgen start 10 480000" got a run around themselves and no
+    /// hint that half their command went nowhere.
+    /// </summary>
+    public static EnumCentre ResolveCentre(int argX, int argZ, bool callerHasPosition)
+    {
+        if (argX >= 0 && argZ >= 0) return EnumCentre.Argument;
+        if (argX >= 0 || argZ >= 0) return EnumCentre.Incomplete;
+        return callerHasPosition ? EnumCentre.Caller : EnumCentre.Spawn;
+    }
+
     /// <summary>A round lower bound: the engine saturates near 23 columns/s regardless of the rate.</summary>
     public static int EstimateSeconds(int columns, int perSecond) =>
         columns / Math.Max(1, Math.Min(perSecond, 23));
@@ -308,7 +339,7 @@ public class LodPlayerPregen
     {
         Verifying = true;
         verifier = new LodAbsenceVerifier(sapi,
-            exists.AbsentSample(centreCx, centreCz, radiusChunks, LodAbsenceVerifier.MaxSample),
+            exists.AbsentSample(centreCx, centreCz, radiusChunks, LodAbsenceVerifier.MaxSample, LodAbsenceVerifier.AwayFromPlayers(sapi)),
             Finish);
         verifier.Start();
     }

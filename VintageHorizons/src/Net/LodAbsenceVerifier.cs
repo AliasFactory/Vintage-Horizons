@@ -43,6 +43,36 @@ public class LodAbsenceVerifier
         this.onDone = onDone;
     }
 
+    /// <summary>
+    /// True for a position no online player can explain. The engine generates terrain
+    /// around each player as ordinary play, so growth inside that radius says nothing
+    /// about whether a sweep or a peek kept its promise.
+    ///
+    /// Pass this to <see cref="LodColumnMap.AbsentSample"/> so the sample is DRAWN from
+    /// these positions. Filtering only afterwards left a player-centred run with an
+    /// empty sample and a verdict of 0 of 0.
+    /// </summary>
+    public static Func<int, int, bool> AwayFromPlayers(ICoreServerAPI sapi)
+    {
+        int cs = GlobalConstants.ChunkSize;
+        int exclusion = sapi.Server.Config.MaxChunkRadius + 2;
+        var players = new List<(int cx, int cz)>();
+        foreach (var player in sapi.World.AllOnlinePlayers)
+        {
+            var pos = player.Entity?.Pos;
+            if (pos != null) players.Add(((int)pos.X / cs, (int)pos.Z / cs));
+        }
+
+        return (cx, cz) =>
+        {
+            foreach ((int px, int pz) in players)
+            {
+                if (Math.Max(Math.Abs(px - cx), Math.Abs(pz - cz)) <= exclusion) return false;
+            }
+            return true;
+        };
+    }
+
     public void Start()
     {
         int cs = GlobalConstants.ChunkSize;
@@ -54,6 +84,8 @@ public class LodAbsenceVerifier
             if (pos != null) players.Add(((int)pos.X / cs, (int)pos.Z / cs));
         }
 
+        // Re-checked here as well as at sampling time, because a player can walk toward
+        // a sampled position while the run finishes.
         var toCheck = new List<long>(sample.Count);
         foreach (long key in sample)
         {

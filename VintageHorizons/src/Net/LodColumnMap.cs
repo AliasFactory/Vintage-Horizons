@@ -117,29 +117,41 @@ public class LodColumnMap
     /// promise gets measured, not trusted - a worldgen mod can do anything during a
     /// load or a peek, and this is the only detector that runs on every server.
     /// </summary>
-    public List<long> AbsentSample(int centreCx, int centreCz, int radiusChunks, int max)
+    /// <param name="eligible">
+    /// Optional filter. Positions that fail it are sampled only when too few eligible
+    /// ones exist. A run centred on a player used to sample entirely from inside that
+    /// player's own chunk-loading radius, where growth is ordinary play rather than a
+    /// broken promise - so the verifier discarded the whole sample and reported 0 of 0.
+    /// Filtering here instead of afterwards means the common case measures something.
+    /// </param>
+    public List<long> AbsentSample(int centreCx, int centreCz, int radiusChunks, int max,
+        Func<int, int, bool>? eligible = null)
     {
         int total = (2 * radiusChunks + 1) * (2 * radiusChunks + 1);
+        var preferred = new List<long>();
+        var fallback = new List<long>();
 
-        int absent = 0;
         for (int i = 0; i < total; i++)
         {
-            (int dx, int dz) = LodColumnMap.SpiralAt(i);
-            if (!Contains(centreCx + dx, centreCz + dz)) absent++;
-        }
-
-        var sample = new List<long>(Math.Min(max, absent));
-        if (absent == 0 || max <= 0) return sample;
-
-        int stride = Math.Max(1, absent / max);
-        int seen = 0;
-        for (int i = 0; i < total && sample.Count < max; i++)
-        {
-            (int dx, int dz) = LodColumnMap.SpiralAt(i);
+            (int dx, int dz) = SpiralAt(i);
             int cx = centreCx + dx, cz = centreCz + dz;
             if (Contains(cx, cz)) continue;
-            if (seen++ % stride == 0) sample.Add(Key(cx, cz));
+            (eligible == null || eligible(cx, cz) ? preferred : fallback).Add(Key(cx, cz));
         }
+
+        var sample = new List<long>(Math.Min(max, preferred.Count + fallback.Count));
+        if (max <= 0) return sample;
+
+        Take(preferred, max, sample);
+        if (sample.Count < max) Take(fallback, max - sample.Count, sample);
         return sample;
+    }
+
+    /// <summary>Spread the picks evenly across the source rather than taking a prefix.</summary>
+    static void Take(List<long> from, int want, List<long> into)
+    {
+        if (from.Count == 0 || want <= 0) return;
+        int stride = Math.Max(1, from.Count / want);
+        for (int i = 0; i < from.Count && want > 0; i += stride, want--) into.Add(from[i]);
     }
 }

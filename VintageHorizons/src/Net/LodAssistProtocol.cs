@@ -116,8 +116,12 @@ public class AssistKeyManifest
 /// the manifest offered that it has no local data for, so a request is never a duplicate
 /// of something on disk.
 ///
-/// The server is not obliged to answer all of them, or any: it decides what it is willing
-/// to send, and an unanswered key is retried later rather than treated as an error.
+/// The server decides what it is willing to send, but it MUST answer every key one way
+/// or the other. An empty <see cref="AssistSection.Blob"/> is the refusal. A key left
+/// unanswered is not retried later: the client holds it in flight waiting for a reply,
+/// and once the in-flight cap fills with such keys it never asks for anything again.
+/// This comment used to claim the opposite, and that belief is how the silent-drop paths
+/// in LodAssistServerSystem survived as long as they did.
 /// </summary>
 [ProtoContract]
 public class AssistSectionRequest
