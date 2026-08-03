@@ -10,7 +10,8 @@ set -euo pipefail
 # Usage: check-matrix.sh [--only <scenario>] [--skip-visual] [--settle <seconds>]
 #
 # Scenarios: client-only both no-client-mod serving-off capture-off pregen sweep
-#            nondestructive peekdiff generate generate-sp radius deferral
+#            nondestructive peekdiff generate generate-sp generate-survival radius
+#            deferral
 
 source "$(dirname "${BASH_SOURCE[0]}")/test-lib.sh"
 
@@ -668,6 +669,73 @@ JSON
     stop_client
 
     [[ "$ok" == 1 ]] && echo "  generate-sp: ok" || fail "generate-sp"
+fi
+
+# --- Scenario 6d: THE HOST PRIVILEGE, IN SURVIVAL. --------------------------------
+# generate-sp sets VINTAGEHORIZONS_CREATIVE=1, so it proves the host holds
+# controlserver only in CREATIVE. That is the narrower case, and not the one real
+# players are in. Game mode and privilege are supposed to be unrelated, but that was
+# an argument rather than a measurement until this scenario existed.
+#
+# A FRESH world every run, on purpose. Game mode persists per player in the savegame,
+# so reusing a world that generate-sp already ran in would start the player in
+# creative and quietly test the same thing twice.
+
+if wants generate-survival; then
+    echo "  [generate-survival] a survival host can run /vhgen, with no creative mode"
+    client_mod
+    mkdir -p "$VH_SANDBOX/ModConfig"
+    cat > "$VH_SANDBOX/ModConfig/vintagehorizons-server.json" <<'JSON'
+{
+  "EnableCapture": true,
+  "SweepSavegame": false,
+  "PregenRadiusChunks": 0,
+  "GenerateColumnsPerSecond": 32
+}
+JSON
+    SURV_WORLD="vhgen-survival"
+    SP_SERVER_LOG="$VH_SANDBOX/Logs/server-main.log"
+    rm -f "$CLIENT_LOG" "$SP_SERVER_LOG" "$VH_SANDBOX/Logs/client-chat.log"
+    rm -f "${VH_SANDBOX:?}/Saves/$SURV_WORLD.vcdbs"*
+    cleanup
+
+    # Note the deliberate absence of VINTAGEHORIZONS_CREATIVE. Radius 4 keeps it
+    # short: this scenario asks whether the command is allowed to run at all, and
+    # generate-sp already covers what a real run produces.
+    VINTAGEHORIZONS_AUTOUNPAUSE=1 VINTAGEHORIZONS_STATS=1 \
+    VINTAGEHORIZONS_AUTOCMD="/vhgen start 4" \
+        "$VH_ROOT/scripts/test-client.sh" -o "$SURV_WORLD" -p preset-surviveandbuild >/dev/null
+
+    ok=1
+    vh_wait_for "$CLIENT_LOG" "Level finalized" 600 "$VH_SANDBOX/test-instance.pid" || ok=0
+
+    # The world must really be survival, or the scenario tests nothing.
+    #
+    # The engine's own "Playstyle:" line, not the welcome message. The welcome line
+    # ("may you survive well and prosper") looks like the obvious discriminator and
+    # is not one: a creativebuilding world prints it word for word. That was measured
+    # by running this scenario against creativebuilding and watching it pass, which
+    # is the only reason the mistake was caught.
+    #
+    # This asserts the PLAYSTYLE, which is a proxy for the player's game mode rather
+    # than the mode itself. Nothing in either log states the mode directly. The proxy
+    # holds because a freshly created surviveandbuild world starts the player in
+    # survival, and the save is deleted above so the world is always fresh.
+    grep -qE 'Playstyle: .*surviveandbuild' "$SP_SERVER_LOG" \
+        || { echo "      x the probe world was not survival"; ok=0; }
+
+    vh_wait_for "$SP_SERVER_LOG" "Generation finished" 420 "$VH_SANDBOX/test-instance.pid" \
+        || { echo "      x /vhgen never completed for a survival host"; ok=0; }
+
+    # A privilege refusal answers in chat rather than failing loudly, so look for it.
+    if grep -qiE 'privilege|not allowed|no permission' "$VH_SANDBOX/Logs/client-chat.log"; then
+        echo "      x something refused the command on privilege grounds"
+        ok=0
+    fi
+
+    stop_client
+
+    [[ "$ok" == 1 ]] && echo "  generate-survival: ok" || fail "generate-survival"
 fi
 
 # --- Scenario 7: THE SERVE RADIUS. ------------------------------------------------
