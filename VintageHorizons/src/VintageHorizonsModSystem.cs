@@ -153,8 +153,8 @@ public class VintageHorizonsModSystem : ModSystem
                 {
                     VanillaFadePatch.SetEnabled(config.RemoveVanillaEdgeFade);
                     Mod.Logger.Notification(config.RemoveVanillaEdgeFade
-                        ? "VintageHorizons removes the game's edge fade while it draws LOD terrain behind it. Use .vhfog to change this."
-                        : "VintageHorizons keeps the game's edge fade. Use '.vhfog on' to remove it.");
+                        ? "VintageHorizons removes the game's edge fade at the view distance (no fog). Use .vhfog on to show the game's own fade."
+                        : "VintageHorizons keeps the game's edge fade (fog on). Use .vhfog off to hide it.");
                 }
                 else
                 {
@@ -935,7 +935,7 @@ public class VintageHorizonsModSystem : ModSystem
                 $"current far edge: {(int)renderer.EffectiveFarDistance}, " +
                 $"detail distance: {(int)LodWorld.DetailDistance} (.vhdetail to change), " +
                 $"edge fade: {(edgeFadeBlocked != null ? "on - " + edgeFadeBlocked
-                    : config.RemoveVanillaEdgeFade ? "removed while LOD terrain draws (.vhfog to change)" : "on (.vhfog on to remove)")}, " +
+                    : config.RemoveVanillaEdgeFade ? "off (removed, .vhfog on to show)" : "on (.vhfog off to hide)")}, " +
                 $"server assist: {assist?.Status ?? "off"}" +
                 (assist != null && assist.RemoteKeys.Count > 0
                     ? $", server offers {assist.RemoteKeys.Count} sections " +
@@ -1020,7 +1020,7 @@ public class VintageHorizonsModSystem : ModSystem
             });
 
         capi.ChatCommands.Create("vhfog")
-            .WithDescription("Remove the game's edge fade at the view distance while LOD terrain draws behind it. The default is on.")
+            .WithDescription("Show or hide the game's edge fade at the view distance. The default is fog off (the fade is removed). .vhfog on shows the game's own fade.")
             .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
             .HandleWith(args =>
             {
@@ -1033,16 +1033,17 @@ public class VintageHorizonsModSystem : ModSystem
                 if (args.Parsers[0].IsMissing)
                 {
                     return TextCommandResult.Success(
-                        $"[VintageHorizons] remove the game's edge fade: {(config.RemoveVanillaEdgeFade ? "on" : "off")}. "
-                        + "The mod removes the fade only in a frame where it draws LOD terrain.");
+                        $"[VintageHorizons] fog at the view edge: {(config.RemoveVanillaEdgeFade ? "off" : "on")}. "
+                        + "Use .vhfog off to hide it, .vhfog on to show the game's own fade.");
                 }
 
-                config.RemoveVanillaEdgeFade = (bool)args[0];
+                bool fogOn = (bool)args[0];
+                config.RemoveVanillaEdgeFade = !fogOn;
                 VanillaFadePatch.SetEnabled(config.RemoveVanillaEdgeFade);
                 SaveConfig();
-                return TextCommandResult.Success(config.RemoveVanillaEdgeFade
-                    ? "[VintageHorizons] this mod now removes the game's edge fade while it draws LOD terrain behind it (saved)."
-                    : "[VintageHorizons] the game's edge fade is on again (saved).");
+                return TextCommandResult.Success(fogOn
+                    ? "[VintageHorizons] fog at the view edge is now on - the game's own fade shows (saved). Use .vhfog off to hide it."
+                    : "[VintageHorizons] fog at the view edge is now off - the fade is removed while LOD terrain draws (saved). Use .vhfog on to show it.");
             });
     }
 
