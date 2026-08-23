@@ -78,12 +78,12 @@ cache can therefore never degrade a newer version.
 
 ## Building
 
-Requires the .NET 10 SDK and a Vintage Story 1.22.5 or 1.22.6 install. Those are the two
-versions the check suite runs on. The mod declares 1.22.5 as its minimum, so it will not
-load on anything older.
+Requires the .NET 10 SDK and a Vintage Story 1.22.7 install. The check suite runs
+against that version, and the mod declares it as its minimum, so it will not load
+on anything older.
 
 ```sh
-export VINTAGE_STORY="$HOME/Games/vintagestory1.22.5"   # your game path
+export VINTAGE_STORY="$HOME/Games/vintagestory1.22.7"   # your game path
 dotnet build VintageHorizons
 ```
 

@@ -20,7 +20,7 @@
   <!-- Game install: set VINTAGE_STORY, falls back to the local install -->
   <PropertyGroup>
     <GamePath>$(VINTAGE_STORY)</GamePath>
-    <GamePath Condition="'$(GamePath)' == '' or !Exists('$(GamePath)')">$(HOME)/Games/vintagestory1.22.5</GamePath>
+    <GamePath Condition="'$(GamePath)' == '' or !Exists('$(GamePath)')">$(HOME)/Games/vintagestory1.22.7</GamePath>
   </PropertyGroup>
 
   <!-- The fast check tier reaches a few network handlers that are otherwise private;

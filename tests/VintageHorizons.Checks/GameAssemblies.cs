@@ -71,7 +71,7 @@ public static class GameAssemblies
             if (!string.IsNullOrEmpty(env) && Directory.Exists(env)) return env;
 
             string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            return Path.Combine(home, "Games", "vintagestory1.22.5");
+            return Path.Combine(home, "Games", "vintagestory1.22.7");
         }
     }
 
