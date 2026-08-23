@@ -107,7 +107,7 @@ public class VintageHorizonsModSystem : ModSystem
         {
             Mod.Logger.Notification(
                 "'{0}' is installed and switched on, so VintageHorizons stays idle. Two LOD mods "
-                + "draw over each other and fight for the camera far plane. Switch '{0}' off in its "
+                + "draw over each other, because both set the camera far plane. Switch '{0}' off in its "
                 + "own settings, then restart the game to use VintageHorizons instead. The mod "
                 + "decides this once at startup: if you switch the other mod off now, nothing "
                 + "changes until the next start.",
@@ -644,7 +644,7 @@ public class VintageHorizonsModSystem : ModSystem
         {
             loggedMissingTexture = true;
             Mod.Logger.Notification(
-                "Block '{0}' has no usable block-colour texture (vanilla resolved it to unknown.png). "
+                "Block '{0}' has no usable block-color texture (vanilla resolved it to unknown.png). "
                 + "The mod uses another of its own textures instead, so it does not render wrong at distance.",
                 block.Code);
         }
@@ -689,7 +689,7 @@ public class VintageHorizonsModSystem : ModSystem
         // Read once here rather than per palette entry: the atlas exists by now, and a
         // reload would change the position object but not what magenta looks like.
         unknownTextureColor = capi.BlockTextureAtlas.UnknownTexturePosition.AvgColor;
-        Mod.Logger.Debug("Missing-texture colour is {0:X8}{1}", unknownTextureColor,
+        Mod.Logger.Debug("Missing-texture color is {0:X8}{1}", unknownTextureColor,
             unknownTextureColor == 0 ? " (zero: magenta-block salvage disabled)" : "");
         renderer.ApplyZFar();
         pipeline.Open("ModData/vintagehorizons");
@@ -834,7 +834,7 @@ public class VintageHorizonsModSystem : ModSystem
         if (pipeline.PaletteEntriesRepaired > 0)
         {
             Mod.Logger.Notification(
-                "  repaired {0} palette entries that were cached with no colour at all. "
+                "  repaired {0} palette entries that were cached with no color at all. "
                 + "They drew as black terrain, and the repair is written back as they load.",
                 pipeline.PaletteEntriesRepaired);
         }
@@ -846,7 +846,7 @@ public class VintageHorizonsModSystem : ModSystem
             string[] codes = pipeline.UnresolvedBlockCodes();
             Mod.Logger.Warning(
                 "  {0} palette entries came from blocks this game does not have, and are drawn as "
-                + "plain grey. {1}",
+                + "plain gray. {1}",
                 uncoloredForeignEntries,
                 codes.Length > 0
                     ? "Codes: " + string.Join(", ", codes.Take(12))

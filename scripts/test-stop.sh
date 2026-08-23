@@ -4,20 +4,20 @@ set -euo pipefail
 # Stop sandbox test instances - ONLY via their own pidfiles, and ONLY after
 # confirming the process really is our sandbox instance.
 #
-# Two hard rules, both learned the hard way:
-#  - Never kill by process name or argument pattern: the user runs their personal
-#    game concurrently and pgrep matching has burned us before.
+# Two hard rules, both of which cost a running game before they were written:
+#  - Never kill by process name or argument pattern. An unrelated Vintage Story
+#    process can run at the same time, and a name match has hit the wrong one.
 #  - Never trust a pidfile on liveness alone. A crashed instance leaves its
-#    pidfile behind, and the kernel recycles PIDs - the recycled PID could be
-#    the user's own game. is_ours() checks /proc/<pid>/cmdline for the sandbox
+#    pidfile behind, and the kernel recycles PIDs, so a recycled PID can point at
+#    any running process. is_ours() checks /proc/<pid>/cmdline for the sandbox
 #    dataPath before any signal is sent.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SANDBOX="$ROOT/.testdata"
 
 # True only if <pid> is a live process whose command line runs the game against
-# our sandbox dataPath. Anything else - dead, recycled, or the user's own game -
-# is refused.
+# the sandbox dataPath. Anything else - dead, recycled, or an unrelated game
+# process - is refused.
 is_ours() {
     local pid="$1"
     [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]] || return 1

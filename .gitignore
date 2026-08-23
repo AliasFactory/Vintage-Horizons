@@ -1,13 +1,7 @@
 # Reference source clones - never commit or redistribute (see DESIGN.md §9)
 reference/
 
-# Local working notes. Published documentation lives in docs/; nothing under notes/ is
-# tracked. The split is by directory rather than by filename, so a new file is public or
-# local because of where it was put.
 notes/
-
-# Local assistant instructions.
-CLAUDE.local.md
 
 # .NET build output
 bin/

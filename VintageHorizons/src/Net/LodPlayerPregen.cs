@@ -31,8 +31,9 @@ namespace VintageHorizons.Net;
 /// The Vegetation pass is deliberately not offered. It throws NullReferenceException
 /// inside vanilla worldgen (ForestFloorSystem.CreateForestFloor and
 /// BlockFruitTreeBranch.TryPlaceBlockForWorldGen) unless a Harmony finalizer swallows
-/// it, and this mod ships no Harmony patches. Generated terrain therefore has no
-/// trees. Real capture overwrites it whenever a player actually visits.
+/// it, and this mod does not patch worldgen. It patches two client render calls and
+/// nothing else - see VanillaFadePatch. Generated terrain therefore has no trees. Real
+/// capture overwrites it whenever a player actually visits.
 /// </summary>
 public class LodPlayerPregen
 {

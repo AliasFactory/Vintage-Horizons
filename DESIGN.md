@@ -4,8 +4,8 @@ A Distant Horizons-style extended-render-distance LOD mod for Vintage Story that
 **fully client-side**: it works on any server, vanilla or modded, because it builds its
 LODs exclusively from chunk data the client already receives.
 
-Supporting research is kept privately, in `notes/research/`, and is not published. It
-covers the Vintage Story client API and how the two established LOD mods are built.
+Supporting research is not published. It covers the Vintage Story client API and how the
+two established LOD mods are built.
 
 What matters publicly is the provenance, so it is stated here rather than left implied.
 **Distant Horizons** (LGPL-3.0) informed concepts only; the implementation here is a clean
@@ -37,7 +37,7 @@ it**. Neither project's source is redistributed by this repository.
 | VS chunk = **32³**; world height configurable (256 default, up to 16k) | Section/column math uses 32 as the base unit; y fields sized for 16k |
 | Client `TopRockIdMap`/`SnowAccum`/`MapRegion` are null | Surface material must be read from actual block data (guided by heightmaps) |
 | No client chunk-unload event | Irrelevant: we snapshot on arrival; our cache outlives the chunk |
-| Voxy license = all-rights-reserved | Concepts only. DH is LGPL - also concepts only (user decision: clean room, permissive license) |
+| Voxy license = all-rights-reserved | Concepts only. DH is LGPL - also concepts only (project decision: clean room, permissive license) |
 | Farseer is **MIT** | Its client renderer/shader (camera-relative rendering, ZFar extension, fog-matched GLSL) is legally reusable with attribution - our rendering bootstrap |
 
 ## 3. Architecture overview
@@ -483,29 +483,6 @@ but `AssetCategory.worldgen` is `EnumAppSide.Server`, so a client never loads th
 or geologic-province definitions the noise is shaped by, and a modded server's worldgen is
 not knowable from the client at all.
 
-## 11. Known issues
-
-**Wrong LOD colour for blocks whose block-colour texture did not resolve.** Reported by a
-player running Conquest Reforged + Better Ruins: blocks look correct up close but wrong at
-LOD distance. Partly fixed - `DescribePalette` now rejects an unusable atlas sub-id (out of
-range, or an unassigned `Positions` entry) and the unknown.png average, and falls back to
-any other baked texture the block owns, cached per block id.
-
-Root cause is in vanilla, not in the mods: `Block.LoadTextureSubIdForBlockColor` tries the
-`textureCodeForBlockColor` attribute, then `"up"`, then `Textures.First()` - and that last
-step ends in `?? 0`, so a block whose first texture in dictionary order has no `Baked`
-entry silently resolves to atlas sub-id 0. Other faces bake fine, which is exactly why the
-block looks right up close and wrong only in LOD. Confirmed firing on vanilla
-`game:fruitingbush-wild-blackberry-free`.
-
-**Not confirmed to be the reported symptom.** The player described *purple*, and
-`unknown.png` measures near-white (32×32, mostly white with a small red mark, average
-255,249,249 - matching the `00FCFCFC` the atlas reports). So a magenta block is coming from
-somewhere else, most likely `GetAverageColor` on a sub-id the atlas never assigned, which
-the range/null guard now also catches. To close it properly, ask the reporter for the block
-code, whether it looks right up close, and any "texture not found" lines in
-`client-main.log`.
-
 ### 10.11 What stage 1 measured
 
 Three installs, on the sandbox client and dedicated server (`scripts/test-*.sh`):
@@ -537,6 +514,29 @@ a log line, not a dialog.
 **Do not ship `side: Universal` before stage 3.** It changes how the mod is categorised
 (and filtered for) on ModDB while delivering nothing to a player yet. The switch belongs
 in the release that actually serves terrain.
+
+## 11. Known issues
+
+**Wrong LOD colour for blocks whose block-colour texture did not resolve.** Reported by a
+player running Conquest Reforged + Better Ruins: blocks look correct up close but wrong at
+LOD distance. Partly fixed - `DescribePalette` now rejects an unusable atlas sub-id (out of
+range, or an unassigned `Positions` entry) and the unknown.png average, and falls back to
+any other baked texture the block owns, cached per block id.
+
+Root cause is in vanilla, not in the mods: `Block.LoadTextureSubIdForBlockColor` tries the
+`textureCodeForBlockColor` attribute, then `"up"`, then `Textures.First()` - and that last
+step ends in `?? 0`, so a block whose first texture in dictionary order has no `Baked`
+entry silently resolves to atlas sub-id 0. Other faces bake fine, which is exactly why the
+block looks right up close and wrong only in LOD. Confirmed firing on vanilla
+`game:fruitingbush-wild-blackberry-free`.
+
+**Not confirmed to be the reported symptom.** The player described *purple*, and
+`unknown.png` measures near-white (32×32, mostly white with a small red mark, average
+255,249,249 - matching the `00FCFCFC` the atlas reports). So a magenta block is coming from
+somewhere else, most likely `GetAverageColor` on a sub-id the atlas never assigned, which
+the range/null guard now also catches. To close it properly, ask the reporter for the block
+code, whether it looks right up close, and any "texture not found" lines in
+`client-main.log`.
 
 ## 12. The test regimen
 

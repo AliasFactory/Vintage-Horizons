@@ -18,9 +18,9 @@ are unaffected.
 - **Real 3D terrain**, not a heightmap. Mountains, overhangs, cave mouths, forests, and
   anything you build all appear at distance, at 1-block resolution near the player.
 - **Translucent water**, drawn over the lake and sea floors beneath it.
-- **Live seasonal colour**. Grass and foliage follow the game's own climate and season
+- **Live seasonal color**. Grass and foliage follow the game's own climate and season
   maps. The mod derives a snow line from the local temperature lapse rate. So the far
-  terrain changes with the seasons. It does not keep the colours it had at capture time.
+  terrain changes with the seasons. It does not keep the colors it had at capture time.
 - **Persistent per-world cache** that grows as you play. Join time and memory use do not
   depend on the size of the explored area.
 
@@ -50,8 +50,8 @@ in advance.
 ### If your server runs Farseer, ChunkLOD or TopoHorizon
 
 The client must have those mods, so the game installs one on your machine when you join
-such a server. If two LOD mods draw at the same time, they fight over the camera far
-plane and draw over each other. So this mod stays idle while another mod **draws**.
+such a server. If two LOD mods draw at the same time, they draw over each other, because
+both set the camera far plane. So this mod stays idle while another mod **draws**.
 
 An installed mod does not always draw. Switch Farseer off in its own dialog
 (Ctrl+Shift+F). This mod then draws by itself, and there is nothing else to set. For the
@@ -109,7 +109,7 @@ Sweeping is on by default, in singleplayer too. The settings are `SweepSavegame`
 
 The default is safe because the sweep **generates nothing**. The sweep skips a position
 that nobody visited. It also skips a border around the explored terrain, because a
-load there makes the engine generate the missing neighbours.
+load there makes the engine generate the missing neighbors.
 
 `PregenRadiusChunks` takes the opposite trade. It creates terrain that nobody visited yet, so
 it stays off unless an admin asks for it. That setting now uses the same transient
@@ -181,7 +181,7 @@ that the player switched off.
 
 **There is no CI, and there cannot be.** Building this repo requires the Vintage Story
 assemblies from a local game install, and those are not redistributable, so no hosted
-runner can compile it. `scripts/check.sh` is the entire safety net.
+runner can compile it. Nothing but `scripts/check.sh` re-checks any of this work.
 
 ### Testing without touching your own game
 

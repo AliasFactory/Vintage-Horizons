@@ -1,7 +1,7 @@
 # Release procedure
 
-Followed in order, every release. Nothing here should be a surprise the first time you
-hit it partway through - read it once before starting.
+Followed in order, every release. Read it once before you start, so that no step is new
+to you when you are half way through.
 
 ## 1. Verify the tree
 
@@ -10,8 +10,7 @@ git status                # clean, nothing stray staged
 scripts/check.sh           # all three tiers; roughly 65 min
 ```
 
-Do this before touching version numbers. A release built on a red check is not a release,
-it is a bet.
+Do this before you change version numbers. Do not release on a failing check.
 
 ## 2. Decide the version
 
@@ -81,9 +80,11 @@ coverage of its own. Unzip it into a scratch mods folder, not the dev symlink. L
 it against a vanilla server at least once before publishing:
 
 ```sh
-mkdir -p /tmp/vh-release-check && cd /tmp/vh-release-check
-unzip -o ~/Projects/VintageHorizons/dist/vintagehorizons_X.Y.Z.zip -d vintagehorizons
-# point a throwaway client's addModPath here and confirm it loads and captures
+# from the repository root
+mkdir -p /tmp/vh-release-check
+unzip -o dist/vintagehorizons_X.Y.Z.zip -d /tmp/vh-release-check/vintagehorizons
+# point a throwaway client's addModPath at /tmp/vh-release-check and confirm it loads
+# and captures
 ```
 
 ## 9. Commit and tag
@@ -105,9 +106,8 @@ git push
 git push --tags
 ```
 
-Confirm with whoever is driving before this step, unless it is already understood to be
-authorized. This is the point where the release becomes visible to anyone watching the
-repo.
+This is the point where the release becomes visible to anyone who watches the repository.
+Make sure the push is intended before you run it.
 
 ## 11. Publish
 
@@ -120,6 +120,6 @@ Manual, on mods.vintagestory.at:
 ## Not doing
 
 No automated publish to ModDB. It has no API for this, and an upload to a public listing
-stays a deliberate human action regardless. Between releases the working version carries
-a `-dev` suffix (`0.2.1-dev`), so a development build identifies itself in logs instead
-of wearing the last release's number. The release drops the suffix.
+stays a deliberate step regardless. Between releases the working version carries a `-dev`
+suffix (`0.2.1-dev`), so a development build reports its own version in logs instead of
+the last release's number. The release drops the suffix.
