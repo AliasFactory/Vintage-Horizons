@@ -597,7 +597,11 @@ public class LodTerrainRenderer : IRenderer
     {
         if (AutoUnpause && capi.IsGamePaused) capi.PauseGame(false);
 
-        if (prog == null || !shaderOk || prog.LoadError) return;
+        if (prog == null || !shaderOk || prog.LoadError)
+        {
+            VanillaFadePatch.PublishFrame(0, 0f);
+            return;
+        }
 
         var rapi = capi.Render;
         if (rapi.FrameWidth == 0) return;
@@ -620,7 +624,11 @@ public class LodTerrainRenderer : IRenderer
         UploadFinishedMeshes();
         EvictStaleMeshes();
         RefreshSeasonalState();
-        if (sectionMeshes.Count == 0 && waterMeshes.Count == 0) return;
+        if (sectionMeshes.Count == 0 && waterMeshes.Count == 0)
+        {
+            VanillaFadePatch.PublishFrame(0, 0f);
+            return;
+        }
 
         var playerData = capi.World.Player.WorldData;
         float viewDistance = playerData.DesiredViewDistance;
@@ -639,6 +647,7 @@ public class LodTerrainRenderer : IRenderer
         foreach (long top in world.TopLevelKeys) CollectDrawNodes(top);
         WalkCost.Add(phaseStart);
         LastDrawCount = drawList.Count;
+        VanillaFadePatch.PublishFrame(drawList.Count, viewDistance);
         if (drawList.Count == 0) return;
 
         prog.Use();

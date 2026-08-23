@@ -5,6 +5,14 @@ Written when a version is released, not when a commit lands - see
 
 ## [Unreleased]
 
+**The mod now removes the game's edge fade in front of LOD terrain.** The game fades
+terrain to the fog color as the terrain nears the view distance. With LOD terrain behind
+that edge, the fade turns a clean boundary into a blue band. Two field reports named it.
+The mod moves that fade past everything the game draws, but only in a frame where it
+draws LOD terrain. In a frame with none, the fade stays and hides the bare chunk edges.
+`.vhfog off` gives you the game's own look again. If you have the DeFog mod, DeFog
+removes the fade and this mod adds no patch of its own.
+
 ## [0.2.1] - 2026-08-15
 
 **Fixed: chiselled blocks drew as one flat wrong colour in the distance.** Reported as

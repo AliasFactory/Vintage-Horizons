@@ -21,6 +21,13 @@ public class VintageHorizonsConfig
     /// path supports.
     /// </summary>
     public bool IgnoreOtherLodMods = false;
+
+    /// <summary>
+    /// Remove the game's edge fade at the view distance while LOD terrain draws behind it.
+    /// In a frame where the mod draws no LOD terrain, the fade returns. See
+    /// <see cref="VanillaEdgeFade"/>.
+    /// </summary>
+    public bool RemoveVanillaEdgeFade = true;
 }
 
 /// <summary>
@@ -58,6 +65,9 @@ public class VintageHorizonsModSystem : ModSystem
 
     /// <summary>Set when another LOD mod is drawing; we then stay out of its way.</summary>
     string? deferringTo;
+
+    /// <summary>Why the edge-fade patch is not active, or null when it is installed.</summary>
+    string? edgeFadeBlocked;
 
     /// <summary>
     /// Optional server assist (DESIGN.md §10). Created even while deferring, because the
@@ -125,6 +135,43 @@ public class VintageHorizonsModSystem : ModSystem
             AutoUnpause = Environment.GetEnvironmentVariable("VINTAGEHORIZONS_AUTOUNPAUSE") == "1",
             FarViewDistanceCap = config.FarViewDistanceCap,
         };
+
+        // The game fades terrain to the fog color as the terrain nears the view distance.
+        // That fade turns the boundary in front of LOD terrain into a blue band. See
+        // VanillaEdgeFade for the rule and the shader evidence. DeFog writes the same
+        // uniform with no gate, so when DeFog is present this mod installs no patch and
+        // the two never write the same value twice a frame.
+        if (capi.ModLoader.IsModEnabled("defog"))
+        {
+            edgeFadeBlocked = "the DeFog mod is installed and already removes the fade";
+        }
+        else
+        {
+            try
+            {
+                if (VanillaFadePatch.Install(Mod.Logger))
+                {
+                    VanillaFadePatch.SetEnabled(config.RemoveVanillaEdgeFade);
+                    Mod.Logger.Notification(config.RemoveVanillaEdgeFade
+                        ? "VintageHorizons removes the game's edge fade while it draws LOD terrain behind it. Use .vhfog to change this."
+                        : "VintageHorizons keeps the game's edge fade. Use '.vhfog on' to remove it.");
+                }
+                else
+                {
+                    edgeFadeBlocked = "this game build does not have the expected shader method";
+                    Mod.Logger.Warning(
+                        "Did not patch the game's edge fade: this game build does not have "
+                        + "the expected shader method. The game's edge fade remains.");
+                }
+            }
+            catch (Exception e)
+            {
+                edgeFadeBlocked = "the patch installation failed";
+                Mod.Logger.Warning(
+                    "Did not patch the game's edge fade: {0}. The game's edge fade remains.",
+                    e.Message);
+            }
+        }
 
         capi.Event.ChunkDirty += OnChunkDirty;
         capi.Event.LevelFinalize += OnLevelFinalize;
@@ -887,6 +934,8 @@ public class VintageHorizonsModSystem : ModSystem
                 $"render distance: {(renderer.FarViewDistanceCap > 0 ? renderer.FarViewDistanceCap + " (capped)" : "unlimited")}, " +
                 $"current far edge: {(int)renderer.EffectiveFarDistance}, " +
                 $"detail distance: {(int)LodWorld.DetailDistance} (.vhdetail to change), " +
+                $"edge fade: {(edgeFadeBlocked != null ? "on - " + edgeFadeBlocked
+                    : config.RemoveVanillaEdgeFade ? "removed while LOD terrain draws (.vhfog to change)" : "on (.vhfog on to remove)")}, " +
                 $"server assist: {assist?.Status ?? "off"}" +
                 (assist != null && assist.RemoteKeys.Count > 0
                     ? $", server offers {assist.RemoteKeys.Count} sections " +
@@ -969,6 +1018,32 @@ public class VintageHorizonsModSystem : ModSystem
                     $"[VintageHorizons] detail distance {(int)LodWorld.DetailDistance} - full detail out to " +
                     $"{(int)LodWorld.DetailDistance * 2} blocks (saved). Terrain re-selects over the next few seconds.");
             });
+
+        capi.ChatCommands.Create("vhfog")
+            .WithDescription("Remove the game's edge fade at the view distance while LOD terrain draws behind it. The default is on.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
+            .HandleWith(args =>
+            {
+                if (edgeFadeBlocked != null)
+                {
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] this mod does not change the game's edge fade: {edgeFadeBlocked}.");
+                }
+
+                if (args.Parsers[0].IsMissing)
+                {
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] remove the game's edge fade: {(config.RemoveVanillaEdgeFade ? "on" : "off")}. "
+                        + "The mod removes the fade only in a frame where it draws LOD terrain.");
+                }
+
+                config.RemoveVanillaEdgeFade = (bool)args[0];
+                VanillaFadePatch.SetEnabled(config.RemoveVanillaEdgeFade);
+                SaveConfig();
+                return TextCommandResult.Success(config.RemoveVanillaEdgeFade
+                    ? "[VintageHorizons] this mod now removes the game's edge fade while it draws LOD terrain behind it (saved)."
+                    : "[VintageHorizons] the game's edge fade is on again (saved).");
+            });
     }
 
     /// <summary>Writes every setting: a partial write would silently reset the others.</summary>
@@ -1010,6 +1085,7 @@ public class VintageHorizonsModSystem : ModSystem
         // Stops the storage writer before the connection it writes through.
         Quietly(() => pipeline?.Dispose());
         Quietly(() => renderer?.Dispose());
+        Quietly(VanillaFadePatch.Uninstall);
     }
 
     /// <summary>
