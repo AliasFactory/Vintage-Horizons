@@ -88,6 +88,19 @@ public class LodTerrainRenderer : IRenderer
     /// <summary>Current far edge in blocks: the farthest loaded LOD data, independent of the vanilla view distance.</summary>
     public float EffectiveFarDistance { get; private set; } = 3000;
 
+    /// <summary>Bumped whenever the resident mesh geometry changes, so the far-edge scan
+    /// can be skipped on frames that add or evict nothing.</summary>
+    long meshGeomVersion;
+
+    /// <summary>Quantized far-plane state: the applied camera ZFar only steps in
+    /// StableProjectionStep blocks, growing immediately and shrinking after a hold, so
+    /// ordinary movement does not reset the projection every frame.</summary>
+    const int StableProjectionStep = 512;
+    const int StableProjectionHoldMs = 5000;
+    float stableProjectionZFar = 3000 + StableProjectionStep;
+    int stableProjectionHoldMsLeft;
+    long lastStableProjectionClock;
+
     public int MeshCount => sectionMeshes.Count;
     public int LastDrawCount { get; private set; }
 
@@ -194,18 +207,62 @@ public class LodTerrainRenderer : IRenderer
 
     public void ApplyZFar()
     {
+        // The camera far plane is quantized: it only steps in StableProjectionStep
+        // blocks, growing immediately and shrinking after a hold, so ordinary movement
+        // does not reset the projection every frame. The continuous shader far edge
+        // (EffectiveFarDistance) stays separate and is what the shader reads.
         float needed = GameMath.Max(3000, EffectiveFarDistance + 512);
         var clientMain = (ClientMain)capi.World;
 
-        if (clientMain.MainCamera.ZFar >= needed && appliedZFar == needed) return;
+        // Grow immediately to the step that covers the needed distance.
+        int neededStep = (int)Math.Ceiling(needed / StableProjectionStep) * StableProjectionStep;
+        if (neededStep > stableProjectionZFar)
+        {
+            stableProjectionZFar = neededStep;
+            stableProjectionHoldMsLeft = 0;
+        }
+        else if (neededStep < stableProjectionZFar)
+        {
+            // Recessive: only step down after the hold has elapsed at the closer
+            // distance, so a camera that briefly exposes more far terrain does not
+            // pull the plane back and forth.
+            long now = capi.World.ElapsedMilliseconds;
+            if (lastStableProjectionClock != 0)
+                stableProjectionHoldMsLeft -= (int)(now - lastStableProjectionClock);
+            lastStableProjectionClock = now;
+            if (stableProjectionHoldMsLeft <= 0)
+            {
+                stableProjectionZFar = Math.Max(3000, stableProjectionZFar - StableProjectionStep);
+                stableProjectionHoldMsLeft = StableProjectionHoldMs;
+            }
+        }
+        else
+        {
+            lastStableProjectionClock = capi.World.ElapsedMilliseconds;
+        }
 
-        clientMain.MainCamera.ZFar = needed;
+        if (clientMain.MainCamera.ZFar >= stableProjectionZFar && appliedZFar == stableProjectionZFar) return;
+
+        clientMain.MainCamera.ZFar = stableProjectionZFar;
         capi.Render.Reset3DProjection();
-        appliedZFar = needed;
+        appliedZFar = stableProjectionZFar;
     }
 
     void UpdateEffectiveFarDistance(float vanillaViewDistance)
     {
+        // The far edge only changes when the resident mesh set changes (a mesh landed
+        // or was evicted) or the camera moved far enough to matter. Skip the O(n) scan
+        // over every mesh on frames where neither happened.
+        if (meshGeomVersion == lastFarScanVersion
+            && Math.Abs(camPos.X - lastFarScanCamX) < 8
+            && Math.Abs(camPos.Z - lastFarScanCamZ) < 8)
+        {
+            return;
+        }
+        lastFarScanVersion = meshGeomVersion;
+        lastFarScanCamX = camPos.X;
+        lastFarScanCamZ = camPos.Z;
+
         double maxDistSq = 0;
         foreach (long key in sectionMeshes.Keys)
         {
@@ -221,6 +278,9 @@ public class LodTerrainRenderer : IRenderer
 
         EffectiveFarDistance = GameMath.Max(far, vanillaViewDistance + 1536);
     }
+
+    long lastFarScanVersion = -1;
+    double lastFarScanCamX, lastFarScanCamZ;
 
     // ---- Detail selection (quadtree walk) ----
 
@@ -409,6 +469,7 @@ public class LodTerrainRenderer : IRenderer
             if (waterMeshes.Remove(key, out MeshRef? water)) water.Dispose();
             lastSelectedFrame.Remove(key);
             EvictedTotal++;
+            meshGeomVersion++;
         }
     }
 
@@ -524,6 +585,7 @@ public class LodTerrainRenderer : IRenderer
                 {
                     if (sectionMeshes.Remove(best, out MeshRef? gone)) gone.Dispose();
                     if (waterMeshes.Remove(best, out MeshRef? goneWater)) goneWater.Dispose();
+                    if (gone != null || goneWater != null) meshGeomVersion++;
                 }
                 continue;
             }
@@ -532,6 +594,7 @@ public class LodTerrainRenderer : IRenderer
             {
                 if (sectionMeshes.Remove(best, out MeshRef? stale)) stale.Dispose();
                 if (waterMeshes.Remove(best, out MeshRef? staleWater)) staleWater.Dispose();
+                if (stale != null || staleWater != null) meshGeomVersion++;
                 continue;
             }
 
@@ -577,6 +640,7 @@ public class LodTerrainRenderer : IRenderer
 
             // Fresh uploads get a grace stamp so they aren't evicted before first selection.
             lastSelectedFrame[result.Key] = frameCounter;
+            meshGeomVersion++;
         }
     }
 
