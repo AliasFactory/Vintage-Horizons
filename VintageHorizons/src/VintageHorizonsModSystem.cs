@@ -14,6 +14,10 @@ public class VintageHorizonsConfig
     /// <summary>Distance at which detail starts halving; see LodWorld.DetailDistance.</summary>
     public int DetailDistance = 512;
 
+    /// <summary>Draw opaque sections nearest first so the depth buffer has nearer depth
+    /// before far sections shade. Water keeps traversal order.</summary>
+    public bool OpaqueNearToFar = true;
+
     /// <summary>
     /// Draw even when another LOD mod is installed and switched on. The escape hatch for
     /// the mods whose own switch we cannot read; see <see cref="OtherLodMods"/>. Read at
@@ -124,6 +128,7 @@ public class VintageHorizonsModSystem : ModSystem
         {
             AutoUnpause = Environment.GetEnvironmentVariable("VINTAGEHORIZONS_AUTOUNPAUSE") == "1",
             FarViewDistanceCap = config.FarViewDistanceCap,
+            OpaqueNearToFar = config.OpaqueNearToFar,
         };
 
         capi.Event.ChunkDirty += OnChunkDirty;
@@ -968,6 +973,26 @@ public class VintageHorizonsModSystem : ModSystem
                 return TextCommandResult.Success(
                     $"[VintageHorizons] detail distance {(int)LodWorld.DetailDistance} - full detail out to " +
                     $"{(int)LodWorld.DetailDistance * 2} blocks (saved). Terrain re-selects over the next few seconds.");
+            });
+
+        capi.ChatCommands.Create("vhorder")
+            .WithDescription("Draw opaque sections nearest first so the depth buffer has nearer depth before far sections shade. On by default.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
+            .HandleWith(args =>
+            {
+                if (args.Parsers[0].IsMissing)
+                {
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] nearest-first opaque drawing: {(config.OpaqueNearToFar ? "on" : "off")}. " +
+                        "Opaque sections draw nearest first; water keeps traversal order.");
+                }
+
+                config.OpaqueNearToFar = (bool)args[0];
+                if (renderer != null) renderer.OpaqueNearToFar = config.OpaqueNearToFar;
+                SaveConfig();
+                return TextCommandResult.Success(config.OpaqueNearToFar
+                    ? "[VintageHorizons] nearest-first opaque drawing on (saved)."
+                    : "[VintageHorizons] nearest-first opaque drawing off: traversal order, as before (saved).");
             });
     }
 
