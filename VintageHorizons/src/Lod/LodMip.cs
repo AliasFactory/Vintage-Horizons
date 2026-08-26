@@ -11,14 +11,19 @@ public static class LodMip
     [ThreadStatic] static List<int>? boundaries;
     [ThreadStatic] static List<ulong>? outRuns;
 
+    /// <summary>Convenience overload for main-thread callers: snapshot the child and
+    /// downsample it. The worker path uses the snapshot overload directly.</summary>
+    public static bool DownsampleIntoParent(LodSection child, LodSection parent, int qx, int qz) =>
+        DownsampleIntoParent(SectionSnapshot.Of(child), parent, qx, qz);
+
     /// <summary>Merge the whole child section into one parent quadrant. Returns true if the parent changed.</summary>
-    public static bool DownsampleIntoParent(LodSection child, LodSection parent, int qx, int qz)
+    public static bool DownsampleIntoParent(SectionSnapshot child, LodSection parent, int qx, int qz)
     {
         const int gs = LodSection.GridSize;
         const int half = gs / 2;
 
         // Child palette id → parent palette id, registered lazily.
-        var paletteMap = new int[child.Palette.Count];
+        var paletteMap = new int[child.PaletteColors.Length];
         for (int i = 0; i < paletteMap.Length; i++) paletteMap[i] = -1;
 
         var batch = new ulong[]?[gs * gs];
@@ -58,8 +63,9 @@ public static class LodMip
                     int ppid = paletteMap[cpid];
                     if (ppid < 0)
                     {
-                        LodPaletteEntry e = child.Palette[cpid];
-                        ppid = parent.FindOrAddPaletteEntry(e.BlockId, e.Color, e.Flags, e.TintSlot);
+                        ppid = parent.FindOrAddPaletteEntry(
+                            child.PaletteBlockIds[cpid], child.PaletteColors[cpid],
+                            child.PaletteFlags[cpid], child.PaletteTintSlots[cpid]);
                         paletteMap[cpid] = ppid;
                     }
                     merged[i] = LodSection.PackRun(ppid, LodSection.RunYTop(merged[i]), LodSection.RunYBottom(merged[i]));
