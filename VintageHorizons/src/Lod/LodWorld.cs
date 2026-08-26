@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Vintagestory.API.MathTools;
 
 namespace VintageHorizons;
@@ -325,7 +326,11 @@ public class LodWorld
         if (applyToParent && level < MaxLevel) MipDirty.Add(key);
     }
 
-    // ---- Mip propagation (child → parent), main thread, budgeted ----
+    // ---- Mip propagation (child → parent), off-thread with revision validation ----
+
+    /// <summary>G7: mip jobs handed to the worker, keyed by child key so a re-queued
+    /// child does not pile up duplicate jobs.</summary>
+    readonly HashSet<long> mipJobsInFlight = new();
 
     public void ProcessPropagation(int maxSections)
     {
@@ -334,6 +339,7 @@ public class LodWorld
         List<long>? batch = null;
         foreach (long key in MipDirty)
         {
+            if (mipJobsInFlight.Contains(key)) continue;
             (batch ??= new List<long>()).Add(key);
             if (batch.Count >= maxSections) break;
         }
@@ -349,19 +355,82 @@ public class LodWorld
             if (!EnsureResident(childKey)) continue;
             if (!EnsureResident(parentKey)) continue;
 
-            MipDirty.Remove(childKey);
-            SaveDirty.Add(childKey); // persist the cleared ApplyToParent flag
-
             if (!Sections.TryGetValue(childKey, out LodSection? child) || child.CapturedColumns == 0) continue;
 
-            LodSection parent = GetOrCreateSection(parentKey);
+            // Snapshot the child and hand the downsample to the worker. The revision
+            // is captured here; the apply side discards the result if the child moved
+            // on before the work landed (G7).
+            MipDirty.Remove(childKey);
+            SaveDirty.Add(childKey); // persist the cleared ApplyToParent flag
+            mipJobsInFlight.Add(childKey);
+            EnqueueMipJob(childKey, parentKey, child);
+        }
+    }
 
-            if (LodMip.DownsampleIntoParent(child, parent, KeySx(childKey) & 1, KeySz(childKey) & 1))
+    void EnqueueMipJob(long childKey, long parentKey, LodSection child)
+    {
+        if (RequestMip == null) return;
+        RequestMip(new MipJob
+        {
+            ChildKey = childKey,
+            ParentKey = parentKey,
+            Qx = KeySx(childKey) & 1,
+            Qz = KeySz(childKey) & 1,
+            ChildRevision = child.Revision,
+            Child = SectionSnapshot.Of(child),
+        });
+    }
+
+    /// <summary>G7: apply finished mip results, discarding any whose child moved on.</summary>
+    public void ApplyMipResults()
+    {
+        if (MipResults == null) return;
+        while (MipResults.TryDequeue(out MipResult? result))
+        {
+            mipJobsInFlight.Remove(result.ChildKey);
+
+            // Revision validation: if the child changed since the snapshot, this
+            // result is stale - re-queue the child so the newer data propagates.
+            if (!Sections.TryGetValue(result.ChildKey, out LodSection? child)
+                || child.Revision != result.ChildRevision
+                || child.CapturedColumns == 0)
             {
-                MarkChanged(parentKey);
+                MipDirty.Add(result.ChildKey);
+                continue;
+            }
+
+            LodSection parent = GetOrCreateSection(result.ParentKey);
+            if (ApplyMipResult(parent, result))
+            {
+                MarkChanged(result.ParentKey);
             }
         }
     }
+
+    static bool ApplyMipResult(LodSection parent, MipResult result)
+    {
+        // The worker built a fresh parent section; merge its columns into the live
+        // parent. Only the columns the worker captured are touched.
+        var batch = new ulong[]?[LodSection.GridSize * LodSection.GridSize];
+        bool any = false;
+        for (int col = 0; col < batch.Length; col++)
+        {
+            if (!result.Captured[col]) continue;
+            int start = result.ColumnStart[col], end = result.ColumnStart[col + 1];
+            var runs = new ulong[end - start];
+            Array.Copy(result.Runs, start, runs, 0, runs.Length);
+            batch[col] = runs;
+            any = true;
+        }
+        if (!any) return false;
+        return parent.ReplaceColumns(batch);
+    }
+
+    /// <summary>Set by the pipeline: enqueues a mip job on the worker.</summary>
+    public Action<MipJob>? RequestMip;
+
+    /// <summary>Set by the pipeline: the worker's finished-mip queue.</summary>
+    public ConcurrentQueue<MipResult>? MipResults;
 
     /// <summary>
     /// True when the section is in RAM, or when there is nothing to load for it so the

@@ -67,11 +67,13 @@ public static class Fixtures
         var colors = new int[s.Palette.Count];
         var flags = new byte[s.Palette.Count];
         var slots = new byte[s.Palette.Count];
+        var blockIds = new int[s.Palette.Count];
         for (int i = 0; i < s.Palette.Count; i++)
         {
             colors[i] = s.Palette[i].Color;
             flags[i] = s.Palette[i].Flags;
             slots[i] = s.Palette[i].TintSlot;
+            blockIds[i] = s.Palette[i].BlockId;
         }
         return new SectionSnapshot
         {
@@ -81,6 +83,7 @@ public static class Fixtures
             PaletteColors = colors,
             PaletteFlags = flags,
             PaletteTintSlots = slots,
+            PaletteBlockIds = blockIds,
         };
     }
 

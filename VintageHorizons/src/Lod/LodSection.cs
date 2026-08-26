@@ -66,6 +66,14 @@ public class LodSection
 
     public ulong[] Runs = Array.Empty<ulong>();
 
+    /// <summary>
+    /// Bumped whenever the section's column data changes. Async work that snapshots a
+    /// section (mip propagation) carries the revision it read and discards its result
+    /// if the section moved on before the work landed, so a stale write can never
+    /// overwrite newer truth.
+    /// </summary>
+    public long Revision;
+
     public readonly List<LodPaletteEntry> Palette = new();
 
     /// <summary>Columns that have been captured at least once (empty column ≠ uncaptured column).</summary>
@@ -138,6 +146,7 @@ public class LodSection
         Array.Resize(ref nextRuns, offset);
         Runs = nextRuns;
         ColumnStart = nextStart;
+        Revision++;
     }
 
     /// <summary>
@@ -169,6 +178,7 @@ public class LodSection
         if (delta == 0)
         {
             newRuns.CopyTo(Runs.AsSpan(ColumnStart[col]));
+            Revision++;
             return true;
         }
 
@@ -180,6 +190,7 @@ public class LodSection
         Runs = next;
 
         for (int c = col + 1; c < ColumnStart.Length; c++) ColumnStart[c] += delta;
+        Revision++;
         return true;
     }
 
@@ -232,6 +243,7 @@ public class LodSection
         }
 
         if (!changed) return false;
+        Revision++;
 
         var nextRuns = new ulong[newLength];
         var nextStart = new int[total + 1];
