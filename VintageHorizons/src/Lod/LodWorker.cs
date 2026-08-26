@@ -114,6 +114,7 @@ public class MipResult
     public required int[] PaletteColors;
     public required byte[] PaletteFlags;
     public required byte[] PaletteTintSlots;
+    public required int[] PaletteBlockIds;
 }
 
 /// <summary>
@@ -302,6 +303,7 @@ public class LodWorker : IDisposable
             PaletteColors = parent.Palette.Select(p => p.Color).ToArray(),
             PaletteFlags = parent.Palette.Select(p => p.Flags).ToArray(),
             PaletteTintSlots = parent.Palette.Select(p => p.TintSlot).ToArray(),
+            PaletteBlockIds = parent.Palette.Select(p => p.BlockId).ToArray(),
         };
     }
 

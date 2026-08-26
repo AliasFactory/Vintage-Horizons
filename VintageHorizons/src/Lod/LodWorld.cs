@@ -409,8 +409,15 @@ public class LodWorld
 
     static bool ApplyMipResult(LodSection parent, MipResult result)
     {
-        // The worker built a fresh parent section; merge its columns into the live
-        // parent. Only the columns the worker captured are touched.
+        // The worker built a fresh parent section with its own palette, so the result's
+        // runs carry the FRESH parent's palette ids. The live parent has its own
+        // palette, so every distinct id must be remapped into it before the runs are
+        // applied - otherwise the live parent's runs reference ids that do not exist
+        // in its palette, and meshing or a higher mip reads PaletteColors[id] out of
+        // range. The result carries the palette data needed to re-register entries.
+        var paletteMap = new int[result.PaletteBlockIds.Length];
+        for (int i = 0; i < paletteMap.Length; i++) paletteMap[i] = -1;
+
         var batch = new ulong[]?[LodSection.GridSize * LodSection.GridSize];
         bool any = false;
         for (int col = 0; col < batch.Length; col++)
@@ -418,7 +425,20 @@ public class LodWorld
             if (!result.Captured[col]) continue;
             int start = result.ColumnStart[col], end = result.ColumnStart[col + 1];
             var runs = new ulong[end - start];
-            Array.Copy(result.Runs, start, runs, 0, runs.Length);
+            for (int r = 0; r < runs.Length; r++)
+            {
+                ulong run = result.Runs[start + r];
+                int cpid = LodSection.RunPaletteId(run);
+                int ppid = paletteMap[cpid];
+                if (ppid < 0)
+                {
+                    ppid = parent.FindOrAddPaletteEntry(
+                        result.PaletteBlockIds[cpid], result.PaletteColors[cpid],
+                        result.PaletteFlags[cpid], result.PaletteTintSlots[cpid]);
+                    paletteMap[cpid] = ppid;
+                }
+                runs[r] = LodSection.PackRun(ppid, LodSection.RunYTop(run), LodSection.RunYBottom(run));
+            }
             batch[col] = runs;
             any = true;
         }
