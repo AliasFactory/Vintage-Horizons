@@ -33,8 +33,13 @@ public class SectionSnapshot
         }
         return new SectionSnapshot
         {
-            Runs = s.Runs,
-            ColumnStart = s.ColumnStart,
+            // Runs and ColumnStart are deep-copied, not shared: SetColumn's delta==0
+            // path writes runs in place and ColumnStart is updated in place on every
+            // resize, so a shared reference lets a worker read a torn section while
+            // the main thread mutates it. The copy is the whole point of the snapshot
+            // discipline - a worker must never see a section change under it.
+            Runs = (ulong[])s.Runs.Clone(),
+            ColumnStart = (int[])s.ColumnStart.Clone(),
             Captured = (bool[])s.Captured.Clone(),
             PaletteColors = colors,
             PaletteFlags = flags,
