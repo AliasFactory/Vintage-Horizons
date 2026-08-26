@@ -107,6 +107,13 @@ public class LodTerrainRenderer : IRenderer
     /// <summary>Sections selected by the walk but skipped this frame as off-screen.</summary>
     public int LastCulledCount { get; private set; }
 
+    /// <summary>Draw opaque sections nearest first so the depth buffer has nearer depth
+    /// before far sections shade. Water keeps traversal order.</summary>
+    public bool OpaqueNearToFar = true;
+
+    /// <summary>Reusable nearest-first ordering for the opaque draw pass.</summary>
+    readonly List<long> opaqueOrder = new();
+
     readonly LodFrustum frustum = new();
     int worldHeight = 1024;
 
@@ -655,6 +662,19 @@ public class LodTerrainRenderer : IRenderer
         return capi.Render.UploadMesh(mesh);
     }
 
+    /// <summary>
+    /// Fill <see cref="opaqueOrder"/> with the current draw list ordered nearest first.
+    /// Water keeps traversal order and is untouched.
+    /// </summary>
+    void OrderOpaqueNearToFar()
+    {
+        opaqueOrder.Clear();
+        opaqueOrder.AddRange(drawList);
+        opaqueOrder.Sort((a, b) =>
+            LodWorld.NearestDistanceSqTo(a, camPos.X, camPos.Z)
+                .CompareTo(LodWorld.NearestDistanceSqTo(b, camPos.X, camPos.Z)));
+    }
+
     // ---- Frame ----
 
     public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
@@ -749,8 +769,12 @@ public class LodTerrainRenderer : IRenderer
 
         phaseStart = LodPhaseCost.Start();
 
-        // Pass 1: opaque terrain.
-        foreach (long key in drawList)
+        // Pass 1: opaque terrain. Nearest-first when the toggle is on, so the depth
+        // buffer has nearer depth before far sections shade. Water keeps traversal
+        // order in pass 2.
+        if (OpaqueNearToFar && drawList.Count > 1) OrderOpaqueNearToFar();
+        List<long> opaqueSource = OpaqueNearToFar ? opaqueOrder : drawList;
+        foreach (long key in opaqueSource)
         {
             if (!sectionMeshes.TryGetValue(key, out MeshRef? mesh)) continue;
             if (!SetupSectionTransform(key, cullDistSq)) continue;
