@@ -610,6 +610,15 @@ public class LodTerrainRenderer : IRenderer
             {
                 long nk = LodWorld.NeighborKey(best, d == 0 ? -1 : d == 1 ? 1 : 0, d == 2 ? -1 : d == 3 ? 1 : 0);
                 if (world.Sections.TryGetValue(nk, out LodSection? nb)) neighbors[d] = SectionSnapshot.Of(nb);
+                else if (world.HasDataSet.Contains(nk))
+                {
+                    // G51: this neighbour has data on disk but is not resident, so the
+                    // mesher will treat the shared edge as the open frontier and wall it.
+                    // Record the edge so the wall is repaired when the neighbour loads.
+                    if (!world.PhantomFrontierEdges.TryGetValue(nk, out HashSet<long>? waiting))
+                        world.PhantomFrontierEdges[nk] = waiting = new HashSet<long>();
+                    waiting.Add(best);
+                }
             }
 
             meshBudget--;

@@ -44,6 +44,14 @@ public class LodWorld
     /// <summary>Every key (all levels) that holds data or has any descendant with data. Drives quadtree descent.</summary>
     public readonly HashSet<long> HasDataSet = new();
 
+    /// <summary>
+    /// G51: sections that meshed an edge against a neighbour that has data on disk but
+    /// was not resident, so the mesher treated it as the open frontier and walled the
+    /// edge. Keyed by the missing neighbour; when that neighbour loads, every section
+    /// listed here must re-mesh so the wall is replaced by real geometry.
+    /// </summary>
+    public readonly Dictionary<long, HashSet<long>> PhantomFrontierEdges = new();
+
     /// <summary>Top-level (MaxLevel) ancestor keys - the quadtree roots.</summary>
     public readonly HashSet<long> TopLevelKeys = new();
 
@@ -174,6 +182,16 @@ public class LodWorld
         // path AND by mip propagation, and the selection walk re-requests a mesh by
         // itself on the next frame if it still wants one here. Marking every arrival
         // would mesh sections that only propagation asked for.
+        //
+        // G51 repair: sections that meshed an edge against this key while it was on
+        // disk but not resident walled that edge as if it were the frontier. Now that
+        // the real geometry is here, re-mesh exactly those sections - not all four
+        // neighbours, which would double warm-join mesh work for nothing.
+        if (PhantomFrontierEdges.TryGetValue(key, out HashSet<long>? waiting))
+        {
+            foreach (long w in waiting) MarkChanged(w);
+            PhantomFrontierEdges.Remove(key);
+        }
     }
 
     /// <summary>
