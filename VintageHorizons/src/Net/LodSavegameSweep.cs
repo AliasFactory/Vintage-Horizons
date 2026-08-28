@@ -93,11 +93,11 @@ public class LodSavegameSweep
         spawnCz = (int)sapi.World.DefaultSpawnPosition.Z / GlobalConstants.ChunkSize;
 
         logger.Notification(
-            "Sweeping the savegame for terrain that already exists, out to {0} blocks around "
-            + "spawn ({1} positions to examine). Nothing is generated: columns that were never "
-            + "visited are skipped, and so are columns on the edge of explored terrain, "
-            + "because loading those would make the engine generate their missing neighbours. "
-            + "Set SweepSavegame to false to disable. Progress every 10%.",
+            "The sweep looks through the savegame for terrain that already exists, out to {0} "
+            + "blocks around spawn ({1} positions to examine). The sweep generates nothing. It "
+            + "skips a column that nobody visited. It also skips a column on the edge of "
+            + "explored terrain, because a load there makes the engine generate the missing "
+            + "neighbors. Set SweepSavegame to false to stop it. Progress every 10%.",
             radiusChunks * GlobalConstants.ChunkSize, ProbeTotal);
 
         listenerId = sapi.Event.RegisterGameTickListener(_ => Step(), 1000);
@@ -146,7 +146,7 @@ public class LodSavegameSweep
         reported = 0;
         logger.Notification(
             "Savegame sweep: {0} of {1} positions hold generated terrain. Loading those with a "
-            + "complete neighbourhood.", exists.Count, ProbeTotal);
+            + "complete neighborhood.", exists.Count, ProbeTotal);
     }
 
     void StepLoad()
@@ -208,7 +208,7 @@ public class LodSavegameSweep
             logger.Warning(
                 "Savegame sweep: {0} of {1} sampled positions that did not exist before the "
                 + "sweep now exist. The sweep must generate nothing, so worldgen on this "
-                + "server reaches further than the measured safe neighbourhood - a worldgen "
+                + "server reaches further than the measured safe neighborhood - a worldgen "
                 + "mod is the likely cause. Consider SweepSavegame: false here, and please "
                 + "report this.", verified.Regrown, verified.Checked);
         }

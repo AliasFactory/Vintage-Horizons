@@ -56,7 +56,8 @@ public static class LodMip
 
                 ulong[] merged = MergeColumns(child.Runs, colStart, colEnd, captured);
 
-                // Remap child palette ids to the parent palette.
+                // A palette id is meaningful only inside the section that holds it, so a
+                // child's ids say nothing in the parent and every run has to be remapped.
                 for (int i = 0; i < merged.Length; i++)
                 {
                     int cpid = LodSection.RunPaletteId(merged[i]);
@@ -145,7 +146,9 @@ public static class LodMip
 
             if (covering < majority) continue;
 
-            // Merge with the previous run when contiguous and same block.
+            // Runs must stay maximal, not only gap-free. A downsample that emits one run
+            // per slice keeps the geometry correct and multiplies the stored run count by
+            // the number of slices, which the mesher then pays for again per section.
             if (result.Count > 0)
             {
                 ulong prev = result[^1];

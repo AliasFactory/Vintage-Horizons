@@ -8,9 +8,9 @@ set -euo pipefail
 # logs say happened. Then restarts against the warm cache, which is the only way to
 # check that what was written can be read back.
 #
-# Everything here goes through the existing test-*.sh isolation plumbing unchanged.
-# Those rules are safety-critical - a violation once crashed the user's live game -
-# and this script is a caller, never a modification.
+# Everything here goes through the existing test-*.sh isolation code unchanged.
+# Those rules are safety-critical - a violation once killed an unrelated running
+# game process - and this script is a caller, never a modification.
 #
 # Usage: check-smoke.sh [--settle <seconds>]
 

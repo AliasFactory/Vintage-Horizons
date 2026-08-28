@@ -4,11 +4,11 @@ set -euo pipefail
 # Sandboxed Vintage Story CLIENT for VintageHorizons testing.
 #
 # Isolation guarantees (all of them matter - each one exists because its absence failed):
-#  - Own dataPath (.testdata): never touches the user's real game data.
+#  - Own dataPath (.testdata): never touches a real game data directory.
 #  - Own TMPDIR: the game's single-instance pipe (CoreFxPipe_SingleInstance
-#    VintageStoryWithUriScheme) lives in $TMPDIR. Without this, launching with
+#    VintageStoryWithUriScheme) lives in $TMPDIR. Without this, a launch with
 #    -c FORWARDS the connect request into whatever VS instance is already
-#    running - including the user's personal game - and exits silently.
+#    running - any instance, not only a sandbox one - and exits silently.
 #  - PID from $! in a pidfile, and every stop verifies /proc/<pid>/cmdline names
 #    the sandbox before signalling. Stop ONLY via scripts/test-stop.sh; never
 #    locate test instances by process name or argument matching.

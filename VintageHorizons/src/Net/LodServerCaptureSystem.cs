@@ -234,7 +234,7 @@ public class LodServerCaptureSystem : ModSystem
             .RequiresPrivilege(Privilege.controlserver)
             .HandleWith(_ => TextCommandResult.Success(GenerateStatusLine()))
             .BeginSubCommand("start")
-                .WithDescription("Start a run centred on you, or on x z when given")
+                .WithDescription("Start a run centered on you, or on x z when given")
                 .WithArgs(
                     parsers.OptionalIntRange("radius",
                         1, Math.Max(1, Config.GenerateMaxRadiusChunks), Config.GenerateDefaultRadiusChunks),
@@ -293,7 +293,7 @@ public class LodServerCaptureSystem : ModSystem
 
     const string BothCoordinates =
         "[VintageHorizons] Give both coordinates or neither. With neither, the run "
-        + "centres on you.";
+        + "centers on you.";
 
     TextCommandResult OnGenerateDiff(TextCommandCallingArgs args)
     {
@@ -368,7 +368,7 @@ public class LodServerCaptureSystem : ModSystem
         {
             return TextCommandResult.Error(
                 "[VintageHorizons] Give both coordinates or neither: /vhgen start "
-                + $"{radius} <x> <z>. With neither, the run centres on you.");
+                + $"{radius} <x> <z>. With neither, the run centers on you.");
         }
 
         bool aimed = centre == LodPlayerPregen.EnumCentre.Argument;

@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # Shared plumbing for the sandbox test launchers. Sourced, never executed.
 #
-# The isolation rules below are safety-critical (a violation once crashed the
-# user's live game); keeping them in ONE place is deliberate, so a fix can't be
-# applied to the client launcher and forgotten in the server launcher.
+# The isolation rules below are safety-critical. A violation once killed an
+# unrelated running game process. They live in ONE place on purpose, so a fix
+# cannot reach the client launcher and miss the server launcher.
 
 VH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VH_SANDBOX="$VH_ROOT/.testdata"
 VH_GAME="${VINTAGE_STORY:-$HOME/Games/vintagestory1.22.7}"
 
-# The desktop launcher's DOTNET_ROOT (~/.dotnet) is stale on this machine, but a
-# caller who sets it deliberately must win - same contract as dev-run.sh.
+# The desktop launcher can set a stale DOTNET_ROOT, so this pins the system-wide
+# SDK. A caller who sets it deliberately must win - same contract as dev-run.sh.
 export DOTNET_ROOT="${DOTNET_ROOT:-/usr/share/dotnet}"
 
-# True only if <pid> is live AND its command line runs against our sandbox
+# True only if <pid> is live AND its command line runs against the sandbox
 # dataPath. Liveness alone is not enough: a crashed instance leaves its pidfile
-# behind and the kernel recycles PIDs, so a stale pidfile can point at an
-# unrelated process - possibly the user's own game.
+# behind and the kernel recycles PIDs, so a stale pidfile can point at any
+# unrelated process, including another game.
 vh_is_ours() {
     local pid="$1"
     [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]] || return 1

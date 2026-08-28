@@ -176,7 +176,7 @@ public class LodPeekDiff
     {
         if (!peeked.TryGetValue(LodColumnMap.Key(centreCx, centreCz), out IServerChunk[]? centre))
         {
-            report("the centre column never came back from the peek");
+            report("the center column never came back from the peek");
             return;
         }
 
@@ -206,7 +206,7 @@ public class LodPeekDiff
         IWorldChunk?[]? loadedChunks = LoadedColumn(centreCx, centreCz);
         if (loadedChunks == null)
         {
-            report("the centre column did not become resident after loading");
+            report("the center column did not become resident after loading");
             return;
         }
 

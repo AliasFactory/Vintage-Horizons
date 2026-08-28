@@ -5,16 +5,26 @@ Written when a version is released, not when a commit lands - see
 
 ## [Unreleased]
 
-**Fixed: chiselled blocks drew as one flat wrong colour in the distance.** Reported as
-purple. A chiselled block's colour lives in its block entity, and only a probe at the
-block's exact position finds it - the world map colours chisel work the same way. The
-LOD colour probe asked at a stand-in position, the centre of the chunk column, found no
+**The mod now removes the game's edge fade in front of LOD terrain.** The game fades
+terrain to the fog color as the terrain nears the view distance. With LOD terrain behind
+that edge, the fade turns a clean boundary into a blue band. Two field reports named it.
+The mod moves that fade past everything the game draws, but only in a frame where it
+draws LOD terrain. In a frame with none, the fade stays and hides the bare chunk edges.
+`.vhfog off` gives you the game's own look again. If you have the DeFog mod, DeFog
+removes the fade and this mod adds no patch of its own.
+
+## [0.2.1] - 2026-08-15
+
+**Fixed: chiseled blocks drew as one flat wrong color in the distance.** Reported as
+purple. A chiseled block's color lives in its block entity, and only a probe at the
+block's exact position finds it - the world map colors chisel work the same way. The
+LOD color probe asked at a stand-in position, the center of the chunk column, found no
 block entity there, and fell through to the placeholder texture. So every chisel in a
-section took the placeholder's colour. The probe now uses the block's own position, and
-distant chisel work takes the materials it is made of. Chiselled terrain that came from
+section took the placeholder's color. The probe now uses the block's own position, and
+distant chisel work takes the materials it is made of. Chiseled terrain that came from
 a server or from transient generation has no block entity to read. That now draws a
-neutral grey instead of the placeholder colour. Ground already cached with the wrong
-colour corrects itself when you visit it again.
+neutral gray instead of the placeholder color. Ground already cached with the wrong
+color corrects itself when you visit it again.
 
 **Fixed: reloading a singleplayer world crashed with "cache file not writable".** When
 you left a world, the mod parked an open handle to the server-side cache in a connection
@@ -32,21 +42,21 @@ pairing promises: more dramatic terrain, visible from further away. Reported fro
 field.
 
 **Fixed: patches of distant terrain were solid black, and stayed black.** A server has
-no texture atlas, so it stores no colour, and the client adds the colour on arrival. The
-client also saves what it receives. So anything that stopped the colour step went to the
-cache without colour and stayed there. That ground drew as pure black for as long as
+no texture atlas, so it stores no color, and the client adds the color on arrival. The
+client also saves what it receives. So anything that stopped the color step went to the
+cache without color and stayed there. That ground drew as pure black for as long as
 that world existed.
 
 What stopped it was a block code that failed to resolve. The mod kept that answer for
 the rest of the session, and the lookup runs while a world still starts. So when one
-common block lost that race, every section saved after it had no colour at all. The
-measurement on a real world found 7 sections with no colour anywhere and 59 more in
+common block lost that race, every section saved after it had no color at all. The
+measurement on a real world found 7 sections with no color anywhere and 59 more in
 patches, on ground as ordinary as soil, slate and tall grass.
 
 The mod no longer keeps a failed lookup, and tries the code again instead. Sections that
-were saved without colour get their colour from the texture atlas as they load, and the
+were saved without color get their color from the texture atlas as they load, and the
 mod writes them back. So a cache repairs itself as you play, and nothing is discarded. A
-block that this game does not have now draws as plain grey, and the log names both the
+block that this game does not have now draws as plain gray, and the log names both the
 count and the block codes. A black patch with no explanation cannot occur again.
 
 **Fixed: joining a server before its cache existed switched the assist off for the whole
@@ -65,6 +75,33 @@ that the server held for hours, and a relog was the only cure. A sweep that fini
 late did the same, and so did other players who explored. The server now offers what it
 gained every few seconds, and `/vhserver` reports how many of those follow-up offers it
 sent.
+
+**Fixed: a section requested too early was lost for the rest of the session.** The
+server answers every request, but it refused with the same empty packet both when it
+will never have that section and when it simply did not write it yet. The client read
+both answers as "never" and stopped asking. A server that sweeps or runs `/vhgen` is in
+the "not yet" state all the time, so a player who joined in the middle of a run gave up
+on sections whose data arrived seconds later. The two answers are now distinct, and the
+client retries "not yet" a bounded number of times. An older client ignores the new
+field and keeps the behavior it had.
+
+**Fixed: short freezes while exploring with a cold cache.** A capture that landed on a
+section no longer in memory read and decompressed that section inline, on the game
+tick. The worst measured case took 113 ms, which is more than two whole game ticks.
+Capture now waits for the section to load in the background, and results apply in
+order when it arrives.
+
+**Faster.** Flat water broke into one rectangle per depth step of the seabed under it,
+because the merge grouped surface quads by a depth they never draw. A flat sea now
+collapses the way the mesher always intended: water quads over a sloping seabed went
+from 602 to 35, with identical geometry on screen. Opening a world with a large cache
+now reads only the keys it needs - 931 ms down to 13 ms on a 691 MB cache. The
+singleplayer client now asks the server-side cache what it holds once a second, not
+twice a frame, which cost up to 105 ms of main-thread time per second on a large
+world. The renderer's per-frame walk drops a square root and a logarithm per node. The
+sky color is computed only for the horizon ring that uses it. And meshing a section
+stops allocating 241 KB of scratch buffers - simple terrain now allocates less than
+1 KB.
 
 **Fixed: another LOD mod that is switched off no longer switches this one off too.**
 0.2.0 went idle whenever Farseer, ChunkLOD, Vistas Beyond or TopoHorizon was loaded. On a server that
@@ -112,7 +149,7 @@ repo's test matrix. The check regimen also asserts, byte for byte, that an all-p
 leaves the savegame's terrain tables identical.
 
 The sample keeps clear of online players, because the engine generates terrain around a
-player as ordinary play. A run centred on a player therefore still measures something,
+player as ordinary play. A run centered on a player therefore still measures something,
 instead of reporting "Verified 0/0".
 
 **Fixed: a client can stop receiving terrain for the rest of a session.** A server
@@ -137,7 +174,7 @@ never again. The cache-format purge also reports how many sections it discards, 
 of deleting them in silence.
 
 **Stays out of the way of other LOD mods.** With Farseer, ChunkLOD, Vistas Beyond or
-TopoHorizon loaded, this mod now goes idle. Two LOD mods would fight for the camera far
+TopoHorizon loaded, this mod now goes idle. Two LOD mods both set the camera far
 plane and draw over each other. A server that runs one of those forces it onto every
 client, while this mod stays optional, so this is the one that yields. `.vhinfo`
 reports the idle state and names the mod it defers to.
@@ -175,8 +212,8 @@ faster fill-in at the same load.
 **Fixed:**
 - LOD regions got permanently stuck coarse, with a hard, unmoving edge between detailed
   and blocky terrain. A wrong "does the server have this" check misfired on ancestor keys.
-- LOD colour sometimes resolved to the wrong texture, on a block whose first texture has
-  no baked colour. Confirmed on vanilla `fruitingbush-wild-blackberry`, and reported
+- LOD color sometimes resolved to the wrong texture, on a block whose first texture has
+  no baked color. Confirmed on vanilla `fruitingbush-wild-blackberry`, and reported
   against a modded world.
 - A false "discarding your cache" message appeared on every new install.
 - Singleplayer ran two redundant copies of the whole pipeline in one process.
@@ -196,5 +233,5 @@ showed through. And an unbounded scheduler loop turned one frame into a six-figu
 Initial release. Unlimited render distance, decoupled from the vanilla view-distance
 slider. Real 3D terrain, not a heightmap: mountains, overhangs, cave mouths, forests, and
 player builds all appear at distance. Translucent water over lake and sea floors. Live
-seasonal colour and a derived snow line. Persistent per-world cache that keeps growing as
+seasonal color and a derived snow line. Persistent per-world cache that keeps growing as
 you play. Fully client-side, works on any server.
