@@ -112,7 +112,7 @@ public class LodPipeline
         this.logger = logger;
         this.describePalette = describePalette;
         this.tintSlotFor = tintSlotFor ?? (_ => 0);
-        World = new LodWorld();
+        World = new LodWorld { Logger = logger };
         Worker = new LodWorker();
         Remote = new LodRemoteKeySet(World);
     }

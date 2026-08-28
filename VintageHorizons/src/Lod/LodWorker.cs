@@ -115,6 +115,10 @@ public class MipResult
     public required byte[] PaletteFlags;
     public required byte[] PaletteTintSlots;
     public required int[] PaletteBlockIds;
+
+    /// <summary>True when the worker could not downsample this child. The apply side
+    /// uses the key fields only: it clears the in-flight bookkeeping and re-queues.</summary>
+    public bool Failed;
 }
 
 /// <summary>
@@ -258,9 +262,28 @@ public class LodWorker : IDisposable
                 }
                 catch (Exception e)
                 {
-                    // Snapshot inconsistency; the child re-queues on its next change.
+                    // Enqueue a failed result so the apply side can clear the in-flight
+                    // bookkeeping and re-queue the child. Swallowing without a result
+                    // leaves the key in mipJobsInFlight forever: the child is never
+                    // propagated again and is pinned in RAM for the rest of the session.
                     Interlocked.Increment(ref MeshErrors);
                     Interlocked.CompareExchange(ref FirstMeshError, e.ToString(), null);
+                    MipResults.Enqueue(new MipResult
+                    {
+                        ChildKey = mip.ChildKey,
+                        ParentKey = mip.ParentKey,
+                        Qx = mip.Qx,
+                        Qz = mip.Qz,
+                        ChildRevision = mip.ChildRevision,
+                        Runs = Array.Empty<ulong>(),
+                        ColumnStart = Array.Empty<int>(),
+                        Captured = Array.Empty<bool>(),
+                        PaletteColors = Array.Empty<int>(),
+                        PaletteFlags = Array.Empty<byte>(),
+                        PaletteTintSlots = Array.Empty<byte>(),
+                        PaletteBlockIds = Array.Empty<int>(),
+                        Failed = true,
+                    });
                 }
                 continue;
             }

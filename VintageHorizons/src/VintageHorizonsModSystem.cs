@@ -869,6 +869,7 @@ public class VintageHorizonsModSystem : ModSystem
         loggedLocalOffers = false;
         pipeline.Close();
         while (pipeline.Worker.MeshResults.TryDequeue(out _)) { }
+        while (pipeline.Worker.MipResults.TryDequeue(out _)) { }
         renderer.ClearMeshes();
     }
 
