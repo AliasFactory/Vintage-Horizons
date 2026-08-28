@@ -439,7 +439,18 @@ JSON
     sleep 15
     "$VH_ROOT/scripts/test-stop.sh" server >/dev/null 2>&1 || true
     vh_wait_stopped "$VH_SANDBOX/server/server.pid" 180 || true
+    # Take the baseline twice with a settle between, and require both to agree: a
+    # fresh boot can still be checkpointing the previous scenario's edits out of the
+    # WAL, so a single early snapshot once measured churn that later flush produced
+    # and the scenario failed with identical table counts and a different content
+    # hash. Two agreeing reads prove the file has quiesced before it is measured.
     before="$(save_state "$save")"
+    for _ in 1 2 3 4 5; do
+        sleep 5
+        settled="$(save_state "$save")"
+        [[ "$settled" == "$before" ]] && break
+        before="$settled"
+    done
 
     # Session 2: generate 32,000 blocks from spawn - land no session has touched.
     start_server
