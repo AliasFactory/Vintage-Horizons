@@ -881,6 +881,18 @@ public class LodTerrainRenderer : IRenderer
         waterMeshes.Clear();
         meshJobInFlight.Clear();
         lastSelectedFrame.Clear();
+
+        // Per-world render state: the next world must force a fresh far-edge scan
+        // instead of inheriting this one's, and the quantized far plane restarts from
+        // its floor rather than stepping down from the old world's distance for the
+        // next few seconds.
+        meshGeomVersion++;
+        lastFarScanVersion = -1;
+        lastFarScanCamX = lastFarScanCamZ = 0;
+        stableProjectionZFar = 3000 + StableProjectionStep;
+        stableProjectionHoldMsLeft = 0;
+        lastStableProjectionClock = 0;
+        appliedZFar = 0;
     }
 
     public void Dispose()
