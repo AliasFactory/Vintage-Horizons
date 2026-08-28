@@ -221,12 +221,16 @@ public class LodTerrainRenderer : IRenderer
         float needed = GameMath.Max(3000, EffectiveFarDistance + 512);
         var clientMain = (ClientMain)capi.World;
 
-        // Grow immediately to the step that covers the needed distance.
+        // Grow immediately to the step that covers the needed distance. The hold is
+        // armed on grow too: with it at zero, the very next recessive frame would step
+        // straight back down, oscillating between adjacent steps while the camera
+        // straddles the far edge - the exact pull-back the hold exists to prevent.
         int neededStep = (int)Math.Ceiling(needed / StableProjectionStep) * StableProjectionStep;
         if (neededStep > stableProjectionZFar)
         {
             stableProjectionZFar = neededStep;
-            stableProjectionHoldMsLeft = 0;
+            stableProjectionHoldMsLeft = StableProjectionHoldMs;
+            lastStableProjectionClock = capi.World.ElapsedMilliseconds;
         }
         else if (neededStep < stableProjectionZFar)
         {
@@ -234,8 +238,12 @@ public class LodTerrainRenderer : IRenderer
             // distance, so a camera that briefly exposes more far terrain does not
             // pull the plane back and forth.
             long now = capi.World.ElapsedMilliseconds;
-            if (lastStableProjectionClock != 0)
-                stableProjectionHoldMsLeft -= (int)(now - lastStableProjectionClock);
+            // Clamp the delta: this value resets on world load while the renderer (and
+            // its clock field) outlive worlds, so an unclamped subtraction could
+            // inflate the hold by the previous session's elapsed time.
+            long delta = lastStableProjectionClock == 0 ? 0
+                : Math.Max(0, now - lastStableProjectionClock);
+            stableProjectionHoldMsLeft -= (int)delta;
             lastStableProjectionClock = now;
             if (stableProjectionHoldMsLeft <= 0)
             {
@@ -781,8 +789,16 @@ public class LodTerrainRenderer : IRenderer
         // Pass 1: opaque terrain. Nearest-first when the toggle is on, so the depth
         // buffer has nearer depth before far sections shade. Water keeps traversal
         // order in pass 2.
-        if (OpaqueNearToFar && drawList.Count > 1) OrderOpaqueNearToFar();
-        List<long> opaqueSource = OpaqueNearToFar ? opaqueOrder : drawList;
+        //
+        // With one or fewer sections there is nothing to order, and reusing the
+        // previous frame's list would draw a stale section (the walk collapsed after
+        // that list was built). Refresh whenever there is at least one section.
+        if (OpaqueNearToFar && drawList.Count > 0)
+        {
+            if (drawList.Count > 1) OrderOpaqueNearToFar();
+            else { opaqueOrder.Clear(); opaqueOrder.Add(drawList[0]); }
+        }
+        List<long> opaqueSource = OpaqueNearToFar && drawList.Count > 0 ? opaqueOrder : drawList;
         foreach (long key in opaqueSource)
         {
             if (!sectionMeshes.TryGetValue(key, out MeshRef? mesh)) continue;
