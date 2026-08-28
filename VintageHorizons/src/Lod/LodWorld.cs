@@ -28,6 +28,9 @@ public class LodWorld
 
     public readonly Dictionary<long, LodSection> Sections = new();
 
+    /// <summary>Set by the pipeline; null in tests. Used for one-shot warnings only.</summary>
+    public Vintagestory.API.Common.ILogger Logger;
+
     /// <summary>Set by the coordinator when persistence is available: reload an evicted section from disk.</summary>
     public Func<long, LodSection?>? LoadFromStore;
 
@@ -105,12 +108,13 @@ public class LodWorld
             section = LoadFromStore?.Invoke(key);
             if (section != null)
             {
-                Sections[key] = section;
+                InstallSection(key, section);
                 return section;
             }
         }
 
-        Sections[key] = section = new LodSection();
+        section = new LodSection();
+        InstallSection(key, section);
         LoadFailed.Remove(key); // it has data again; a past miss must not block reloads
         RegisterInTree(key);
         return section;
@@ -125,7 +129,8 @@ public class LodWorld
         LodSection? loaded = LoadFromStore?.Invoke(key);
         if (loaded == null) return false;
 
-        Sections[key] = section = loaded;
+        InstallSection(key, loaded);
+        section = loaded;
         return true;
     }
 
@@ -173,21 +178,33 @@ public class LodWorld
         if (section == null)
         {
             LoadFailed.Add(key);
+
+            // This key will never become resident this session (row missing or
+            // unreadable), so any wall meshed against it can never be repaired. Drop
+            // the waiters: keeping them would grow the dictionary forever and fire
+            // repairs at a ghost.
+            PhantomFrontierEdges.Remove(key);
             return;
         }
         if (Sections.ContainsKey(key)) return;
-
-        Sections[key] = section;
 
         // Deliberately not marked render-dirty: reloads are requested by the render
         // path AND by mip propagation, and the selection walk re-requests a mesh by
         // itself on the next frame if it still wants one here. Marking every arrival
         // would mesh sections that only propagation asked for.
-        //
-        // G51 repair: sections that meshed an edge against this key while it was on
-        // disk but not resident walled that edge as if it were the frontier. Now that
-        // the real geometry is here, re-mesh exactly those sections - not all four
-        // neighbours, which would double warm-join mesh work for nothing.
+        InstallSection(key, section);
+    }
+
+    /// <summary>
+    /// One entry point for every way a section becomes resident, so the G51 repair can
+    /// never be bypassed: sections that meshed an edge against this key while it was on
+    /// disk but not resident walled that edge as if it were the frontier. Now that the
+    /// real geometry is here, re-mesh exactly those sections - not all four neighbours,
+    /// which would double warm-join mesh work for nothing.
+    /// </summary>
+    void InstallSection(long key, LodSection section)
+    {
+        Sections[key] = section;
         if (PhantomFrontierEdges.TryGetValue(key, out HashSet<long>? waiting))
         {
             foreach (long w in waiting) MarkChanged(w);
@@ -332,6 +349,10 @@ public class LodWorld
     /// child does not pile up duplicate jobs.</summary>
     readonly HashSet<long> mipJobsInFlight = new();
 
+    /// <summary>G7: how many times each child's mip job failed, to bound retries.</summary>
+    readonly Dictionary<long, int> mipFailAttempts = new();
+    const int MaxMipFailAttempts = 8;
+
     public void ProcessPropagation(int maxSections)
     {
         if (MipDirty.Count == 0) return;
@@ -357,28 +378,28 @@ public class LodWorld
 
             if (!Sections.TryGetValue(childKey, out LodSection? child) || child.CapturedColumns == 0) continue;
 
+            // Guard before any bookkeeping: if the pipeline never wired the mip hook
+            // (store open failed, test host), taking the key out of MipDirty here would
+            // drop the propagation AND strand it in mipJobsInFlight. Leaving it in
+            // MipDirty means a later tick retries once the hook exists.
+            if (RequestMip == null) continue;
+
             // Snapshot the child and hand the downsample to the worker. The revision
             // is captured here; the apply side discards the result if the child moved
             // on before the work landed (G7).
             MipDirty.Remove(childKey);
             SaveDirty.Add(childKey); // persist the cleared ApplyToParent flag
             mipJobsInFlight.Add(childKey);
-            EnqueueMipJob(childKey, parentKey, child);
+            RequestMip(new MipJob
+            {
+                ChildKey = childKey,
+                ParentKey = parentKey,
+                Qx = KeySx(childKey) & 1,
+                Qz = KeySz(childKey) & 1,
+                ChildRevision = child.Revision,
+                Child = SectionSnapshot.Of(child),
+            });
         }
-    }
-
-    void EnqueueMipJob(long childKey, long parentKey, LodSection child)
-    {
-        if (RequestMip == null) return;
-        RequestMip(new MipJob
-        {
-            ChildKey = childKey,
-            ParentKey = parentKey,
-            Qx = KeySx(childKey) & 1,
-            Qz = KeySz(childKey) & 1,
-            ChildRevision = child.Revision,
-            Child = SectionSnapshot.Of(child),
-        });
     }
 
     /// <summary>G7: apply finished mip results, discarding any whose child moved on.</summary>
@@ -388,6 +409,29 @@ public class LodWorld
         while (MipResults.TryDequeue(out MipResult? result))
         {
             mipJobsInFlight.Remove(result.ChildKey);
+
+            // The worker could not downsample this child (corrupt data, snapshot
+            // inconsistency). Clear the in-flight bookkeeping (done above) and re-queue
+            // with a bounded retry count, so a transient failure does not pin the
+            // section in RAM forever while a permanent one stops hammering the worker.
+            if (result.Failed)
+            {
+                int attempts = mipFailAttempts.TryGetValue(result.ChildKey, out int n) ? n : 0;
+                if (attempts < MaxMipFailAttempts)
+                {
+                    mipFailAttempts[result.ChildKey] = attempts + 1;
+                    MipDirty.Add(result.ChildKey);
+                }
+                else
+                {
+                    mipFailAttempts.Remove(result.ChildKey);
+                    Logger?.Warning(
+                        "VintageHorizons: mip propagation for section {0} failed {1} times; giving up for this session.",
+                        result.ChildKey, attempts);
+                }
+                continue;
+            }
+            mipFailAttempts.Remove(result.ChildKey);
 
             // Revision validation: if the child changed since the snapshot, this
             // result is stale - re-queue the child so the newer data propagates.
@@ -482,5 +526,13 @@ public class LodWorld
         TopLevelKeys.Clear();
         LoadsInFlight.Clear();
         LoadFailed.Clear();
+
+        // G7/G51 async bookkeeping is per-world state and must not survive into the
+        // next world: a key stranded in flight would permanently block the same
+        // coordinates, and stale phantom-frontier waiters would fire repairs into the
+        // new world for old-world keys.
+        mipJobsInFlight.Clear();
+        mipFailAttempts.Clear();
+        PhantomFrontierEdges.Clear();
     }
 }
