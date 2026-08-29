@@ -28,7 +28,7 @@ public class LodWorld
 
     public readonly Dictionary<long, LodSection> Sections = new();
 
-    /// <summary>Set by the pipeline; null in tests. Used for one-shot warnings only.</summary>
+    /// <summary>Set by the pipeline. Null in tests. Used for one-shot warnings only.</summary>
     public Vintagestory.API.Common.ILogger Logger;
 
     /// <summary>Set by the coordinator when persistence is available: reload an evicted section from disk.</summary>
@@ -49,9 +49,9 @@ public class LodWorld
     public readonly HashSet<long> HasDataSet = new();
 
     /// <summary>
-    /// G51: sections that meshed an edge against a neighbour that has data on disk but
+    /// G51: sections that meshed an edge against a neighbor that has data on disk but
     /// was not resident, so the mesher treated it as the open frontier and walled the
-    /// edge. Keyed by the missing neighbour; when that neighbour loads, every section
+    /// edge. Keyed by the missing neighbor. When that neighbor loads, every section
     /// listed here must re-mesh so the wall is replaced by real geometry.
     /// </summary>
     public readonly Dictionary<long, HashSet<long>> PhantomFrontierEdges = new();
@@ -181,7 +181,7 @@ public class LodWorld
 
             // This key will never become resident this session (row missing or
             // unreadable), so any wall meshed against it can never be repaired. Drop
-            // the waiters: keeping them would grow the dictionary forever and fire
+            // the waiters: a kept waiter grows the dictionary forever and fires
             // repairs at a ghost.
             PhantomFrontierEdges.Remove(key);
             return;
@@ -199,8 +199,8 @@ public class LodWorld
     /// One entry point for every way a section becomes resident, so the G51 repair can
     /// never be bypassed: sections that meshed an edge against this key while it was on
     /// disk but not resident walled that edge as if it were the frontier. Now that the
-    /// real geometry is here, re-mesh exactly those sections - not all four neighbours,
-    /// which would double warm-join mesh work for nothing.
+    /// real geometry is here, re-mesh exactly those sections - not all four neighbors,
+    /// which doubles warm-join mesh work for nothing.
     /// </summary>
     void InstallSection(long key, LodSection section)
     {
@@ -379,13 +379,13 @@ public class LodWorld
             if (!Sections.TryGetValue(childKey, out LodSection? child) || child.CapturedColumns == 0) continue;
 
             // Guard before any bookkeeping: if the pipeline never wired the mip hook
-            // (store open failed, test host), taking the key out of MipDirty here would
-            // drop the propagation AND strand it in mipJobsInFlight. Leaving it in
+            // (store open failed, test host), taking the key out of MipDirty here
+            // drops the propagation AND strands it in mipJobsInFlight. Leaving it in
             // MipDirty means a later tick retries once the hook exists.
             if (RequestMip == null) continue;
 
             // Snapshot the child and hand the downsample to the worker. The revision
-            // is captured here; the apply side discards the result if the child moved
+            // is captured here. The apply side discards the result if the child moved
             // on before the work landed (G7).
             MipDirty.Remove(childKey);
             SaveDirty.Add(childKey); // persist the cleared ApplyToParent flag
@@ -410,7 +410,7 @@ public class LodWorld
         {
             mipJobsInFlight.Remove(result.ChildKey);
 
-            // The worker could not downsample this child (corrupt data, snapshot
+            // The worker failed to downsample this child (corrupt data, snapshot
             // inconsistency). Clear the in-flight bookkeeping (done above) and re-queue
             // with a bounded retry count, so a transient failure does not pin the
             // section in RAM forever while a permanent one stops hammering the worker.
@@ -528,8 +528,8 @@ public class LodWorld
         LoadFailed.Clear();
 
         // G7/G51 async bookkeeping is per-world state and must not survive into the
-        // next world: a key stranded in flight would permanently block the same
-        // coordinates, and stale phantom-frontier waiters would fire repairs into the
+        // next world: a key stranded in flight permanently blocks the same
+        // coordinates, and stale phantom-frontier waiters fire repairs into the
         // new world for old-world keys.
         mipJobsInFlight.Clear();
         mipFailAttempts.Clear();

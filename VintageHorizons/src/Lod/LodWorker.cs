@@ -116,7 +116,7 @@ public class MipResult
     public required byte[] PaletteTintSlots;
     public required int[] PaletteBlockIds;
 
-    /// <summary>True when the worker could not downsample this child. The apply side
+    /// <summary>True when the worker fails to downsample this child. The apply side
     /// uses the key fields only: it clears the in-flight bookkeeping and re-queues.</summary>
     public bool Failed;
 }
@@ -253,7 +253,7 @@ public class LodWorker : IDisposable
 
             // Mip jobs first: they are small and keep the parent sections current,
             // which the mesh jobs then read. Both are snapshot-based, so either order
-            // is safe; this one just converges faster.
+            // is safe. This order converges faster.
             if (mipJobs.TryDequeue(out MipJob? mip))
             {
                 try
@@ -305,7 +305,7 @@ public class LodWorker : IDisposable
 
     /// <summary>
     /// G7: downsample a child snapshot into a fresh parent section, off the game
-    /// thread. The result carries the child revision it was read at; the apply side
+    /// thread. The result carries the child revision it was read at. The apply side
     /// discards it if the child moved on. The parent is built fresh here and merged
     /// into the live parent on apply, so no live section is touched off-thread.
     /// </summary>

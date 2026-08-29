@@ -222,7 +222,7 @@ public class LodTerrainRenderer : IRenderer
         var clientMain = (ClientMain)capi.World;
 
         // Grow immediately to the step that covers the needed distance. The hold is
-        // armed on grow too: with it at zero, the very next recessive frame would step
+        // armed on grow too: with it at zero, the very next recessive frame steps
         // straight back down, oscillating between adjacent steps while the camera
         // straddles the far edge - the exact pull-back the hold exists to prevent.
         int neededStep = (int)Math.Ceiling(needed / StableProjectionStep) * StableProjectionStep;
@@ -239,8 +239,8 @@ public class LodTerrainRenderer : IRenderer
             // pull the plane back and forth.
             long now = capi.World.ElapsedMilliseconds;
             // Clamp the delta: this value resets on world load while the renderer (and
-            // its clock field) outlive worlds, so an unclamped subtraction could
-            // inflate the hold by the previous session's elapsed time.
+            // its clock field) outlive worlds, so an unclamped subtraction
+            // inflates the hold by the previous session's elapsed time.
             long delta = lastStableProjectionClock == 0 ? 0
                 : Math.Max(0, now - lastStableProjectionClock);
             stableProjectionHoldMsLeft -= (int)delta;
@@ -620,9 +620,9 @@ public class LodTerrainRenderer : IRenderer
                 if (world.Sections.TryGetValue(nk, out LodSection? nb)) neighbors[d] = SectionSnapshot.Of(nb);
                 else if (world.HasDataSet.Contains(nk))
                 {
-                    // G51: this neighbour has data on disk but is not resident, so the
+                    // G51: this neighbor has data on disk but is not resident, so the
                     // mesher will treat the shared edge as the open frontier and wall it.
-                    // Record the edge so the wall is repaired when the neighbour loads.
+                    // Record the edge so the wall is repaired when the neighbor loads.
                     if (!world.PhantomFrontierEdges.TryGetValue(nk, out HashSet<long>? waiting))
                         world.PhantomFrontierEdges[nk] = waiting = new HashSet<long>();
                     waiting.Add(best);
@@ -799,9 +799,9 @@ public class LodTerrainRenderer : IRenderer
         // buffer has nearer depth before far sections shade. Water keeps traversal
         // order in pass 2.
         //
-        // With one or fewer sections there is nothing to order, and reusing the
-        // previous frame's list would draw a stale section (the walk collapsed after
-        // that list was built). Refresh whenever there is at least one section.
+        // With one or fewer sections there is nothing to order. The list from the
+        // previous frame draws a stale section (the walk collapsed after that list
+        // was built). Refresh whenever there is at least one section.
         if (OpaqueNearToFar && drawList.Count > 0)
         {
             if (drawList.Count > 1) OrderOpaqueNearToFar();
@@ -875,8 +875,8 @@ public class LodTerrainRenderer : IRenderer
     int culledThisFrame;
 
     /// <summary>
-    /// Whether the neighbouring section holds (or covers) data. Checked at the drawn
-    /// section's own level: a coarse section's neighbour is coarse too, and its
+    /// Whether the neighboring section holds (or covers) data. Checked at the drawn
+    /// section's own level: a coarse section's neighbor is coarse too, and its
     /// presence in HasDataSet means something in that subtree was captured.
     /// </summary>
     bool HasNeighbourData(long key, int dx, int dz) =>

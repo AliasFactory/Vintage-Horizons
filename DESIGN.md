@@ -517,10 +517,10 @@ in the release that actually serves terrain.
 
 ## 11. Known issues
 
-**Wrong LOD colour for blocks whose block-colour texture did not resolve.** Reported by a
+**Wrong LOD color for blocks whose block-color texture did not resolve.** Reported by a
 player running Conquest Reforged + Better Ruins: blocks look correct up close but wrong at
 LOD distance. Partly fixed - `DescribePalette` now rejects an unusable atlas sub-id (out of
-range, or an unassigned `Positions` entry) and the unknown.png average, and falls back to
+range, or an unassigned `Positions` entry) and the unknown.png average. It falls back to
 any other baked texture the block owns, cached per block id.
 
 Root cause is in vanilla, not in the mods: `Block.LoadTextureSubIdForBlockColor` tries the
@@ -533,8 +533,8 @@ block looks right up close and wrong only in LOD. Confirmed firing on vanilla
 **Not confirmed to be the reported symptom.** The player described *purple*, and
 `unknown.png` measures near-white (32×32, mostly white with a small red mark, average
 255,249,249 - matching the `00FCFCFC` the atlas reports). So a magenta block is coming from
-somewhere else, most likely `GetAverageColor` on a sub-id the atlas never assigned, which
-the range/null guard now also catches. To close it properly, ask the reporter for the block
+somewhere else, most likely `GetAverageColor` on a sub-id the atlas never assigned. The
+range/null guard now also catches that case. To close it properly, ask the reporter for the block
 code, whether it looks right up close, and any "texture not found" lines in
 `client-main.log`.
 

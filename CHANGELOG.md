@@ -7,9 +7,9 @@ Written when a version is released, not when a commit lands - see
 
 **The mod now removes the game's edge fade in front of LOD terrain.** The game fades
 terrain to the fog color as the terrain nears the view distance. With LOD terrain behind
-that edge, the fade turns a clean boundary into a blue band. Two field reports named it.
-The mod moves that fade past everything the game draws, but only in a frame where it
-draws LOD terrain. In a frame with none, the fade stays and hides the bare chunk edges.
+that edge, the fade turns a clean boundary into a blue band. The mod moves that fade past
+everything the game draws, but only in a frame where it draws LOD terrain. In a frame with
+none, the fade stays and hides the bare chunk edges.
 `.vhfog off` gives you the game's own look again. If you have the DeFog mod, DeFog
 removes the fade and this mod adds no patch of its own.
 
@@ -17,8 +17,8 @@ removes the fade and this mod adds no patch of its own.
 
 **Fixed: chiseled blocks drew as one flat wrong color in the distance.** Reported as
 purple. A chiseled block's color lives in its block entity, and only a probe at the
-block's exact position finds it - the world map colors chisel work the same way. The
-LOD color probe asked at a stand-in position, the center of the chunk column, found no
+block's exact position finds it. The world map colors chisel work the same way. The
+LOD color probe asked at a stand-in position, the center of the chunk column. It found no
 block entity there, and fell through to the placeholder texture. So every chisel in a
 section took the placeholder's color. The probe now uses the block's own position, and
 distant chisel work takes the materials it is made of. Chiseled terrain that came from
@@ -50,8 +50,8 @@ that world existed.
 What stopped it was a block code that failed to resolve. The mod kept that answer for
 the rest of the session, and the lookup runs while a world still starts. So when one
 common block lost that race, every section saved after it had no color at all. The
-measurement on a real world found 7 sections with no color anywhere and 59 more in
-patches, on ground as ordinary as soil, slate and tall grass.
+measurement on a real world found 7 sections with no color anywhere. It found 59
+more in patches, on ground as ordinary as soil, slate and tall grass.
 
 The mod no longer keeps a failed lookup, and tries the code again instead. Sections that
 were saved without color get their color from the texture atlas as they load, and the

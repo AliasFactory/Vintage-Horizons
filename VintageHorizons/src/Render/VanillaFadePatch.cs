@@ -45,7 +45,7 @@ public static class VanillaFadePatch
     public static void SetEnabled(bool value) => enabled = value;
 
     /// <summary>
-    /// Publishes one frame of renderer state. The draw count is the gate; see
+    /// Publishes one frame of renderer state. The draw count is the gate. See
     /// <see cref="VanillaEdgeFade.ReplacementViewDistance"/> for why both it and the view
     /// distance are one frame old, and why the larger view distance is the safe one.
     /// </summary>
@@ -107,7 +107,7 @@ public static class VanillaFadePatch
 
     /// <summary>
     /// The largest view distance this mod can name. ClientSettings holds what the player
-    /// asked for; the renderer holds that value capped by what the server approved. The
+    /// asked for. The renderer holds that value capped by what the server approved. The
     /// larger of the two is the safe one to double, and which of them the game itself
     /// wrote into the uniform then does not matter.
     /// </summary>

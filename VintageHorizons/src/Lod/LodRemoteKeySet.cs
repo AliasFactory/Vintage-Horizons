@@ -90,7 +90,7 @@ public class LodRemoteKeySet
     /// <summary>
     /// Drop the keys that were actually asked for. Only these, never the whole set: a key
     /// held back by the in-flight cap is already in LodWorld.LoadsInFlight, where the
-    /// render scheduler skips it, and forgetting it here would strand it there for the rest
+    /// render scheduler skips it, and forgetting it here strands that key for the rest
     /// of the session.
     /// </summary>
     public void MarkRequested(IEnumerable<long> sent)

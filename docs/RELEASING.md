@@ -121,5 +121,5 @@ Manual, on mods.vintagestory.at:
 
 No automated publish to ModDB. It has no API for this, and an upload to a public listing
 stays a deliberate step regardless. Between releases the working version carries a `-dev`
-suffix (`0.2.1-dev`), so a development build reports its own version in logs instead of
-the last release's number. The release drops the suffix.
+suffix (`0.2.1-dev`). A development build reports its own version in logs instead of the
+last release's number. The release drops the suffix.

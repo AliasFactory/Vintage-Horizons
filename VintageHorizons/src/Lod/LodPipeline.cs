@@ -218,7 +218,7 @@ public class LodPipeline
             if (!Remote.WantFromRemote(key)) storageThread?.RequestLoad(key);
         };
 
-        // G7: mip downsamples run on the worker; the world enqueues and applies them.
+        // G7: mip downsamples run on the worker. The world enqueues them and applies the results.
         World.RequestMip = job => Worker.EnqueueMip(job);
         World.MipResults = Worker.MipResults;
 

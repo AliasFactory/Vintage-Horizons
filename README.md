@@ -45,7 +45,7 @@ in advance.
 | `.vhdetail [blocks]` | Distance before detail starts to halve (default 512). A higher value gives sharper far terrain and costs more VRAM and CPU. Try 1024. Without an argument, the command reports the current value. |
 | `.vhfar <blocks>` | Cap the LOD render distance. `0` means unlimited, which is the default. |
 | `.vhdefer [on\|off]` | Stay idle when another LOD mod draws (on by default). A change applies at the next start, not at once. |
-| `.vhfog [on\|off]` | Show or hide the game's edge fade at the view distance (fog off by default - the fade is removed while LOD terrain draws; `.vhfog on` shows the game's own fade). A bare edge keeps its fade. A change applies at once. |
+| `.vhfog [on\|off]` | Show or hide the game's edge fade at the view distance (fog off by default - the fade is removed while LOD terrain draws. `.vhfog on` shows the game's own fade). A bare edge keeps its fade. A change applies at once. |
 
 ### If your server runs Farseer, ChunkLOD or TopoHorizon
 
