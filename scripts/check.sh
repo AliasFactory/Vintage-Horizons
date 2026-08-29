@@ -9,8 +9,8 @@ set -uo pipefail
 #   scripts/check.sh matrix       install combinations and admin controls (~20 min)
 #
 # There is no CI, and there cannot be: building this repo requires the Vintage Story
-# assemblies from a local game install, which are not redistributable. So this script
-# is the whole safety net - nothing else re-checks any of it.
+# assemblies from a local game install, which are not redistributable. So nothing but
+# this script re-checks any of this work.
 #
 # Tiers run in order and stop at the first failure, cheapest first, so a broken build
 # costs thirty seconds rather than half an hour.

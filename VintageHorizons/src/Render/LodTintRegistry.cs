@@ -128,9 +128,6 @@ public class LodTintRegistry
             block.ClimateColorMapResolved, block.SeasonColorMapResolved,
             unchecked((int)0xFFFFFFFF), x, y, z);
 
-        // ApplyColorMapOnRgba flips red and blue by default, so red is the high byte -
-        // which is exactly what ColorUtil.ToRGBAFloats unpacks, rather than restating
-        // the engine's channel order here.
         // ToRGBAFloats[0] is the HIGH byte, which is where ApplyColorMapOnRgba puts red
         // (it flips red and blue by default). Wiring [2] to red swapped R and B and
         // turned every grass tint teal.

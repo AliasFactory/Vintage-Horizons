@@ -112,7 +112,7 @@ public class LodPipeline
         this.logger = logger;
         this.describePalette = describePalette;
         this.tintSlotFor = tintSlotFor ?? (_ => 0);
-        World = new LodWorld();
+        World = new LodWorld { Logger = logger };
         Worker = new LodWorker();
         Remote = new LodRemoteKeySet(World);
     }
@@ -218,6 +218,10 @@ public class LodPipeline
             if (!Remote.WantFromRemote(key)) storageThread?.RequestLoad(key);
         };
 
+        // G7: mip downsamples run on the worker; the world enqueues and applies them.
+        World.RequestMip = job => Worker.EnqueueMip(job);
+        World.MipResults = Worker.MipResults;
+
         World.LoadFromStore = key =>
         {
             var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -306,6 +310,7 @@ public class LodPipeline
         InstallLoadedSections();
         ScheduleCaptures();
         ApplyCaptureResults();
+        World.ApplyMipResults();
         World.ProcessPropagation(PropagationsPerTick);
         SaveSomeDirtySections(SectionSavesPerTick);
         tickCounter++;

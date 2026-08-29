@@ -88,11 +88,31 @@ public class LodTerrainRenderer : IRenderer
     /// <summary>Current far edge in blocks: the farthest loaded LOD data, independent of the vanilla view distance.</summary>
     public float EffectiveFarDistance { get; private set; } = 3000;
 
+    /// <summary>Bumped whenever the resident mesh geometry changes, so the far-edge scan
+    /// can be skipped on frames that add or evict nothing.</summary>
+    long meshGeomVersion;
+
+    /// <summary>Quantized far-plane state: the applied camera ZFar only steps in
+    /// StableProjectionStep blocks, growing immediately and shrinking after a hold, so
+    /// ordinary movement does not reset the projection every frame.</summary>
+    const int StableProjectionStep = 512;
+    const int StableProjectionHoldMs = 5000;
+    float stableProjectionZFar = 3000 + StableProjectionStep;
+    int stableProjectionHoldMsLeft;
+    long lastStableProjectionClock;
+
     public int MeshCount => sectionMeshes.Count;
     public int LastDrawCount { get; private set; }
 
     /// <summary>Sections selected by the walk but skipped this frame as off-screen.</summary>
     public int LastCulledCount { get; private set; }
+
+    /// <summary>Draw opaque sections nearest first so the depth buffer has nearer depth
+    /// before far sections shade. Water keeps traversal order.</summary>
+    public bool OpaqueNearToFar = true;
+
+    /// <summary>Reusable nearest-first ordering for the opaque draw pass.</summary>
+    readonly List<long> opaqueOrder = new();
 
     readonly LodFrustum frustum = new();
     int worldHeight = 1024;
@@ -194,18 +214,70 @@ public class LodTerrainRenderer : IRenderer
 
     public void ApplyZFar()
     {
+        // The camera far plane is quantized: it only steps in StableProjectionStep
+        // blocks, growing immediately and shrinking after a hold, so ordinary movement
+        // does not reset the projection every frame. The continuous shader far edge
+        // (EffectiveFarDistance) stays separate and is what the shader reads.
         float needed = GameMath.Max(3000, EffectiveFarDistance + 512);
         var clientMain = (ClientMain)capi.World;
 
-        if (clientMain.MainCamera.ZFar >= needed && appliedZFar == needed) return;
+        // Grow immediately to the step that covers the needed distance. The hold is
+        // armed on grow too: with it at zero, the very next recessive frame would step
+        // straight back down, oscillating between adjacent steps while the camera
+        // straddles the far edge - the exact pull-back the hold exists to prevent.
+        int neededStep = (int)Math.Ceiling(needed / StableProjectionStep) * StableProjectionStep;
+        if (neededStep > stableProjectionZFar)
+        {
+            stableProjectionZFar = neededStep;
+            stableProjectionHoldMsLeft = StableProjectionHoldMs;
+            lastStableProjectionClock = capi.World.ElapsedMilliseconds;
+        }
+        else if (neededStep < stableProjectionZFar)
+        {
+            // Recessive: only step down after the hold has elapsed at the closer
+            // distance, so a camera that briefly exposes more far terrain does not
+            // pull the plane back and forth.
+            long now = capi.World.ElapsedMilliseconds;
+            // Clamp the delta: this value resets on world load while the renderer (and
+            // its clock field) outlive worlds, so an unclamped subtraction could
+            // inflate the hold by the previous session's elapsed time.
+            long delta = lastStableProjectionClock == 0 ? 0
+                : Math.Max(0, now - lastStableProjectionClock);
+            stableProjectionHoldMsLeft -= (int)delta;
+            lastStableProjectionClock = now;
+            if (stableProjectionHoldMsLeft <= 0)
+            {
+                stableProjectionZFar = Math.Max(3000, stableProjectionZFar - StableProjectionStep);
+                stableProjectionHoldMsLeft = StableProjectionHoldMs;
+            }
+        }
+        else
+        {
+            lastStableProjectionClock = capi.World.ElapsedMilliseconds;
+        }
 
-        clientMain.MainCamera.ZFar = needed;
+        if (clientMain.MainCamera.ZFar >= stableProjectionZFar && appliedZFar == stableProjectionZFar) return;
+
+        clientMain.MainCamera.ZFar = stableProjectionZFar;
         capi.Render.Reset3DProjection();
-        appliedZFar = needed;
+        appliedZFar = stableProjectionZFar;
     }
 
     void UpdateEffectiveFarDistance(float vanillaViewDistance)
     {
+        // The far edge only changes when the resident mesh set changes (a mesh landed
+        // or was evicted) or the camera moved far enough to matter. Skip the O(n) scan
+        // over every mesh on frames where neither happened.
+        if (meshGeomVersion == lastFarScanVersion
+            && Math.Abs(camPos.X - lastFarScanCamX) < 8
+            && Math.Abs(camPos.Z - lastFarScanCamZ) < 8)
+        {
+            return;
+        }
+        lastFarScanVersion = meshGeomVersion;
+        lastFarScanCamX = camPos.X;
+        lastFarScanCamZ = camPos.Z;
+
         double maxDistSq = 0;
         foreach (long key in sectionMeshes.Keys)
         {
@@ -221,6 +293,9 @@ public class LodTerrainRenderer : IRenderer
 
         EffectiveFarDistance = GameMath.Max(far, vanillaViewDistance + 1536);
     }
+
+    long lastFarScanVersion = -1;
+    double lastFarScanCamX, lastFarScanCamZ;
 
     // ---- Detail selection (quadtree walk) ----
 
@@ -409,6 +484,7 @@ public class LodTerrainRenderer : IRenderer
             if (waterMeshes.Remove(key, out MeshRef? water)) water.Dispose();
             lastSelectedFrame.Remove(key);
             EvictedTotal++;
+            meshGeomVersion++;
         }
     }
 
@@ -524,6 +600,7 @@ public class LodTerrainRenderer : IRenderer
                 {
                     if (sectionMeshes.Remove(best, out MeshRef? gone)) gone.Dispose();
                     if (waterMeshes.Remove(best, out MeshRef? goneWater)) goneWater.Dispose();
+                    if (gone != null || goneWater != null) meshGeomVersion++;
                 }
                 continue;
             }
@@ -532,6 +609,7 @@ public class LodTerrainRenderer : IRenderer
             {
                 if (sectionMeshes.Remove(best, out MeshRef? stale)) stale.Dispose();
                 if (waterMeshes.Remove(best, out MeshRef? staleWater)) staleWater.Dispose();
+                if (stale != null || staleWater != null) meshGeomVersion++;
                 continue;
             }
 
@@ -540,6 +618,15 @@ public class LodTerrainRenderer : IRenderer
             {
                 long nk = LodWorld.NeighborKey(best, d == 0 ? -1 : d == 1 ? 1 : 0, d == 2 ? -1 : d == 3 ? 1 : 0);
                 if (world.Sections.TryGetValue(nk, out LodSection? nb)) neighbors[d] = SectionSnapshot.Of(nb);
+                else if (world.HasDataSet.Contains(nk))
+                {
+                    // G51: this neighbour has data on disk but is not resident, so the
+                    // mesher will treat the shared edge as the open frontier and wall it.
+                    // Record the edge so the wall is repaired when the neighbour loads.
+                    if (!world.PhantomFrontierEdges.TryGetValue(nk, out HashSet<long>? waiting))
+                        world.PhantomFrontierEdges[nk] = waiting = new HashSet<long>();
+                    waiting.Add(best);
+                }
             }
 
             meshBudget--;
@@ -577,6 +664,7 @@ public class LodTerrainRenderer : IRenderer
 
             // Fresh uploads get a grace stamp so they aren't evicted before first selection.
             lastSelectedFrame[result.Key] = frameCounter;
+            meshGeomVersion++;
         }
     }
 
@@ -591,13 +679,30 @@ public class LodTerrainRenderer : IRenderer
         return capi.Render.UploadMesh(mesh);
     }
 
+    /// <summary>
+    /// Fill <see cref="opaqueOrder"/> with the current draw list ordered nearest first.
+    /// Water keeps traversal order and is untouched.
+    /// </summary>
+    void OrderOpaqueNearToFar()
+    {
+        opaqueOrder.Clear();
+        opaqueOrder.AddRange(drawList);
+        opaqueOrder.Sort((a, b) =>
+            LodWorld.NearestDistanceSqTo(a, camPos.X, camPos.Z)
+                .CompareTo(LodWorld.NearestDistanceSqTo(b, camPos.X, camPos.Z)));
+    }
+
     // ---- Frame ----
 
     public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
     {
         if (AutoUnpause && capi.IsGamePaused) capi.PauseGame(false);
 
-        if (prog == null || !shaderOk || prog.LoadError) return;
+        if (prog == null || !shaderOk || prog.LoadError)
+        {
+            VanillaFadePatch.PublishFrame(0, 0f);
+            return;
+        }
 
         var rapi = capi.Render;
         if (rapi.FrameWidth == 0) return;
@@ -620,7 +725,11 @@ public class LodTerrainRenderer : IRenderer
         UploadFinishedMeshes();
         EvictStaleMeshes();
         RefreshSeasonalState();
-        if (sectionMeshes.Count == 0 && waterMeshes.Count == 0) return;
+        if (sectionMeshes.Count == 0 && waterMeshes.Count == 0)
+        {
+            VanillaFadePatch.PublishFrame(0, 0f);
+            return;
+        }
 
         var playerData = capi.World.Player.WorldData;
         float viewDistance = playerData.DesiredViewDistance;
@@ -639,6 +748,7 @@ public class LodTerrainRenderer : IRenderer
         foreach (long top in world.TopLevelKeys) CollectDrawNodes(top);
         WalkCost.Add(phaseStart);
         LastDrawCount = drawList.Count;
+        VanillaFadePatch.PublishFrame(drawList.Count, viewDistance);
         if (drawList.Count == 0) return;
 
         prog.Use();
@@ -685,8 +795,20 @@ public class LodTerrainRenderer : IRenderer
 
         phaseStart = LodPhaseCost.Start();
 
-        // Pass 1: opaque terrain.
-        foreach (long key in drawList)
+        // Pass 1: opaque terrain. Nearest-first when the toggle is on, so the depth
+        // buffer has nearer depth before far sections shade. Water keeps traversal
+        // order in pass 2.
+        //
+        // With one or fewer sections there is nothing to order, and reusing the
+        // previous frame's list would draw a stale section (the walk collapsed after
+        // that list was built). Refresh whenever there is at least one section.
+        if (OpaqueNearToFar && drawList.Count > 0)
+        {
+            if (drawList.Count > 1) OrderOpaqueNearToFar();
+            else { opaqueOrder.Clear(); opaqueOrder.Add(drawList[0]); }
+        }
+        List<long> opaqueSource = OpaqueNearToFar && drawList.Count > 0 ? opaqueOrder : drawList;
+        foreach (long key in opaqueSource)
         {
             if (!sectionMeshes.TryGetValue(key, out MeshRef? mesh)) continue;
             if (!SetupSectionTransform(key, cullDistSq)) continue;
@@ -768,6 +890,18 @@ public class LodTerrainRenderer : IRenderer
         waterMeshes.Clear();
         meshJobInFlight.Clear();
         lastSelectedFrame.Clear();
+
+        // Per-world render state: the next world must force a fresh far-edge scan
+        // instead of inheriting this one's, and the quantized far plane restarts from
+        // its floor rather than stepping down from the old world's distance for the
+        // next few seconds.
+        meshGeomVersion++;
+        lastFarScanVersion = -1;
+        lastFarScanCamX = lastFarScanCamZ = 0;
+        stableProjectionZFar = 3000 + StableProjectionStep;
+        stableProjectionHoldMsLeft = 0;
+        lastStableProjectionClock = 0;
+        appliedZFar = 0;
     }
 
     public void Dispose()

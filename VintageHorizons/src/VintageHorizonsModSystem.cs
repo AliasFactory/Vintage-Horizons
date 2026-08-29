@@ -14,6 +14,10 @@ public class VintageHorizonsConfig
     /// <summary>Distance at which detail starts halving; see LodWorld.DetailDistance.</summary>
     public int DetailDistance = 512;
 
+    /// <summary>Draw opaque sections nearest first so the depth buffer has nearer depth
+    /// before far sections shade. Water keeps traversal order.</summary>
+    public bool OpaqueNearToFar = true;
+
     /// <summary>
     /// Draw even when another LOD mod is installed and switched on. The escape hatch for
     /// the mods whose own switch we cannot read; see <see cref="OtherLodMods"/>. Read at
@@ -21,6 +25,13 @@ public class VintageHorizonsConfig
     /// path supports.
     /// </summary>
     public bool IgnoreOtherLodMods = false;
+
+    /// <summary>
+    /// Remove the game's edge fade at the view distance while LOD terrain draws behind it.
+    /// In a frame where the mod draws no LOD terrain, the fade returns. See
+    /// <see cref="VanillaEdgeFade"/>.
+    /// </summary>
+    public bool RemoveVanillaEdgeFade = true;
 }
 
 /// <summary>
@@ -58,6 +69,9 @@ public class VintageHorizonsModSystem : ModSystem
 
     /// <summary>Set when another LOD mod is drawing; we then stay out of its way.</summary>
     string? deferringTo;
+
+    /// <summary>Why the edge-fade patch is not active, or null when it is installed.</summary>
+    string? edgeFadeBlocked;
 
     /// <summary>
     /// Optional server assist (DESIGN.md §10). Created even while deferring, because the
@@ -97,7 +111,7 @@ public class VintageHorizonsModSystem : ModSystem
         {
             Mod.Logger.Notification(
                 "'{0}' is installed and switched on, so VintageHorizons stays idle. Two LOD mods "
-                + "draw over each other and fight for the camera far plane. Switch '{0}' off in its "
+                + "draw over each other, because both set the camera far plane. Switch '{0}' off in its "
                 + "own settings, then restart the game to use VintageHorizons instead. The mod "
                 + "decides this once at startup: if you switch the other mod off now, nothing "
                 + "changes until the next start.",
@@ -124,7 +138,45 @@ public class VintageHorizonsModSystem : ModSystem
         {
             AutoUnpause = Environment.GetEnvironmentVariable("VINTAGEHORIZONS_AUTOUNPAUSE") == "1",
             FarViewDistanceCap = config.FarViewDistanceCap,
+            OpaqueNearToFar = config.OpaqueNearToFar,
         };
+
+        // The game fades terrain to the fog color as the terrain nears the view distance.
+        // That fade turns the boundary in front of LOD terrain into a blue band. See
+        // VanillaEdgeFade for the rule and the shader evidence. DeFog writes the same
+        // uniform with no gate, so when DeFog is present this mod installs no patch and
+        // the two never write the same value twice a frame.
+        if (capi.ModLoader.IsModEnabled("defog"))
+        {
+            edgeFadeBlocked = "the DeFog mod is installed and already removes the fade";
+        }
+        else
+        {
+            try
+            {
+                if (VanillaFadePatch.Install(Mod.Logger))
+                {
+                    VanillaFadePatch.SetEnabled(config.RemoveVanillaEdgeFade);
+                    Mod.Logger.Notification(config.RemoveVanillaEdgeFade
+                        ? "VintageHorizons removes the game's edge fade at the view distance (no fog). Use .vhfog on to show the game's own fade."
+                        : "VintageHorizons keeps the game's edge fade (fog on). Use .vhfog off to hide it.");
+                }
+                else
+                {
+                    edgeFadeBlocked = "this game build does not have the expected shader method";
+                    Mod.Logger.Warning(
+                        "Did not patch the game's edge fade: this game build does not have "
+                        + "the expected shader method. The game's edge fade remains.");
+                }
+            }
+            catch (Exception e)
+            {
+                edgeFadeBlocked = "the patch installation failed";
+                Mod.Logger.Warning(
+                    "Did not patch the game's edge fade: {0}. The game's edge fade remains.",
+                    e.Message);
+            }
+        }
 
         capi.Event.ChunkDirty += OnChunkDirty;
         capi.Event.LevelFinalize += OnLevelFinalize;
@@ -597,7 +649,7 @@ public class VintageHorizonsModSystem : ModSystem
         {
             loggedMissingTexture = true;
             Mod.Logger.Notification(
-                "Block '{0}' has no usable block-colour texture (vanilla resolved it to unknown.png). "
+                "Block '{0}' has no usable block-color texture (vanilla resolved it to unknown.png). "
                 + "The mod uses another of its own textures instead, so it does not render wrong at distance.",
                 block.Code);
         }
@@ -642,7 +694,7 @@ public class VintageHorizonsModSystem : ModSystem
         // Read once here rather than per palette entry: the atlas exists by now, and a
         // reload would change the position object but not what magenta looks like.
         unknownTextureColor = capi.BlockTextureAtlas.UnknownTexturePosition.AvgColor;
-        Mod.Logger.Debug("Missing-texture colour is {0:X8}{1}", unknownTextureColor,
+        Mod.Logger.Debug("Missing-texture color is {0:X8}{1}", unknownTextureColor,
             unknownTextureColor == 0 ? " (zero: magenta-block salvage disabled)" : "");
         renderer.ApplyZFar();
         pipeline.Open("ModData/vintagehorizons");
@@ -787,7 +839,7 @@ public class VintageHorizonsModSystem : ModSystem
         if (pipeline.PaletteEntriesRepaired > 0)
         {
             Mod.Logger.Notification(
-                "  repaired {0} palette entries that were cached with no colour at all. "
+                "  repaired {0} palette entries that were cached with no color at all. "
                 + "They drew as black terrain, and the repair is written back as they load.",
                 pipeline.PaletteEntriesRepaired);
         }
@@ -799,7 +851,7 @@ public class VintageHorizonsModSystem : ModSystem
             string[] codes = pipeline.UnresolvedBlockCodes();
             Mod.Logger.Warning(
                 "  {0} palette entries came from blocks this game does not have, and are drawn as "
-                + "plain grey. {1}",
+                + "plain gray. {1}",
                 uncoloredForeignEntries,
                 codes.Length > 0
                     ? "Codes: " + string.Join(", ", codes.Take(12))
@@ -864,6 +916,7 @@ public class VintageHorizonsModSystem : ModSystem
         loggedLocalOffers = false;
         pipeline.Close();
         while (pipeline.Worker.MeshResults.TryDequeue(out _)) { }
+        while (pipeline.Worker.MipResults.TryDequeue(out _)) { }
         renderer.ClearMeshes();
     }
 
@@ -887,6 +940,8 @@ public class VintageHorizonsModSystem : ModSystem
                 $"render distance: {(renderer.FarViewDistanceCap > 0 ? renderer.FarViewDistanceCap + " (capped)" : "unlimited")}, " +
                 $"current far edge: {(int)renderer.EffectiveFarDistance}, " +
                 $"detail distance: {(int)LodWorld.DetailDistance} (.vhdetail to change), " +
+                $"edge fade: {(edgeFadeBlocked != null ? "on - " + edgeFadeBlocked
+                    : config.RemoveVanillaEdgeFade ? "off (removed, .vhfog on to show)" : "on (.vhfog off to hide)")}, " +
                 $"server assist: {assist?.Status ?? "off"}" +
                 (assist != null && assist.RemoteKeys.Count > 0
                     ? $", server offers {assist.RemoteKeys.Count} sections " +
@@ -969,6 +1024,53 @@ public class VintageHorizonsModSystem : ModSystem
                     $"[VintageHorizons] detail distance {(int)LodWorld.DetailDistance} - full detail out to " +
                     $"{(int)LodWorld.DetailDistance * 2} blocks (saved). Terrain re-selects over the next few seconds.");
             });
+
+        capi.ChatCommands.Create("vhorder")
+            .WithDescription("Draw opaque sections nearest first so the depth buffer has nearer depth before far sections shade. On by default.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
+            .HandleWith(args =>
+            {
+                if (args.Parsers[0].IsMissing)
+                {
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] nearest-first opaque drawing: {(config.OpaqueNearToFar ? "on" : "off")}. " +
+                        "Opaque sections draw nearest first; water keeps traversal order.");
+                }
+
+                config.OpaqueNearToFar = (bool)args[0];
+                if (renderer != null) renderer.OpaqueNearToFar = config.OpaqueNearToFar;
+                SaveConfig();
+                return TextCommandResult.Success(config.OpaqueNearToFar
+                    ? "[VintageHorizons] nearest-first opaque drawing on (saved)."
+                    : "[VintageHorizons] nearest-first opaque drawing off: traversal order, as before (saved).");
+            });
+
+        capi.ChatCommands.Create("vhfog")
+            .WithDescription("Show or hide the game's edge fade at the view distance. The default is fog off (the fade is removed). .vhfog on shows the game's own fade.")
+            .WithArgs(capi.ChatCommands.Parsers.OptionalBool("on"))
+            .HandleWith(args =>
+            {
+                if (edgeFadeBlocked != null)
+                {
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] this mod does not change the game's edge fade: {edgeFadeBlocked}.");
+                }
+
+                if (args.Parsers[0].IsMissing)
+                {
+                    return TextCommandResult.Success(
+                        $"[VintageHorizons] fog at the view edge: {(config.RemoveVanillaEdgeFade ? "off" : "on")}. "
+                        + "Use .vhfog off to hide it, .vhfog on to show the game's own fade.");
+                }
+
+                bool fogOn = (bool)args[0];
+                config.RemoveVanillaEdgeFade = !fogOn;
+                VanillaFadePatch.SetEnabled(config.RemoveVanillaEdgeFade);
+                SaveConfig();
+                return TextCommandResult.Success(fogOn
+                    ? "[VintageHorizons] fog at the view edge is now on - the game's own fade shows (saved). Use .vhfog off to hide it."
+                    : "[VintageHorizons] fog at the view edge is now off - the fade is removed while LOD terrain draws (saved). Use .vhfog on to show it.");
+            });
     }
 
     /// <summary>Writes every setting: a partial write would silently reset the others.</summary>
@@ -1010,6 +1112,7 @@ public class VintageHorizonsModSystem : ModSystem
         // Stops the storage writer before the connection it writes through.
         Quietly(() => pipeline?.Dispose());
         Quietly(() => renderer?.Dispose());
+        Quietly(VanillaFadePatch.Uninstall);
     }
 
     /// <summary>

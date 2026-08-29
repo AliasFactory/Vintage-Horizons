@@ -13,6 +13,7 @@ public class SectionSnapshot
     public required int[] PaletteColors;
     public required byte[] PaletteFlags;
     public required byte[] PaletteTintSlots;
+    public required int[] PaletteBlockIds;
 
     public Span<ulong> ColumnRuns(int col) =>
         Runs.AsSpan(ColumnStart[col], ColumnStart[col + 1] - ColumnStart[col]);
@@ -22,20 +23,28 @@ public class SectionSnapshot
         var colors = new int[s.Palette.Count];
         var flags = new byte[s.Palette.Count];
         var slots = new byte[s.Palette.Count];
+        var blockIds = new int[s.Palette.Count];
         for (int i = 0; i < s.Palette.Count; i++)
         {
             colors[i] = s.Palette[i].Color;
             flags[i] = s.Palette[i].Flags;
             slots[i] = s.Palette[i].TintSlot;
+            blockIds[i] = s.Palette[i].BlockId;
         }
         return new SectionSnapshot
         {
-            Runs = s.Runs,
-            ColumnStart = s.ColumnStart,
+            // Runs and ColumnStart are deep-copied, not shared: SetColumn's delta==0
+            // path writes runs in place and ColumnStart is updated in place on every
+            // resize, so a shared reference lets a worker read a torn section while
+            // the main thread mutates it. The copy is the whole point of the snapshot
+            // discipline - a worker must never see a section change under it.
+            Runs = (ulong[])s.Runs.Clone(),
+            ColumnStart = (int[])s.ColumnStart.Clone(),
             Captured = (bool[])s.Captured.Clone(),
             PaletteColors = colors,
             PaletteFlags = flags,
             PaletteTintSlots = slots,
+            PaletteBlockIds = blockIds,
         };
     }
 }
@@ -80,6 +89,39 @@ public class MeshResult
 }
 
 /// <summary>
+/// G7: downsample one child section into its parent quadrant, off the game thread.
+/// The child is carried as an immutable snapshot plus the revision it was read at;
+/// the apply side discards the result if the child moved on before the work landed.
+/// </summary>
+public class MipJob
+{
+    public long ChildKey;
+    public long ParentKey;
+    public int Qx, Qz;
+    public long ChildRevision;
+    public required SectionSnapshot Child;
+}
+
+public class MipResult
+{
+    public long ChildKey;
+    public long ParentKey;
+    public int Qx, Qz;
+    public long ChildRevision;
+    public required ulong[] Runs;
+    public required int[] ColumnStart;
+    public required bool[] Captured;
+    public required int[] PaletteColors;
+    public required byte[] PaletteFlags;
+    public required byte[] PaletteTintSlots;
+    public required int[] PaletteBlockIds;
+
+    /// <summary>True when the worker could not downsample this child. The apply side
+    /// uses the key fields only: it clears the in-flight bookkeeping and re-queues.</summary>
+    public bool Failed;
+}
+
+/// <summary>
 /// The background thread: converts chunk block data into RLE columns (capture) and
 /// sections into vertex data (meshing). Capture jobs take priority - meshes are only
 /// as good as the data beneath them. All game-state access is via refs the main
@@ -91,8 +133,10 @@ public class LodWorker : IDisposable
 
     readonly ConcurrentQueue<CaptureJob> captureJobs = new();
     readonly ConcurrentQueue<MeshJob> meshJobs = new();
+    readonly ConcurrentQueue<MipJob> mipJobs = new();
     public readonly ConcurrentQueue<CaptureResult> CaptureResults = new();
     public readonly ConcurrentQueue<MeshResult> MeshResults = new();
+    public readonly ConcurrentQueue<MipResult> MipResults = new();
 
     /// <summary>Wakes the capture thread. One job, one thread, so auto-reset is right.</summary>
     readonly AutoResetEvent captureSignal = new(false);
@@ -121,6 +165,7 @@ public class LodWorker : IDisposable
 
     public int PendingCaptures => captureJobs.Count;
     public int PendingMeshes => meshJobs.Count;
+    public int PendingMips => mipJobs.Count;
 
     public int CaptureErrors;
     public int MeshErrors;
@@ -164,6 +209,12 @@ public class LodWorker : IDisposable
         meshSignal.Release();
     }
 
+    public void EnqueueMip(MipJob job)
+    {
+        mipJobs.Enqueue(job);
+        meshSignal.Release();
+    }
+
     // Separate loops, not one. The old shared loop drained EVERY queued capture before
     // taking a single mesh job, so exploring - which is exactly when new terrain most needs
     // drawing - starved meshing and left coarse parents on screen for minutes.
@@ -199,6 +250,44 @@ public class LodWorker : IDisposable
         {
             // Timed wait rather than indefinite, so shutdown never depends on a permit.
             if (!meshSignal.Wait(250)) continue;
+
+            // Mip jobs first: they are small and keep the parent sections current,
+            // which the mesh jobs then read. Both are snapshot-based, so either order
+            // is safe; this one just converges faster.
+            if (mipJobs.TryDequeue(out MipJob? mip))
+            {
+                try
+                {
+                    MipResults.Enqueue(RunMip(mip));
+                }
+                catch (Exception e)
+                {
+                    // Enqueue a failed result so the apply side can clear the in-flight
+                    // bookkeeping and re-queue the child. Swallowing without a result
+                    // leaves the key in mipJobsInFlight forever: the child is never
+                    // propagated again and is pinned in RAM for the rest of the session.
+                    Interlocked.Increment(ref MeshErrors);
+                    Interlocked.CompareExchange(ref FirstMeshError, e.ToString(), null);
+                    MipResults.Enqueue(new MipResult
+                    {
+                        ChildKey = mip.ChildKey,
+                        ParentKey = mip.ParentKey,
+                        Qx = mip.Qx,
+                        Qz = mip.Qz,
+                        ChildRevision = mip.ChildRevision,
+                        Runs = Array.Empty<ulong>(),
+                        ColumnStart = Array.Empty<int>(),
+                        Captured = Array.Empty<bool>(),
+                        PaletteColors = Array.Empty<int>(),
+                        PaletteFlags = Array.Empty<byte>(),
+                        PaletteTintSlots = Array.Empty<byte>(),
+                        PaletteBlockIds = Array.Empty<int>(),
+                        Failed = true,
+                    });
+                }
+                continue;
+            }
+
             if (!meshJobs.TryDequeue(out MeshJob? job)) continue;
 
             try
@@ -212,6 +301,33 @@ public class LodWorker : IDisposable
                 Interlocked.CompareExchange(ref FirstMeshError, e.ToString(), null);
             }
         }
+    }
+
+    /// <summary>
+    /// G7: downsample a child snapshot into a fresh parent section, off the game
+    /// thread. The result carries the child revision it was read at; the apply side
+    /// discards it if the child moved on. The parent is built fresh here and merged
+    /// into the live parent on apply, so no live section is touched off-thread.
+    /// </summary>
+    static MipResult RunMip(MipJob job)
+    {
+        var parent = new LodSection();
+        LodMip.DownsampleIntoParent(job.Child, parent, job.Qx, job.Qz);
+        return new MipResult
+        {
+            ChildKey = job.ChildKey,
+            ParentKey = job.ParentKey,
+            Qx = job.Qx,
+            Qz = job.Qz,
+            ChildRevision = job.ChildRevision,
+            Runs = parent.Runs,
+            ColumnStart = parent.ColumnStart,
+            Captured = parent.Captured,
+            PaletteColors = parent.Palette.Select(p => p.Color).ToArray(),
+            PaletteFlags = parent.Palette.Select(p => p.Flags).ToArray(),
+            PaletteTintSlots = parent.Palette.Select(p => p.TintSlot).ToArray(),
+            PaletteBlockIds = parent.Palette.Select(p => p.BlockId).ToArray(),
+        };
     }
 
     // ---- Capture: chunk column → RLE columns with raw block ids ----

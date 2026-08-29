@@ -2,11 +2,11 @@
   "type": "code",
   "modid": "vintagehorizons",
   "name": "Vintage Horizons",
-  "version": "0.2.1-dev",
+  "version": "0.2.1",
   "side": "Universal",
   "requiredOnClient": false,
   "requiredOnServer": false,
-  "description": "Distant Horizons for Vintage Story: unlimited render distance. It works on ANY server, and that server needs nothing installed. The mod builds a persistent LOD cache from the terrain that you explore. You get real 3D horizons: mountains, overhangs, forests, translucent water, live seasonal colors and snow lines. Install it on your server too and it shares its own cache with players. A server can also sweep terrain from earlier sessions, and an admin can build the horizon on request. Neither writes anything to the savegame. Coverage grows as you play, and it persists forever per world. If another LOD mod draws, this one goes idle rather than fight it.",
+  "description": "Distant Horizons for Vintage Story: unlimited render distance. It works on ANY server, and that server needs nothing installed. The mod builds a persistent LOD cache from the terrain that you explore. You get real 3D horizons: mountains, overhangs, forests, translucent water, live seasonal colors and snow lines. Install it on your server too and it shares its own cache with players. A server can also sweep terrain from earlier sessions, and an admin can build the horizon on request. Neither writes anything to the savegame. Coverage grows as you play, and it persists forever per world. If another LOD mod draws, this one goes idle instead of drawing over it.",
   "authors": [
     "AliasFactory"
   ],
