@@ -419,7 +419,7 @@ PYEOF
 }
 
 if wants nondestructive; then
-    echo "  [nondestructive] generation must leave the savegame byte-identical"
+    echo "  [nondestructive] generation must write no savegame rows"
     server_mod; wipe_server_cache
     write_server_config <<'JSON'
 {
@@ -496,7 +496,7 @@ print(sqlite3.connect('file:$db?mode=ro', uri=True).execute('SELECT COUNT(*) FRO
     [[ "${sections:-0}" -gt 0 ]] || { echo "      x the LOD cache gained no sections"; ok=0; }
 
     if [[ "$ok" == 1 ]]; then
-        echo "  nondestructive: ok (625 peeks, savegame byte-identical, $sections sections built)"
+        echo "  nondestructive: ok (625 peeks, no savegame rows written, $sections sections built)"
     else
         fail "nondestructive"
     fi
