@@ -5,13 +5,41 @@ Written when a version is released, not when a commit lands - see
 
 ## [Unreleased]
 
-**The mod now removes the game's edge fade in front of LOD terrain.** The game fades
-terrain to the fog color as the terrain nears the view distance. With LOD terrain behind
-that edge, the fade turns a clean boundary into a blue band. The mod moves that fade past
-everything the game draws, but only in a frame where it draws LOD terrain. In a frame with
-none, the fade stays and hides the bare chunk edges.
-`.vhfog off` gives you the game's own look again. If you have the DeFog mod, DeFog
-removes the fade and this mod adds no patch of its own.
+## [0.3.0] - 2026-08-29
+
+**Distant terrain draws smoothly now.** Three changes to how the renderer works landed
+together, each one measured on its own against the previous release on the same hardware
+and route. The camera's far plane is quantized in 512-block steps and holds for five
+seconds before it shrinks, instead of resetting the projection every frame the camera
+moves. Opaque sections draw nearest first, so the depth buffer holds near geometry before
+far terrain shades, instead of far sections shading over nothing. Mip downsampling, the
+detail drop between LOD levels, runs off the game thread and validates its input against
+the section's revision. The combined result: 1% lows improved at three of five waypoints
+by 12 to 26 percent, and no waypoint regressed.
+
+**Walls that never healed now heal.** A section meshed before its neighbor's data arrived
+drew a wall at the shared edge, and on water it showed as a grid of dark vertical seams.
+The section had guessed that the neighbor held nothing, and nothing ever corrected that
+guess, so the wall stayed for the whole session. A section now re-meshes when the missing
+neighbor loads, and the wall is replaced by real geometry.
+
+**The mod removes the game's edge fade in front of LOD terrain.** The game fades terrain
+to the fog color as the terrain nears the view distance. With LOD terrain behind that
+edge, the fade turns a clean boundary into a blue band. The mod moves that fade past
+everything the game draws, but only in a frame where it draws LOD terrain. In a frame
+with none, the fade stays and hides the bare chunk edges. `.vhfog on` shows the game's
+own fade again. If you have the DeFog mod, DeFog removes the fade and this mod adds no
+patch of its own.
+
+**Fixed: two crash sources found during integration testing.** A worker thread could
+read a section while the game thread wrote it, and a mip result could reference palette
+entries that the live parent section did not hold. Both threw `IndexOutOfRangeException`
+on the worker and both survived every fast-tier run, because only a real game session
+exercises the timing. Snapshots now deep-copy what workers read, and mip results remap
+their palette entries on apply.
+
+**The build and tests now target Vintage Story 1.22.7**, and the mod declares it as its
+minimum, so it will not load on anything older.
 
 ## [0.2.1] - 2026-08-15
 
