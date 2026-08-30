@@ -19,6 +19,8 @@ public static class StoreChecks
         DisposingTheOfferReaderReleasesItsFileHandle(c);
         Rejection(c);
         PurgeKeepsMatchingData(c);
+        SaveBatchWritesEveryRowOnce(c);
+        CoalescerKeepsNewestAndTheMipTrigger(c);
     }
 
     /// <summary>
@@ -336,6 +338,116 @@ public static class StoreChecks
         c.NoThrow(() => store.DeserializeForeign(garbage, null), "a corrupted blob does not throw");
 
         c.True(store.DeserializeForeign(good, null) != null, "a good blob still deserializes");
+    }
+
+    /// <summary>
+    /// The batch path replaced per-row autocommits during capture bursts. Three rules
+    /// must hold, and the old path gave the last two for free. Every row lands exactly
+    /// once. A batch overwrite keeps one row per key. A reopen reads back every
+    /// committed row.
+    /// </summary>
+    static void SaveBatchWritesEveryRowOnce(Check c)
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "vh-batch-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        string path = Path.Combine(dir, "cache.db");
+        try
+        {
+            LodSaveSnapshot[] snaps =
+            {
+                Fixtures.Snapshot(Fixtures.SolidSection()),
+                Fixtures.Snapshot(Fixtures.SolidSection()),
+                Fixtures.Snapshot(Fixtures.SolidSection()),
+            };
+            snaps[0].Level = 0; snaps[0].SX = 10; snaps[0].SZ = 10;
+            snaps[1].Level = 0; snaps[1].SX = 11; snaps[1].SZ = 10;
+            snaps[2].Level = 1; snaps[2].SX = 10; snaps[2].SZ = 10;
+
+            var store = new LodStore(new CaptureLogger());
+            c.True(store.Open(path), "the cache opens for a batch write");
+
+            store.SaveBatch(new[]
+            {
+                (snaps[0].Level, snaps[0].SX, snaps[0].SZ, LodStore.Serialize(snaps[0]), snaps[0].ApplyToParent),
+                (snaps[1].Level, snaps[1].SX, snaps[1].SZ, LodStore.Serialize(snaps[1]), snaps[1].ApplyToParent),
+                (snaps[2].Level, snaps[2].SX, snaps[2].SZ, LodStore.Serialize(snaps[2]), snaps[2].ApplyToParent),
+            });
+
+            var keys = new List<(int Level, int SX, int SZ)>();
+            c.Eq(3, store.LoadAllKeys((l, sx, sz, _) => keys.Add((l, sx, sz))), "the batch writes three rows");
+            c.Eq(3, keys.Distinct().Count(), "and they are three distinct keys");
+
+            // Overwrite one key inside a second batch: an upsert must update, not duplicate.
+            store.SaveBatch(new[]
+            {
+                (snaps[1].Level, snaps[1].SX, snaps[1].SZ, LodStore.Serialize(snaps[1]), true),
+            });
+            c.Eq(3, store.LoadAllKeys((_, _, _, _) => { }), "overwriting a key inside a batch keeps one row per key");
+
+            store.Dispose();
+
+            // Durability across close/reopen: the transaction's whole point.
+            var reopened = new LodStore(new CaptureLogger());
+            c.True(reopened.Open(path), "the cache reopens");
+            c.Eq(3, reopened.LoadAllKeys((_, _, _, _) => { }), "everything the batch committed survives a reopen");
+            reopened.Dispose();
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* temp dir; best effort */ }
+        }
+    }
+
+    /// <summary>
+    /// Coalescing is where the save count shrinks, so its two rules get checks. The
+    /// newest snapshot for a key wins. A replaced snapshot hands its ApplyToParent
+    /// flag to the winner, because losing that flag leaves a parent mip stale.
+    /// </summary>
+    static void CoalescerKeepsNewestAndTheMipTrigger(Check c)
+    {
+        LodSaveSnapshot Shot(int level, int sx, int sz, bool atp)
+        {
+            var snap = Fixtures.Snapshot(Fixtures.SolidSection());
+            snap.Level = level; snap.SX = sx; snap.SZ = sz; snap.ApplyToParent = atp;
+            return snap;
+        }
+
+        var coalescer = new LodSaveCoalescer();
+
+        c.Eq(0, coalescer.Take(10).Length, "taking from an empty coalescer returns nothing");
+
+        var first = Shot(0, 5, 5, atp: false);
+        coalescer.Add(first);
+        coalescer.Add(Shot(0, 5, 5, atp: false));
+        var lastForThatKey = Shot(0, 5, 5, atp: true);
+        coalescer.Add(lastForThatKey);
+        c.Eq(1, coalescer.Count, "three enqueues of one key coalesce into one pending save");
+
+        LodSaveSnapshot[] one = coalescer.Take(10);
+        c.Eq(1, one.Length, "the coalesced key writes once");
+        c.True(ReferenceEquals(one[0], lastForThatKey), "the newest snapshot is the one that survived");
+        c.True(one[0].ApplyToParent, "the surviving snapshot carries the trigger from the one it replaced");
+        c.Eq(0, coalescer.Count, "the queue is empty after taking");
+
+        // Newest wins on content: the last Add is the object that must come back.
+        var older = Shot(2, 1, 1, atp: false);
+        var newer = Shot(2, 1, 1, atp: false);
+        c.False(coalescer.Add(older), "the first enqueue of a key displaces nothing");
+        c.True(coalescer.Add(newer), "a repeat enqueue reports the displaced save as settled");
+        LodSaveSnapshot[] batch = coalescer.Take(10);
+        c.True(ReferenceEquals(batch[0], newer), "a repeat enqueue replaces the waiting snapshot with the newer one");
+
+        // FIFO by first appearance, bounded by the take.
+        var tail = Shot(0, 3, 3, atp: false);
+        coalescer.Add(Shot(0, 1, 1, atp: false));
+        coalescer.Add(Shot(0, 2, 2, atp: false));
+        coalescer.Add(tail);
+        LodSaveSnapshot[] two = coalescer.Take(2);
+        c.Eq(2, two.Length, "a bounded take returns at most the bound");
+        c.Eq(1, coalescer.Count, "and leaves the rest pending");
+        LodSaveSnapshot[] last = coalescer.Take(10);
+        c.Eq(1, last.Length, "the remainder comes out on the next take");
+        c.True(ReferenceEquals(last[0], tail), "and it is the snapshot left behind, not one already taken");
     }
 
     static LodSection Restore(Check c, LodSection section, string[]? codes = null)

@@ -134,6 +134,49 @@ public class LodStore : SQLiteDBConnection
     }
 
     /// <summary>
+    /// Write a whole batch of already-serialized sections inside ONE SQLite transaction.
+    ///
+    /// SaveBlob commits each row on its own, and each autocommit pays a full journal
+    /// cycle: write the rollback journal, write the row, sync, checkpoint, sync again.
+    /// During a capture burst the storage thread produced up to 120 of those a second,
+    /// six sections at 20 ticks. The cache rebuilds from capture, so per-row
+    /// durability bought nothing. Players on hard drives paid for it in fill stutter.
+    /// A batch pays the journal cycle once for all of its rows.
+    ///
+    /// Blobs arrive serialized, so the lock below is held only for the row writes.
+    /// The compression cost stays on the storage thread, outside this lock, as
+    /// SaveBlob documents.
+    /// </summary>
+    public void SaveBatch(IReadOnlyList<(int Level, int SX, int SZ, byte[] Data, bool ApplyToParent)> rows)
+    {
+        if (upsertCmd == null || rows.Count == 0) return;
+
+        lock (transactionLock)
+        {
+            using var transaction = sqliteConn.BeginTransaction();
+            upsertCmd.Transaction = transaction;
+            try
+            {
+                foreach (var row in rows)
+                {
+                    upsertCmd.Parameters["@detail"].Value = row.Level;
+                    upsertCmd.Parameters["@sx"].Value = row.SX;
+                    upsertCmd.Parameters["@sz"].Value = row.SZ;
+                    upsertCmd.Parameters["@data"].Value = row.Data;
+                    upsertCmd.Parameters["@atp"].Value = row.ApplyToParent ? 1 : 0;
+                    upsertCmd.Parameters["@ms"].Value = Environment.TickCount64;
+                    upsertCmd.ExecuteNonQuery();
+                }
+                transaction.Commit();
+            }
+            finally
+            {
+                upsertCmd.Transaction = null;
+            }
+        }
+    }
+
+    /// <summary>
     /// Block code -> id. Per-store on purpose: block ids are savegame-local, so a
     /// cache shared between worlds would resolve the previous world's ids. Concurrent
     /// because sections deserialize on both the main and storage threads.
