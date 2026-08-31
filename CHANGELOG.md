@@ -5,6 +5,16 @@ Written when a version is released, not when a commit lands - see
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-30
+
+- Performance: LOD cache saves land in one SQLite transaction per batch instead of
+  one per section. 300 sections of ~46 KB now write in 1.8 s on a hard drive instead
+  of 40.0 s, and 0.04 s instead of 2.55 s on NVMe. Roughly 3x fewer bytes written,
+  22x fewer journal cycles. Frame times did not change in an A/B on SSD; hard-drive
+  fill, which the old path stalled, is the beneficiary.
+- Performance: sections still waiting to be written collapse into their newest
+  snapshot, so a capture burst writes each hot section once instead of once per tick.
+
 ## [0.3.0] - 2026-08-29
 
 **Distant terrain draws smoothly now.** Three changes to how the renderer works landed
