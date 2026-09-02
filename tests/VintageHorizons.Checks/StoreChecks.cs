@@ -16,6 +16,7 @@ public static class StoreChecks
         DeferredPalette(c);
         AFailedLookupIsNotRemembered(c);
         AColourlessCacheIsRepaired(c);
+        ANearWhiteCacheIsRepaired(c);
         DisposingTheOfferReaderReleasesItsFileHandle(c);
         Rejection(c);
         PurgeKeepsMatchingData(c);
@@ -228,6 +229,38 @@ public static class StoreChecks
         c.False(LodPaletteRepair.NeedsColor(section.Palette[2].Color),
             "so the repair finishes instead of running again every load");
 
+        c.Eq(0, LodPaletteRepair.Fill(section, _ => 0), "a repaired section needs no second pass");
+    }
+
+    /// <summary>
+    /// unknown.png is a near-white placeholder. A block whose colour texture never
+    /// resolved kept that white in the cache, and it read as a pale patch at distance.
+    /// The scanner found 31 such entries on one block in a real cache. The
+    /// repair takes that white the same way it takes colour 0.
+    /// </summary>
+    static void ANearWhiteCacheIsRepaired(Check c)
+    {
+        c.True(LodPaletteRepair.NeedsColor(unchecked((int)0x00FCFCFC)),
+            "the unknown.png average is a missing colour");
+        c.True(LodPaletteRepair.NeedsColor(unchecked((int)0xFFF4F4F4)),
+            "an HD near-white sample is a missing colour too");
+        c.False(LodPaletteRepair.NeedsColor(unchecked((int)0xFF8C8C8C)),
+            "the grey fallback is not itself missing");
+        c.False(LodPaletteRepair.NeedsColor(unchecked((int)0xFF336699)),
+            "a normal colour is left alone");
+        c.False(LodPaletteRepair.NeedsColor(unchecked((int)0xFF000000)),
+            "opaque black is a real colour here as well");
+
+        var section = new LodSection();
+        section.FindOrAddPaletteEntry(blockId: 21, color: unchecked((int)0x00FCFCFC), flags: 0, tintSlot: 0);
+        section.FindOrAddPaletteEntry(blockId: 22, color: unchecked((int)0xFF336699), flags: 0, tintSlot: 0);
+
+        int repaired = LodPaletteRepair.Fill(section, id =>
+            id == 21 ? unchecked((int)0xFF445566) : 0);
+
+        c.Eq(1, repaired, "the near-white entry is repaired");
+        c.Eq(unchecked((int)0xFF445566), section.Palette[0].Color, "it takes its real colour");
+        c.Eq(unchecked((int)0xFF336699), section.Palette[1].Color, "its neighbour is untouched");
         c.Eq(0, LodPaletteRepair.Fill(section, _ => 0), "a repaired section needs no second pass");
     }
 

@@ -20,8 +20,22 @@ namespace VintageHorizons;
 /// </summary>
 public static class LodPaletteRepair
 {
-    /// <summary>Never coloured, as opposed to coloured and dark.</summary>
-    public static bool NeedsColor(int color) => color == 0;
+    /// <summary>
+    /// Never coloured, or coloured with a placeholder. Colour 0 is what a writer leaves
+    /// when it cannot answer at all. Near-white is what an entry keeps when its colour
+    /// texture never resolved. The game answers with the unknown.png average, which
+    /// measures 0xFCFCFC, and HD packs land nearby. The scanner found 31 such entries on
+    /// one berry bush in a real cache. The channel order here is the cache order: red in
+    /// the low byte.
+    /// </summary>
+    public static bool NeedsColor(int color)
+    {
+        if (color == 0) return true;
+        int r = color & 0xFF;
+        int g = (color >> 8) & 0xFF;
+        int b = (color >> 16) & 0xFF;
+        return r >= 0xF0 && g >= 0xF0 && b >= 0xF0;
+    }
 
     /// <summary>
     /// Give every uncoloured entry a colour, and report how many were fixed.
