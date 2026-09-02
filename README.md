@@ -227,13 +227,6 @@ See [DESIGN.md](DESIGN.md) for the architecture, [CHANGELOG.md](CHANGELOG.md) fo
 shipped in each version, and [docs/RELEASING.md](docs/RELEASING.md) for the release
 procedure.
 
-## Credits
-
-- [Distant Horizons](https://gitlab.com/distant-horizons-team/distant-horizons) and
-  Voxy (Minecraft) - architectural inspiration. No code is used from either.
-- [Farseer](https://github.com/ViciousBadger/VSMod-Farseer) (MIT, © Badgerson) -
-  Vintage Story rendering techniques. Adapted code is credited where it is used.
-
 ## License
 
 [MIT](LICENSE)
