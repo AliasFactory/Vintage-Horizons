@@ -27,6 +27,15 @@ namespace VintageHorizonsBench;
 ///   VHBENCH_MEASURE seconds to measure at each waypoint (default 10)
 ///   VHBENCH_LAPS    MEASURED laps of the route, aggregated per waypoint (default 1)
 ///   VHBENCH_WARMUP_LAPS  laps walked first and thrown away (default 1)
+///   VHBENCH_TIME     time-of-day pin, 24h "HH:MM" or a word like "sunset"
+///                    (default: 12:00, as always)
+///   VHBENCH_MONTH    calendar month pin, jan..dec (default: leave the date alone)
+///   VHBENCH_FREEZE_TIME  "1" stops the calendar after pinning, so a long settle
+///                    cannot drift the hour. Off by default.
+///
+/// A colour comparison needs the same hour and the same season in every run, so a
+/// label can pin them. Month goes first: setmonth fast-forwards the calendar and
+/// drags the time of day with it, so the hour is set after the month.
 ///
 /// On settling, and why it is not a fixed sleep. A teleport starts a burst of streaming,
 /// capture, meshing and upload, and how long that burst lasts depends on the mod, the
@@ -65,6 +74,9 @@ public class BenchModSystem : ModSystem, IRenderer
     double measureSec = 10;
     int laps = 1;
     int warmupLaps = 1;
+    string timePin = "";
+    string monthPin = "";
+    bool timeFrozen;
     int TotalLaps => warmupLaps + laps;
     bool Measuring => lap >= warmupLaps;
 
@@ -156,6 +168,11 @@ public class BenchModSystem : ModSystem, IRenderer
         settleMaxSec = Math.Max(settleSec, ReadDouble("VHBENCH_SETTLE_MAX", settleSec));
         warmupLaps = Math.Max(0, (int)ReadDouble("VHBENCH_WARMUP_LAPS", 0));
 
+        // Optional colour pins. Empty keeps the old behaviour exactly.
+        timePin = Environment.GetEnvironmentVariable("VHBENCH_TIME") ?? "";
+        monthPin = Environment.GetEnvironmentVariable("VHBENCH_MONTH") ?? "";
+        timeFrozen = (Environment.GetEnvironmentVariable("VHBENCH_FREEZE_TIME") ?? "") == "1";
+
         try
         {
             route = BenchRoute.Load(routePath);
@@ -191,8 +208,15 @@ public class BenchModSystem : ModSystem, IRenderer
         // Fix everything that would otherwise differ between runs. Creative first so
         // the teleports are permitted at all.
         capi.SendChatMessage("/gamemode creative");
-        capi.Event.RegisterCallback(_ => capi.SendChatMessage("/time set 12:00"), 1500);
+        if (monthPin.Length > 0)
+            capi.Event.RegisterCallback(_ => capi.SendChatMessage($"/time setmonth {monthPin}"), 1500);
+        // The hour is pinned with or without VHBENCH_TIME: 12:00 stays the default.
+        // setmonth shifts the clock, so this callback runs after it.
+        string hour = timePin.Length > 0 ? timePin : "12:00";
+        capi.Event.RegisterCallback(_ => capi.SendChatMessage($"/time set {hour}"), 2000);
         capi.Event.RegisterCallback(_ => capi.SendChatMessage("/weather setprecip 0"), 2500);
+        if (timeFrozen)
+            capi.Event.RegisterCallback(_ => capi.SendChatMessage("/time stop"), 2800);
         capi.Event.RegisterCallback(_ => AdvanceToNextWaypoint(), 4000);
     }
 

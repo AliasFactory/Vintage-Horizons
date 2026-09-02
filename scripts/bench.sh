@@ -6,7 +6,8 @@ set -euo pipefail
 #   scripts/bench.sh <label> [--mods <dir-or-zip>[,<dir-or-zip>...]] [--server-mods <...>]
 #                            [--route <file>] [--settle <sec>] [--settle-max <sec>]
 #                            [--measure <sec>] [--laps <n>]
-#                            [--detail <blocks>]
+#                            [--detail <blocks>] [--time <HH:MM|word>]
+#                            [--month <jan..dec>] [--freeze-time]
 #
 # Examples:
 #   scripts/bench.sh vanilla                            # no LOD mod at all: the baseline
@@ -46,6 +47,9 @@ laps=1
 warmup_laps=1
 detail=""
 watch=0
+time=""
+month=""
+freeze=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -58,12 +62,32 @@ while [[ $# -gt 0 ]]; do
         --laps) laps="$2"; shift 2 ;;
         --warmup-laps) warmup_laps="$2"; shift 2 ;;
         --detail) detail="$2"; shift 2 ;;
+        --time) time="$2"; shift 2 ;;
+        --month) month="$2"; shift 2 ;;
+        --freeze-time) freeze=1; shift ;;
         --watch) watch=1; shift ;;
         *) echo "bench.sh: unknown option '$1'" >&2; exit 2 ;;
     esac
 done
 
 [[ -f "$route" ]] || { echo "bench.sh: route '$route' not found" >&2; exit 2; }
+
+# Colour pins get encoded into the label, so a noon run and a dusk run land in
+# different CSVs and PNGs instead of overwriting each other. The ':' cannot live
+# in a filename on every filesystem, so it is dropped from the label.
+if [[ -n "$time" ]]; then
+    label="${label}-$(printf '%s' "$time" | tr -d ':')"
+fi
+if [[ -n "$month" ]]; then
+    case "$month" in
+        jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec) ;;
+        *) echo "bench.sh: --month wants jan..dec, got '$month'" >&2; exit 2 ;;
+    esac
+    label="${label}-$month"
+fi
+if [[ "$freeze" == 1 ]]; then
+    label="${label}-frozen"
+fi
 
 BENCH_OUT="$VH_SANDBOX/bench"
 CLIENT_MODS="$VH_SANDBOX/Mods"
@@ -155,6 +179,9 @@ export VHBENCH_SETTLE_MAX="$settle_max"
 export VHBENCH_MEASURE="$measure"
 export VHBENCH_LAPS="$laps"
 export VHBENCH_WARMUP_LAPS="$warmup_laps"
+export VHBENCH_TIME="$time"
+export VHBENCH_MONTH="$month"
+export VHBENCH_FREEZE_TIME="$freeze"
 
 # The mod's own telemetry, on. Its 15s stats line carries the render-thread phase
 # timings and the pipeline counters, and those are the only record of what was
