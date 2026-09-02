@@ -1,12 +1,11 @@
 # Vintage Horizons
 
-Distant Horizons-style extended render distance for [Vintage Story](https://www.vintagestory.at/).
+Extended render distance for [Vintage Story](https://www.vintagestory.at/).
 It works on any server, and that server needs nothing installed.
 
-Other VS LOD mods (Farseer, ChunkLOD) must be on the server. This one needs no server
-install. It builds a persistent level-of-detail cache from the chunk data that your
-client already receives as you play. It then draws that cache far past the normal view
-distance. Coverage grows as you explore, and it persists across sessions.
+The mod builds a persistent level-of-detail cache from the chunk data that your client
+already receives as you play. It then draws that cache far past the normal view distance.
+Coverage grows as you explore, and it persists across sessions.
 
 You can also install it on your server. Then it shares its own cache with players and an
 admin can build the horizon on request. Neither is necessary, and players without the mod
@@ -30,9 +29,6 @@ A client-side mod knows only the terrain that the server sent it. Land that you 
 came near never reached your client. It is not in the cache, so the mod cannot draw it.
 A new world therefore shows nothing past the vanilla view distance until you travel.
 
-Server-side generators (Farseer, ChunkLOD) ask the world generator directly and do not
-have this limit. In exchange, those mods must be on the server.
-
 In this mod, the edge of the explored area fades into the horizon. It does not end in a
 cliff. The picture fills in the more you play. If you run the server, `/vhgen` builds it
 in advance.
@@ -47,16 +43,16 @@ in advance.
 | `.vhdefer [on\|off]` | Stay idle when another LOD mod draws (on by default). A change applies at the next start, not at once. |
 | `.vhfog [on\|off]` | Show or hide the game's edge fade at the view distance (fog off by default - the fade is removed while LOD terrain draws. `.vhfog on` shows the game's own fade). A bare edge keeps its fade. A change applies at once. |
 
-### If your server runs Farseer, ChunkLOD or TopoHorizon
+### If another LOD mod is installed
 
-The client must have those mods, so the game installs one on your machine when you join
-such a server. If two LOD mods draw at the same time, they draw over each other, because
-both set the camera far plane. So this mod stays idle while another mod **draws**.
+The game installs a server's required mods on your machine when you join that server. If
+two LOD mods draw at the same time, they draw over each other, because both set the
+camera far plane. So this mod stays idle while another mod **draws**.
 
-An installed mod does not always draw. Switch Farseer off in its own dialog
-(Ctrl+Shift+F). This mod then draws by itself, and there is nothing else to set. For the
-mods whose switch this one cannot read, `.vhdefer off` makes it draw anyway. Then switch
-the other mod off as well, or the two will draw over the same ground.
+An installed mod does not always draw. Switch the other mod off in its own dialog. This
+mod then draws by itself, and there is nothing else to set. For the mods whose switch
+this one cannot read, `.vhdefer off` makes it draw anyway. Then switch the other mod off
+as well, or the two will draw over the same ground.
 
 **Restart the game after either change.** The mod decides which one draws once, at
 startup, before a world exists. If you switch the other mod off while you play, nothing
